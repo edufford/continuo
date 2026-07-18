@@ -1,0 +1,18 @@
+[package]
+name = "continuo-actors"
+description = "Sample actor components for continuo: waypoint paths, controller, physics"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+continuo-core = { workspace = true }
+serde = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+continuo-conductor = { workspace = true }
+continuo-transport = { workspace = true }
+serde_json = { workspace = true }
+tracing-subscriber = { workspace = true }
