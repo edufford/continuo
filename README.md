@@ -80,7 +80,8 @@ instant, and repeats.
 | [`continuo-core`](crates/continuo-core/) | `SimTime`/`SimDuration`, ids and paths, key expressions, `Vec3`/`Quat`/Euler (canonical Z-Y-X conversions), wire messages, the `Component` trait |
 | [`continuo-transport`](crates/continuo-transport/) | `Transport` trait, deterministic `InProcTransport`, `MonitorTransport` for out-of-band message recording |
 | [`continuo-conductor`](crates/continuo-conductor/) | Registry (component tree as data), event schedule, the conductor loop |
-| [`continuo-actors`](crates/continuo-actors/) | Sample components: waypoint path, path-follow controller, unicycle physics, pose logger — and the traffic demo |
+| [`continuo-actors`](crates/continuo-actors/) | Sample components: waypoint path, path-follow controller, unicycle physics, pose logger |
+| [`continuo-examples`](crates/continuo-examples/) | Runnable example worlds (`examples/traffic.rs`) |
 
 Planned (see PLAN.md milestones): state hashing + record/replay (M2),
 real-time pacing (M3), runtime join/leave (M4), Python visualization (M5),
@@ -102,7 +103,7 @@ cargo clippy --workspace --all-targets
 cargo fmt --all
 
 # Run the demo: three cars circulating an oval, free-run, 30 sim-seconds
-cargo run -p continuo-actors --example traffic
+cargo run -p continuo-examples --example traffic
 ```
 
 The demo logs each car's pose once per sim-second and finishes in a fraction

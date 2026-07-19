@@ -18,7 +18,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -38,6 +37,18 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
+]
+
+[[package]]
+name = "continuo-examples"
+version = "0.1.0"
+dependencies = [
+ "continuo-actors",
+ "continuo-conductor",
+ "continuo-core",
+ "continuo-transport",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

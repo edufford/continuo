@@ -11,8 +11,8 @@ continuo-core = { workspace = true }
 serde = { workspace = true }
 tracing = { workspace = true }
 
+# Dev-dependencies serve the determinism integration test.
 [dev-dependencies]
 continuo-conductor = { workspace = true }
 continuo-transport = { workspace = true }
 serde_json = { workspace = true }
-tracing-subscriber = { workspace = true }

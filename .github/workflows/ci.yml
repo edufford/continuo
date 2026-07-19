@@ -35,4 +35,4 @@ jobs:
         run: cargo test -p continuo-actors --test determinism -- --nocapture
 
       - name: Run the traffic demo
-        run: cargo run -p continuo-actors --example traffic
+        run: cargo run -p continuo-examples --example traffic

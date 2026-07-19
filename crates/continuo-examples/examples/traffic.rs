@@ -6,7 +6,7 @@
 //! receives the command same-instant and integrates. A world-level
 //! `PoseLogger` samples every second.
 //!
-//! Run with: `cargo run -p continuo-actors --example traffic`
+//! Run with: `cargo run -p continuo-examples --example traffic`
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};

@@ -338,7 +338,7 @@ continuo/
     continuo-viz-bridge       # poses -> JSON over WebSocket
     continuo-fmi              # FmuComponent adapter (FMI 3.0 CS)        [milestone 6]
     continuo-transport-zenoh  # Zenoh Transport impl                     [milestone 7]
-  examples/traffic.rs         # N cars driving a loop
+    continuo-examples         # runnable example worlds (traffic demo)
   python/continuo_viz/        # WebSocket client + 2D top-down view
 ```
 
