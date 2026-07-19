@@ -71,6 +71,9 @@ impl Component for PathFollowController {
 
     fn subscriptions(&self) -> Vec<KeyExpr> {
         // World segment wildcarded: the world name is only known at step time.
+        // TODO(PLAN "Scenario configuration"): once scenarios instantiate
+        // components, pass the world name at construction and subscribe
+        // precisely (same in UnicyclePhysics).
         vec![KeyExpr::new(format!("continuo/*/actor/{}/pose", self.actor)).expect("valid key")]
     }
 

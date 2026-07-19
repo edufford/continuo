@@ -87,6 +87,10 @@ Planned (see PLAN.md milestones): state hashing + record/replay (M2),
 real-time pacing (M3), runtime join/leave (M4), Python visualization (M5),
 FMI 3.0 CS import (M6), Zenoh transport (M7).
 
+Everywhere current code is a placeholder for later work, a comment marks the
+spot: `TODO(Mn)` for numbered milestones, `TODO(PLAN "section")` for design
+items tracked in PLAN.md. `grep -rn "TODO(" crates/` lists them all.
+
 ## Usage
 
 Requires a recent stable Rust toolchain (edition 2024, rust ≥ 1.85).

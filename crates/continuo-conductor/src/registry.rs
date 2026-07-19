@@ -77,6 +77,10 @@ pub(crate) struct Registry {
 }
 
 impl Registry {
+    // TODO(M4): support removal (leave, or a failure-policy drop) —
+    // deregister the leaf, drop its schedule entry and subscriptions, and
+    // keep sibling order stable so replayed runs see identical ordering.
+
     /// Registers a leaf under `parent`, creating intermediate tree nodes as
     /// needed. Returns the declaration index and full path.
     pub(crate) fn add(

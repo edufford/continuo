@@ -17,6 +17,9 @@ use continuo_core::{Pose, Quat, SimDuration, SimTime};
 use continuo_transport::{InProcTransport, MonitorTransport};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // TODO(PLAN "Scenario configuration"): this hand-built world becomes a
+    // JSON5 scenario file (seed, component tree, periods, parameters) once
+    // scenario loading lands; main() then shrinks to load-and-run.
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)
         .with_target(false)

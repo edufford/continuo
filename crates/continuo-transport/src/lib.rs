@@ -34,6 +34,9 @@ pub trait Transport {
     /// (PLAN.md): published-before-now always releases; published-at-now
     /// releases only from an earlier-ordered sibling branch within the same
     /// composite.
+    // TODO(M7): drain-with-predicate is in-proc-shaped. The Zenoh transport
+    // will receive messages asynchronously and gather/order them per step on
+    // the consuming host; revisit this trait when it lands.
     fn drain(
         &mut self,
         subscriber: &ComponentPath,

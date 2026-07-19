@@ -10,6 +10,8 @@ use crate::error::CoreError;
 ///
 /// This is the minimal subset the in-process router needs; Zenoh's own
 /// matcher takes over when the Zenoh transport lands (milestone 7).
+// TODO(M7): validate against (or replace with) zenoh's keyexpr type so
+// in-proc and distributed matching can never disagree.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(transparent)]
 pub struct KeyExpr(String);

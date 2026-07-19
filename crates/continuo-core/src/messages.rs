@@ -8,6 +8,8 @@ use crate::time::SimTime;
 /// Conductor → components: a new step boundary. In-process the activation is
 /// a direct call, but the protocol is honored in types so the distributed
 /// transport (milestone 7) carries the same messages.
+// TODO(M7): serialize TickStart/TickDone over the transport for remote hosts
+// (keys continuo/{world}/tick and continuo/{world}/tick/done per PLAN.md).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TickStart {
     pub tick: u64,

@@ -2,6 +2,9 @@ use continuo_core::Vec3;
 
 /// A closed 2D polyline with arc-length parameterization — the demo "map"
 /// until the world spec exists (see PLAN.md, World and map).
+// TODO(PLAN "World and map"): replace with named paths from the world spec
+// scene graph (published on continuo/{world}/map) once it exists; actors
+// should reference paths by name, not own their geometry.
 #[derive(Debug, Clone)]
 pub struct Waypoints {
     points: Vec<(f64, f64)>,

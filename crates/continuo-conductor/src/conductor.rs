@@ -20,6 +20,10 @@ pub struct Conductor<T: Transport> {
 
 impl<T: Transport> Conductor<T> {
     pub fn new(config: ConductorConfig, transport: T) -> Result<Self, ConductorError> {
+        // TODO(M3): implement 1x real-time pacing (sleep until the wall time
+        // corresponding to the next step's sim time; on overrun, log and let
+        // the wall anchor slip — see PLAN.md "Pacing"). Until then only
+        // free-run is supported.
         if config.real_time_pacing {
             return Err(ConductorError::RealTimePacingUnsupported);
         }
@@ -59,6 +63,10 @@ impl<T: Transport> Conductor<T> {
         parent: &str,
         component: Box<dyn Component>,
     ) -> Result<ComponentPath, ConductorError> {
+        // TODO(M4): runtime join/leave — accept join requests over the
+        // transport (continuo/{world}/conductor/join), apply them at step
+        // boundaries, schedule the first step at the join time instead of
+        // ZERO, and record admissions in the event log for replay.
         let parent = ComponentPath::parse(parent)?;
         let subscriptions = component.subscriptions();
         let (index, path) = self.registry.add(&parent, component)?;
@@ -79,6 +87,9 @@ impl<T: Transport> Conductor<T> {
         self.sim_time = now;
         self.tick += 1;
 
+        // TODO(M7): in distributed mode TickStart/TickDone travel over the
+        // transport to remote hosts and the barrier gathers acks; in-proc,
+        // activation is a direct call and the messages exist as trace events.
         let tick_start = TickStart {
             tick: self.tick,
             sim_time: now,
@@ -104,6 +115,10 @@ impl<T: Transport> Conductor<T> {
             let entry = &mut self.registry.entries[index];
             let next_due = entry.component.step(&mut ctx);
 
+            // TODO(PLAN "Failure handling"): apply the per-world policy
+            // (halt vs. timeout-and-drop, with drops event-logged for
+            // replay) instead of always halting; extend beyond schedule
+            // violations to component panics and step timeouts.
             if next_due <= now {
                 return Err(ConductorError::ScheduleViolation {
                     path: entry.path.clone(),
@@ -112,6 +127,9 @@ impl<T: Transport> Conductor<T> {
                 });
             }
 
+            // TODO(M2): feed the canonical payload bytes into the per-tick
+            // state hash and the record/replay event log (a MonitorTransport
+            // sink over these publishes).
             for (key, payload) in ctx.take_outbox() {
                 let seq = entry.next_seq;
                 entry.next_seq += 1;
