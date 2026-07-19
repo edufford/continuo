@@ -10,8 +10,12 @@ env:
 
 jobs:
   test:
-    name: Lint, test, and smoke
-    runs-on: ubuntu-latest
+    name: Lint, test, and smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
 
