@@ -118,6 +118,7 @@ INFO pose sim_time=1.0 key="continuo/demo/actor/car1/pose" x=38.36 y=7.79 yaw_de
 INFO pose sim_time=1.0 key="continuo/demo/actor/car2/pose" x=-24.51 y=19.83 yaw_deg=-155.9
 ...
 done: world 'demo' reached sim time 30.0 in 3031 ticks (free-run), 9906 messages published
+actual time: 0.160 s (187x real-time)
 ```
 
 Two observer details worth knowing: log lines carry the *message's* sim time

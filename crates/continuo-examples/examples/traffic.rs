@@ -85,7 +85,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     let end = SimTime::ZERO + SimDuration::from_secs(30);
+    // Wall time is fine to read here: the example's main is outside the
+    // simulation, where wall clocks are forbidden.
+    let started = std::time::Instant::now();
     conductor.run_until(end)?;
+    let elapsed = started.elapsed();
 
     println!(
         "done: world '{}' reached sim time {} in {} ticks (free-run), {} messages published",
@@ -93,6 +97,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         conductor.sim_time(),
         conductor.tick(),
         published.load(Ordering::Relaxed)
+    );
+    println!(
+        "actual time: {:.3} s ({:.0}x real-time)",
+        elapsed.as_secs_f64(),
+        conductor.sim_time().as_secs_f64() / elapsed.as_secs_f64()
     );
     Ok(())
 }
