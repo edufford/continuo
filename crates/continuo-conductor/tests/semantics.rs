@@ -63,7 +63,7 @@ fn ms(n: i64) -> SimDuration {
 }
 
 fn at_ms(n: i64) -> SimTime {
-    SimTime::ZERO + ms(n)
+    SimTime::from_millis(n)
 }
 
 fn new_conductor() -> Conductor<InProcTransport> {

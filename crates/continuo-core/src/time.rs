@@ -30,6 +30,18 @@ impl SimTime {
         SimTime(ns)
     }
 
+    pub const fn from_micros(us: i64) -> Self {
+        SimTime(us * 1_000)
+    }
+
+    pub const fn from_millis(ms: i64) -> Self {
+        SimTime(ms * 1_000_000)
+    }
+
+    pub const fn from_secs(s: i64) -> Self {
+        SimTime(s * NANOS_PER_SEC)
+    }
+
     pub const fn as_nanos(self) -> i64 {
         self.0
     }

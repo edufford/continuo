@@ -9,6 +9,11 @@ use crate::error::ConductorError;
 /// means in the visibility rule.
 #[derive(Debug, Default)]
 pub(crate) struct Tree {
+    /// Every non-leaf node (including the world root, the empty path) maps
+    /// to its children's ids in declared order. This ordering is the sole
+    /// source of truth for the visibility rule's "earlier sibling branch"
+    /// comparison in [`Tree::releases_same_instant`]; leaves never appear
+    /// as keys.
     children: BTreeMap<ComponentPath, Vec<ComponentId>>,
 }
 
@@ -88,7 +93,7 @@ impl Registry {
         parent: &ComponentPath,
         component: Box<dyn Component>,
     ) -> Result<(usize, ComponentPath), ConductorError> {
-        let path = parent.child(component.id());
+        let path = parent.join(component.id());
 
         if self.by_path.contains_key(&path) {
             return Err(ConductorError::DuplicatePath(path));
@@ -99,7 +104,10 @@ impl Registry {
                 new: path,
             });
         }
-        // No existing leaf may be an ancestor of the new path.
+        // No existing leaf may be an ancestor of the new path. Exclusive
+        // range on purpose: only *strict* prefixes (depths 1..len-1 plus the
+        // parent itself) are ancestors — depth == len is the full path,
+        // already handled by the duplicate check above.
         for depth in 1..path.segments().len() {
             let ancestor = path.prefix(depth);
             if self.by_path.contains_key(&ancestor) {
@@ -110,6 +118,9 @@ impl Registry {
             }
         }
 
+        // Inclusive range here, in contrast: every segment of the new path
+        // (including the leaf itself, at depth == len) must be recorded as a
+        // child of the node above it.
         for depth in 1..=path.segments().len() {
             let node_parent = path.prefix(depth - 1);
             self.tree

@@ -33,6 +33,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let published = Arc::new(AtomicU64::new(0));
     let transport = MonitorTransport::new(InProcTransport::new(), {
         let published = published.clone();
+        // `move` applies to the closure's captures (the `published` Arc
+        // clone), not to the message: the sink still receives each message
+        // by reference (`&Message`) and never takes ownership of it.
         move |_m| {
             published.fetch_add(1, Ordering::Relaxed);
         }

@@ -11,6 +11,9 @@ pub struct Waypoints {
     /// cumulative[i] = arc length at the start of segment i; the last entry
     /// is the total loop length.
     cumulative: Vec<f64>,
+    /// Total loop length, kept directly so lookups need no last-element
+    /// access.
+    total: f64,
 }
 
 impl Waypoints {
@@ -27,7 +30,11 @@ impl Waypoints {
             total += ((b.0 - a.0).powi(2) + (b.1 - a.1).powi(2)).sqrt();
             cumulative.push(total);
         }
-        Waypoints { points, cumulative }
+        Waypoints {
+            points,
+            cumulative,
+            total,
+        }
     }
 
     /// An axis-aligned ellipse approximated by `samples` points.
@@ -45,11 +52,11 @@ impl Waypoints {
     }
 
     pub fn total_length(&self) -> f64 {
-        *self.cumulative.last().unwrap()
+        self.total
     }
 
     fn wrap(&self, s: f64) -> f64 {
-        s.rem_euclid(self.total_length())
+        s.rem_euclid(self.total)
     }
 
     /// Segment index and interpolation fraction at arc length `s`.
@@ -86,6 +93,21 @@ impl Waypoints {
     /// Arc length of the closest point on the path to `(x, y)`.
     /// Deterministic: ties resolve to the earliest segment.
     pub fn project(&self, x: f64, y: f64) -> f64 {
+        // Point-to-segment projection, evaluated per segment, keeping the
+        // closest hit. For each segment a→b:
+        //   (dx, dy)  segment direction vector b - a
+        //   len2      its squared length (avoids a sqrt; zero for
+        //             degenerate duplicate points)
+        //   t         the query point's position along the segment as a
+        //             fraction in [0, 1]: the perpendicular-foot parameter
+        //             dot(p - a, b - a) / |b - a|^2, clamped so points
+        //             "past" either endpoint project onto that endpoint
+        //   (px, py)  the resulting closest point on the segment
+        //   d2        squared distance from the query point to (px, py)
+        //             (squared distances compare identically to distances,
+        //             so no sqrt is needed)
+        // The winning segment converts t back to arc length via its
+        // cumulative start offset.
         let mut best_s = 0.0;
         let mut best_d2 = f64::INFINITY;
         for i in 0..self.points.len() {
@@ -100,6 +122,8 @@ impl Waypoints {
             };
             let (px, py) = (a.0 + dx * t, a.1 + dy * t);
             let d2 = (x - px).powi(2) + (y - py).powi(2);
+            // Strict '<': on an exact tie (e.g. a shared corner) the
+            // earliest segment wins, deterministically.
             if d2 < best_d2 {
                 best_d2 = d2;
                 best_s = self.cumulative[i] + (self.cumulative[i + 1] - self.cumulative[i]) * t;
@@ -136,10 +160,31 @@ mod tests {
 
     #[test]
     fn projection_recovers_arc_length() {
+        // Square loop, counter-clockwise from the origin:
+        //   bottom (0,0)→(10,0) s=[0,10), right (10,0)→(10,10) s=[10,20),
+        //   top (10,10)→(0,10) s=[20,30), left (0,10)→(0,0) s=[30,40).
         let p = square();
         let s = p.project(7.0, -1.0); // below the bottom edge
         assert!((s - 7.0).abs() < 1e-12);
         let s = p.project(11.0, 3.0); // right of the right edge
         assert!((s - 13.0).abs() < 1e-12);
+        let s = p.project(4.0, 11.0); // above the top edge (runs right-to-left)
+        assert!((s - 26.0).abs() < 1e-12);
+        let s = p.project(-1.0, 3.0); // left of the left edge (runs top-to-bottom)
+        assert!((s - 37.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn projection_at_corner_ties_to_earliest_segment() {
+        let p = square();
+        // (11, -1) is closest to the (10, 0) corner, shared by the bottom
+        // segment (t=1, s=10) and the right segment (t=0, s=10): both give
+        // the same distance and the same arc length here, and the strict
+        // '<' tie-break keeps the bottom (earliest) segment's answer.
+        let s = p.project(11.0, -1.0);
+        assert!((s - 10.0).abs() < 1e-12);
+        // A point exactly on a corner projects to that corner.
+        let s = p.project(0.0, 10.0);
+        assert!((s - 30.0).abs() < 1e-12);
     }
 }

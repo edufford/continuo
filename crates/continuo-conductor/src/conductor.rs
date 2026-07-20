@@ -67,6 +67,15 @@ impl<T: Transport> Conductor<T> {
         // transport (continuo/{world}/conductor/join), apply them at step
         // boundaries, schedule the first step at the join time instead of
         // ZERO, and record admissions in the event log for replay.
+        //
+        // For remote components the conductor never holds the Box — the
+        // component lives in its host process. Registration then needs only
+        // the component's *metadata*, carried in the join request:
+        //   { parent path, id (=> declared sibling order from arrival order),
+        //     subscriptions, first_due }.
+        // The registry entry becomes Local(Box<dyn Component>) vs.
+        // Remote(metadata); scheduling, the visibility rule, and seq
+        // assignment work identically on both since they only use metadata.
         let parent = ComponentPath::parse(parent)?;
         let subscriptions = component.subscriptions();
         let (index, path) = self.registry.add(&parent, component)?;
@@ -87,8 +96,11 @@ impl<T: Transport> Conductor<T> {
         self.sim_time = now;
         self.tick += 1;
 
-        // TODO(M7): in distributed mode TickStart/TickDone travel over the
-        // transport to remote hosts and the barrier gathers acks; in-proc,
+        // TODO(M7): in distributed mode the conductor publishes TickStart on
+        // the transport; every component (host) subscribes, and steps itself
+        // when TickStart.sim_time reaches its own next_due. The conductor
+        // barriers on TickDone acks from exactly the components it knows are
+        // due (their next_due values arrived in prior TickDones). In-proc,
         // activation is a direct call and the messages exist as trace events.
         let tick_start = TickStart {
             tick: self.tick,
@@ -127,6 +139,14 @@ impl<T: Transport> Conductor<T> {
                 });
             }
 
+            // The conductor (not the component) turns outbox entries into
+            // published Messages so that the authoritative metadata —
+            // publisher identity, per-publisher seq, and timestamp — is
+            // stamped centrally. Components stay transport-blind and cannot
+            // misattribute or reorder their own traffic, which the
+            // deterministic (publisher, seq) delivery order depends on. In
+            // distributed mode the component's *host* plays this role.
+            //
             // TODO(M2): feed the canonical payload bytes into the per-tick
             // state hash and the record/replay event log (a MonitorTransport
             // sink over these publishes).
@@ -146,6 +166,13 @@ impl<T: Transport> Conductor<T> {
             entry.last_step = Some(now);
             self.schedule.insert(next_due, index);
 
+            // TickDone is the step-completed ack of the tick protocol: it
+            // both closes the barrier for this component and carries its
+            // next_due, which is how the schedule learns when to wake it
+            // again. In-proc both facts arrive via step()'s return value, so
+            // TickDone exists here as a trace event; in distributed mode
+            // (M7) it is the actual message a remote host sends back and the
+            // barrier blocks on.
             let tick_done = TickDone {
                 tick: self.tick,
                 component_id: path

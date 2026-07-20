@@ -17,17 +17,25 @@ fn run_world(sim_seconds: i64) -> Vec<String> {
     let transport = MonitorTransport::new(InProcTransport::new(), {
         let events = events.clone();
         move |m: &Message| {
-            events.lock().unwrap().push(format!(
-                "{}|{}|{}|{}|{}",
-                m.time.to_canonical_string(),
-                m.key,
-                m.publisher,
-                m.seq,
-                String::from_utf8(m.payload.clone()).unwrap()
-            ));
+            events
+                .lock()
+                .expect("events mutex is never poisoned (no panicking holders)")
+                .push(format!(
+                    "{}|{}|{}|{}|{}",
+                    m.time.to_canonical_string(),
+                    m.key,
+                    m.publisher,
+                    m.seq,
+                    String::from_utf8(m.payload.clone())
+                        .expect("payloads are serialized JSON, which is always valid UTF-8")
+                ));
         }
     });
 
+    // 72 samples = one point per 5 degrees of arc; on the 40 m semi-axis the
+    // worst-case chord deviation is ~4 cm, smooth enough for the
+    // controller's 6 m lookahead. Any fixed count is equally deterministic —
+    // this one just keeps the polyline visually round.
     let path = Arc::new(Waypoints::ellipse((0.0, 0.0), 40.0, 25.0, 72));
     let mut conductor = Conductor::new(
         ConductorConfig {
@@ -36,8 +44,14 @@ fn run_world(sim_seconds: i64) -> Vec<String> {
         },
         transport,
     )
-    .unwrap();
+    .expect("free-run config is always accepted");
 
+    // Each car is registered as a composite `carN = [controller, physics]`.
+    // Registration order is declared sibling order, which fixes both the
+    // execution order at shared instants and the visibility rule's "earlier
+    // sibling": the controller steps first and its command reaches the
+    // physics in the same step; the physics' pose reaches the controller at
+    // its next step.
     for (i, car) in ["car1", "car2", "car3"].into_iter().enumerate() {
         let s0 = path.total_length() * i as f64 / 3.0;
         let initial_pose = Pose {
@@ -50,33 +64,39 @@ fn run_world(sim_seconds: i64) -> Vec<String> {
                 Box::new(PathFollowController::new(
                     car,
                     path.clone(),
-                    SimDuration::from_millis(100),
-                    8.0,
-                    6.0,
-                    1.5,
-                    1.2,
+                    SimDuration::from_millis(100), // control period
+                    8.0,                           // speed, m/s
+                    6.0,                           // lookahead distance, m
+                    1.5,                           // heading gain, 1/s
+                    1.2,                           // max yaw rate, rad/s
                     initial_pose,
                 )),
             )
-            .unwrap();
+            .expect("controller path is unique per car");
         conductor
             .add_component(
                 car,
                 Box::new(UnicyclePhysics::new(
                     car,
-                    SimDuration::from_millis(10),
+                    SimDuration::from_millis(10), // physics period
                     initial_pose,
                 )),
             )
-            .unwrap();
+            .expect("physics path is unique per car");
     }
 
     conductor
-        .run_until(SimTime::ZERO + SimDuration::from_secs(sim_seconds))
-        .unwrap();
+        .run_until(SimTime::from_secs(sim_seconds))
+        .expect("demo components always schedule strictly forward");
 
-    let events = events.lock().unwrap();
-    events.clone()
+    // The monitor's sink closure (owned by the conductor's transport) holds
+    // the second Arc reference to `events`. Dropping the conductor releases
+    // it, so the Vec can be taken out of the Arc/Mutex without cloning.
+    drop(conductor);
+    Arc::try_unwrap(events)
+        .expect("conductor drop released the only other Arc reference")
+        .into_inner()
+        .expect("events mutex is never poisoned (no panicking holders)")
 }
 
 #[test]
@@ -97,9 +117,15 @@ fn cars_actually_move_around_the_loop() {
         car1.len()
     );
 
-    let pose_json = |line: &str| line.rsplit('|').next().unwrap().to_string();
-    let first: Pose = serde_json::from_str(&pose_json(car1.first().unwrap())).unwrap();
-    let last: Pose = serde_json::from_str(&pose_json(car1.last().unwrap())).unwrap();
+    let pose = |line: &str| -> Pose {
+        let json = line
+            .rsplit('|')
+            .next()
+            .expect("rsplit yields at least one piece for any line");
+        serde_json::from_str(json).expect("pose payloads deserialize as Pose")
+    };
+    let first = pose(car1.first().expect("stream verified non-empty above"));
+    let last = pose(car1.last().expect("stream verified non-empty above"));
     let dist = ((last.position.x - first.position.x).powi(2)
         + (last.position.y - first.position.y).powi(2))
     .sqrt();

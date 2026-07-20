@@ -74,7 +74,8 @@ impl ComponentPath {
         self.0.is_empty()
     }
 
-    pub fn child(&self, id: ComponentId) -> ComponentPath {
+    /// Returns a new path with `id` appended, like `Path::join`.
+    pub fn join(&self, id: ComponentId) -> ComponentPath {
         let mut segments = self.0.clone();
         segments.push(id);
         ComponentPath(segments)
