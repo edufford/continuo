@@ -101,10 +101,18 @@ Sub-components publish on key expressions under their actor (e.g.
 `continuo/{world}/actor/{id}/sensor/imu`), so wiring is uniform whether a
 consumer is a sibling sub-component (same tick) or another actor (next tick).
 
-Distribution note: the natural process boundary is the actor level. A composite
-*can* be split across processes, but same-tick sequential delivery then costs
-network round-trips within a tick — co-locate pipelines unless there is a
-strong reason not to.
+Distribution note: **same-instant delivery never crosses a process (host)
+boundary** — a coupled composite is always co-located. Splitting one would
+put sequential network hops inside a single instant and force intra-instant
+phases into the tick protocol; instead, an expensive self-contained
+sub-component (camera renderer, lidar) can be declared **decoupled**: it
+keeps its place in the actor's namespace and lifecycle but uses cross-actor
+(next-step) visibility, so it can be placed on any host. Decoupled sensors
+also *pipeline* — computing step T while consumers use T−1 — which beats
+serializing the instant for throughput and matches real sensor latency.
+Coupled same-instant pipelines (controller → physics) are for tight, cheap
+loops and stay co-located. The coupling flag becomes part of registration
+metadata (milestone 4).
 
 ### Transport
 
@@ -325,6 +333,12 @@ same as a timeout.
   same tick protocol.
 - Note: the per-tick gather must stay deterministic (sort by publisher/sequence,
   not arrival) — already guaranteed by the determinism rules above.
+- One conductor per world; remote processes run **hosts** (component
+  container + transport bridge + publish stamping). Data flows host↔host
+  over pub/sub without routing through the conductor. Because same-instant
+  delivery never crosses hosts (see Hierarchy), the remote inbox release
+  rule is simply `msg.time < now` — sibling-order knowledge never leaves
+  the conductor.
 
 ## Workspace layout
 
@@ -338,7 +352,7 @@ continuo/
     continuo-viz-bridge       # poses -> JSON over WebSocket
     continuo-fmi              # FmuComponent adapter (FMI 3.0 CS)        [milestone 6]
     continuo-transport-zenoh  # Zenoh Transport impl                     [milestone 7]
-  examples/traffic.rs         # N cars driving a loop
+    continuo-examples         # runnable example worlds (traffic demo)
   python/continuo_viz/        # WebSocket client + 2D top-down view
 ```
 
@@ -414,6 +428,11 @@ the mix. They are independent and can swap if priorities shift.
   graph** (nodes + transforms + open properties) for later expansion.
 - **2026-07-17** — **Replay-from-log over snapshot/restore**; snapshots
   deferred (FMI 3.0 `SerializeFMUState` is the hook if ever needed).
+- **2026-07-18** — **Same-instant delivery never crosses a host boundary.**
+  Heavy sub-components can be declared **decoupled**: they stay in the
+  actor's namespace/lifecycle but use next-step visibility, freeing their
+  host placement and pipelining with their actor instead of serializing the
+  instant. Coupling flag joins registration metadata in milestone 4.
 
 ## Deferred (decided-not-now, revisit when they bite)
 

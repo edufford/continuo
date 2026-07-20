@@ -1,0 +1,16 @@
+[package]
+name = "continuo-examples"
+description = "Runnable example worlds for continuo"
+publish = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dev-dependencies]
+continuo-core = { workspace = true }
+continuo-transport = { workspace = true }
+continuo-conductor = { workspace = true }
+continuo-actors = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

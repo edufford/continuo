@@ -1,0 +1,10 @@
+[package]
+name = "continuo-transport"
+description = "Transport abstraction and deterministic in-process implementation for continuo"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+continuo-core = { workspace = true }
