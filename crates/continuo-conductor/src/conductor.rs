@@ -72,7 +72,9 @@ impl<T: Transport> Conductor<T> {
         // component lives in its host process. Registration then needs only
         // the component's *metadata*, carried in the join request:
         //   { parent path, id (=> declared sibling order from arrival order),
-        //     subscriptions, first_due }.
+        //     subscriptions, first_due, coupled/decoupled flag (PLAN.md
+        //     decision 2026-07-18: decoupled children use next-step
+        //     visibility, freeing their host placement) }.
         // The registry entry becomes Local(Box<dyn Component>) vs.
         // Remote(metadata); scheduling, the visibility rule, and seq
         // assignment work identically on both since they only use metadata.
