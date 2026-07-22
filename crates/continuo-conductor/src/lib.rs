@@ -15,4 +15,4 @@ mod schedule;
 pub use conductor::Conductor;
 pub use config::ConductorConfig;
 pub use error::ConductorError;
-pub use record::{Divergence, EventLog, Recorder, TickFingerprint};
+pub use record::{Divergence, EventLog, PlaybackComponent, Recorder, TickFingerprint, Verifier};

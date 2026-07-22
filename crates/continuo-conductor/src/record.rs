@@ -2,17 +2,34 @@
 //! published messages, recorded as human-readable JSON lines.
 //!
 //! Recording taps the two existing observation points — a
-//! `MonitorTransport` callback for messages and the conductor's tick callback for
-//! fingerprints — so the sim itself is untouched by being recorded. Replay in
-//! milestone 2 is *re-execution + comparison*: run the same scenario again,
-//! record it, and diff the logs; [`EventLog::first_divergence`] reports the
-//! earliest mismatch.
+//! `MonitorTransport` callback for messages and the conductor's tick
+//! callback for fingerprints — so the sim itself is untouched by being
+//! recorded.
+//!
+//! A recorded log has two distinct consumers, near-opposite in how the
+//! log's data flows relative to the simulation:
+//!
+//! - **Verification** ([`Verifier`]): the log is an *expected-output
+//!   ledger* and nothing flows into the sim. Every component re-runs live;
+//!   each event is checked against the log as it happens, and the driving
+//!   loop stops at the first divergence — which means "determinism is
+//!   broken" (or the log was modified).
+//! - **Open-loop resimulation** ([`PlaybackComponent`]): the log is an
+//!   *input stimulus*. Selected recorded publishers are replaced by
+//!   playback doubles that re-publish their recorded messages into the
+//!   sim, while changed components run live against them. Nothing is
+//!   compared; the new behavior diverging from the recording is the result
+//!   being studied. (The played-back actors do not react to the live ones
+//!   — that is what "open-loop" means.)
+//!
+//! [`EventLog::first_divergence`] remains for comparing two
+//! already-recorded logs.
 
 use std::fmt;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use continuo_core::{Message, SimTime, hash::hex_u64};
+use continuo_core::{Component, ComponentId, KeyExpr, Message, SimTime, StepCtx, hash::hex_u64};
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 use thiserror::Error;
@@ -187,6 +204,23 @@ impl EventLog {
     }
 }
 
+/// Converts a live transport message into its recorded form.
+fn recorded_message(m: &Message) -> RecordedMessage {
+    let payload_text = std::str::from_utf8(&m.payload)
+        .expect("payloads are serialized JSON, which is always valid UTF-8");
+    let payload = RawValue::from_string(payload_text.to_string()).expect("payloads are valid JSON");
+
+    // Return the message with paths flattened and payload embedded as raw
+    // JSON.
+    RecordedMessage {
+        time: m.time,
+        key: m.key.to_string(),
+        publisher: m.publisher.to_string(),
+        seq: m.seq,
+        payload,
+    }
+}
+
 fn event_mismatch(a: &LogEvent, b: &LogEvent) -> Option<String> {
     match (a, b) {
         (LogEvent::Tick(x), LogEvent::Tick(y)) => {
@@ -249,21 +283,11 @@ impl Recorder {
         // Return the recording callback, holding its own handle to the
         // shared log.
         move |m: &Message| {
-            let payload_text = std::str::from_utf8(&m.payload)
-                .expect("payloads are serialized JSON, which is always valid UTF-8");
-            let payload =
-                RawValue::from_string(payload_text.to_string()).expect("payloads are valid JSON");
             inner
                 .lock()
                 .expect("recorder mutex is never poisoned")
                 .events
-                .push(LogEvent::Msg(RecordedMessage {
-                    time: m.time,
-                    key: m.key.to_string(),
-                    publisher: m.publisher.to_string(),
-                    seq: m.seq,
-                    payload,
-                }));
+                .push(LogEvent::Msg(recorded_message(m)));
         }
     }
 
@@ -293,6 +317,222 @@ impl Recorder {
                 &serde_json::to_string(&guard.events).expect("events serialize"),
             )
             .expect("events round-trip"),
+        }
+    }
+}
+
+/// Live replay verification: attach these callbacks to a re-run (message
+/// callback on the `MonitorTransport`, tick callback on the conductor) and
+/// every event is compared, in order, against the recorded log as it
+/// happens — so the driving loop can stop at the first divergence instead
+/// of running to completion:
+///
+/// ```text
+/// while !checker.diverged()
+///     && conductor.next_scheduled().is_some_and(|t| t <= end)
+/// {
+///     conductor.step_once()?;
+/// }
+/// ```
+///
+/// Both channels matter: message comparison catches log tampering and
+/// wire-level drift (a modified log line leaves its neighboring
+/// fingerprints intact); fingerprint comparison catches internal-state
+/// divergence (`state_bytes`) that never surfaces in messages.
+#[derive(Clone)]
+pub struct Verifier {
+    inner: Arc<Mutex<CheckerInner>>,
+}
+
+struct CheckerInner {
+    expected: EventLog,
+    cursor: usize,
+    divergence: Option<Divergence>,
+}
+
+impl Verifier {
+    /// Builds a checker against `expected`. The re-run's world name and
+    /// seed are verified against the log header immediately, so a checker
+    /// for the wrong scenario is diverged before the first event.
+    pub fn new(expected: EventLog, world: &str, seed: u64) -> Self {
+        let divergence =
+            (expected.header.world != world || expected.header.seed != seed).then(|| Divergence {
+                event_index: None,
+                description: format!(
+                    "log was recorded for world {:?} seed {}; replaying world {:?} seed {}",
+                    expected.header.world, expected.header.seed, world, seed
+                ),
+            });
+
+        // Return the checker, already diverged on a header mismatch.
+        Verifier {
+            inner: Arc::new(Mutex::new(CheckerInner {
+                expected,
+                cursor: 0,
+                divergence,
+            })),
+        }
+    }
+
+    fn check(inner: &mut CheckerInner, actual: &LogEvent) {
+        if inner.divergence.is_some() {
+            return;
+        }
+        match inner.expected.events.get(inner.cursor) {
+            None => {
+                inner.divergence = Some(Divergence {
+                    event_index: Some(inner.cursor),
+                    description: "the re-run produced more events than the recorded log"
+                        .to_string(),
+                });
+            }
+            Some(expected) => {
+                if let Some(description) = event_mismatch(expected, actual) {
+                    inner.divergence = Some(Divergence {
+                        event_index: Some(inner.cursor),
+                        description,
+                    });
+                }
+            }
+        }
+        inner.cursor += 1;
+    }
+
+    pub fn message_callback(&self) -> impl FnMut(&Message) + Send + 'static {
+        let inner = self.inner.clone();
+
+        // Return the checking callback, holding its own handle to the
+        // shared cursor state.
+        move |m: &Message| {
+            let mut inner = inner.lock().expect("checker mutex is never poisoned");
+            Self::check(&mut inner, &LogEvent::Msg(recorded_message(m)));
+        }
+    }
+
+    pub fn tick_callback(&self) -> impl FnMut(&TickFingerprint) + Send + 'static {
+        let inner = self.inner.clone();
+
+        // Return the checking callback, holding its own handle to the
+        // shared cursor state.
+        move |fingerprint: &TickFingerprint| {
+            let mut inner = inner.lock().expect("checker mutex is never poisoned");
+            Self::check(&mut inner, &LogEvent::Tick(*fingerprint));
+        }
+    }
+
+    /// Whether a divergence has been found — the driving loop's stop signal.
+    pub fn diverged(&self) -> bool {
+        self.inner
+            .lock()
+            .expect("checker mutex is never poisoned")
+            .divergence
+            .is_some()
+    }
+
+    /// The verdict so far: `Ok(verified event count)` if every event matched
+    /// and none of the recorded log remains unconsumed, otherwise the first
+    /// divergence (including a truncated re-run, which leaves recorded
+    /// events unmatched).
+    pub fn finish(&self) -> Result<usize, Divergence> {
+        let inner = self.inner.lock().expect("checker mutex is never poisoned");
+        if let Some(divergence) = &inner.divergence {
+            return Err(divergence.clone());
+        }
+        if inner.cursor < inner.expected.events.len() {
+            return Err(Divergence {
+                event_index: Some(inner.cursor),
+                description: format!(
+                    "the recorded log has {} more event(s) than the re-run",
+                    inner.expected.events.len() - inner.cursor
+                ),
+            });
+        }
+
+        // Return the number of events verified.
+        Ok(inner.cursor)
+    }
+}
+
+/// Replays one recorded publisher's messages as an ordinary component —
+/// the open-loop resimulation stimulus (see the module docs for how this
+/// differs from verification).
+///
+/// Built from an event log filtered to one publisher path (including its
+/// sub-components): the recorded messages are re-published at their
+/// recorded sim times, on their recorded keys, with byte-identical
+/// payloads. Downstream components see them exactly as if the original
+/// were running, so a live component can be swapped for its playback
+/// double without consumers noticing. The double never reacts to the live
+/// world — its behavior is pure data, which also keeps hybrid runs fully
+/// deterministic and recordable.
+pub struct PlaybackComponent {
+    id: ComponentId,
+    /// (time, key, payload) in recorded order.
+    messages: Vec<(SimTime, KeyExpr, Box<RawValue>)>,
+    cursor: usize,
+}
+
+impl PlaybackComponent {
+    /// Filters `log` to messages recorded from `publisher` (a component
+    /// path string) or any of its sub-components. `id` is the double's own
+    /// registration id — typically the original actor's name.
+    pub fn from_log(id: ComponentId, log: &EventLog, publisher: &str) -> Self {
+        let prefix = format!("{publisher}/");
+        let messages = log
+            .events
+            .iter()
+            .filter_map(|event| match event {
+                LogEvent::Msg(m)
+                    if m.publisher == publisher || m.publisher.starts_with(&prefix) =>
+                {
+                    Some((
+                        m.time,
+                        KeyExpr::new(m.key.clone()).expect("recorded keys are valid"),
+                        m.payload.clone(),
+                    ))
+                }
+                _ => None,
+            })
+            .collect();
+
+        // Return the double, positioned at the start of its recording.
+        PlaybackComponent {
+            id,
+            messages,
+            cursor: 0,
+        }
+    }
+}
+
+impl Component for PlaybackComponent {
+    fn id(&self) -> ComponentId {
+        self.id.clone()
+    }
+
+    fn subscriptions(&self) -> Vec<KeyExpr> {
+        Vec::new()
+    }
+
+    fn step(&mut self, ctx: &mut StepCtx) -> SimTime {
+        // Publish everything recorded for this instant; skip anything the
+        // schedule somehow passed over (e.g. a double registered after its
+        // first recorded messages) rather than stalling the run on it.
+        while let Some((time, key, payload)) = self.messages.get(self.cursor) {
+            if *time > ctx.now() {
+                break;
+            }
+            if *time == ctx.now() {
+                ctx.publish(key.clone(), payload)
+                    .expect("recorded payloads re-serialize verbatim");
+            }
+            self.cursor += 1;
+        }
+
+        // Return the next recorded message time, or effectively never once
+        // the recording is exhausted.
+        match self.messages.get(self.cursor) {
+            Some((time, _, _)) => *time,
+            None => SimTime::from_nanos(i64::MAX),
         }
     }
 }
@@ -332,6 +572,67 @@ mod tests {
         let back = EventLog::from_jsonl(&text).unwrap();
         assert!(log.first_divergence(&back).is_none());
         assert_eq!(back.final_world_hash(), Some(0x1234_5678_9abc_def0));
+    }
+
+    fn sample_message() -> Message {
+        Message {
+            key: continuo_core::KeyExpr::new("w/a").unwrap(),
+            publisher: continuo_core::ComponentPath::parse("p").unwrap(),
+            seq: 0,
+            time: SimTime::ZERO,
+            payload: br#"{"v":1.5}"#.to_vec(),
+        }
+    }
+
+    fn sample_fingerprint() -> TickFingerprint {
+        TickFingerprint {
+            tick: 1,
+            sim_time: SimTime::ZERO,
+            tick_hash: 0xdead_beef,
+            world_hash: 0x1234_5678_9abc_def0,
+        }
+    }
+
+    #[test]
+    fn checker_accepts_a_matching_stream() {
+        let checker = Verifier::new(sample_log(), "test", 7);
+        checker.message_callback()(&sample_message());
+        checker.tick_callback()(&sample_fingerprint());
+        assert!(!checker.diverged());
+        assert_eq!(checker.finish().expect("streams match"), 2);
+    }
+
+    #[test]
+    fn checker_flags_the_first_mismatching_event() {
+        let mut expected = sample_log();
+        if let LogEvent::Tick(fingerprint) = &mut expected.events[1] {
+            fingerprint.world_hash ^= 1;
+        }
+        let checker = Verifier::new(expected, "test", 7);
+        checker.message_callback()(&sample_message());
+        assert!(!checker.diverged(), "message still matches");
+        checker.tick_callback()(&sample_fingerprint());
+        assert!(checker.diverged(), "fingerprint mismatch must be caught");
+        let divergence = checker.finish().expect_err("must diverge");
+        assert_eq!(divergence.event_index, Some(1));
+    }
+
+    #[test]
+    fn checker_flags_a_truncated_rerun() {
+        let checker = Verifier::new(sample_log(), "test", 7);
+        checker.message_callback()(&sample_message());
+        // The re-run ends here; the recorded tick is never matched.
+        let divergence = checker.finish().expect_err("must diverge");
+        assert_eq!(divergence.event_index, Some(1));
+        assert!(divergence.description.contains("more event(s)"));
+    }
+
+    #[test]
+    fn checker_rejects_a_header_mismatch_immediately() {
+        let checker = Verifier::new(sample_log(), "test", 8); // wrong seed
+        assert!(checker.diverged());
+        let divergence = checker.finish().expect_err("must diverge");
+        assert_eq!(divergence.event_index, None);
     }
 
     #[test]

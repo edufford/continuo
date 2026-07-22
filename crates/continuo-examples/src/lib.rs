@@ -1,6 +1,11 @@
-//! Runnable example worlds for continuo.
+//! Shared world-building for the traffic examples.
 //!
-//! This crate contains no library code — the worlds live in `examples/`:
+//! The runnable worlds live in `examples/`, smallest first:
 //!
-//! - `traffic`: three cars circulating an oval loop
+//! - `traffic` — the base demo: three cars circulating an oval, free-run
 //!   (`cargo run -p continuo-examples --example traffic`)
+//! - `traffic_record` — records the demo to an event log file
+//! - `traffic_verify` — determinism verification of a recorded log
+//! - `traffic_resim` — open-loop resimulation against a recorded log
+
+pub mod traffic_world;

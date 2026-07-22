@@ -444,6 +444,24 @@ the mix. They are independent and can swap if priorities shift.
   `EventLog::first_divergence`. `StepCtx::rng()` gives a fresh per-step
   stream from `(component_seed, now)`; persistent streams seed a stored
   `DetRng` from `ctx.component_seed()`.
+- **2026-07-21** — Replay verifies **live during the re-run** and stops at
+  the first divergence (message and fingerprint callbacks; both channels
+  are needed — a tampered log message leaves its neighboring fingerprints
+  intact, and state-only divergence never appears in messages). Post-hoc
+  `first_divergence` remains for comparing two recorded logs.
+- **2026-07-21** — A recorded log has two named consumers, split by how the
+  log's data flows relative to the sim: **verification** (`Verifier`,
+  `--verify`) treats it as an expected-output ledger — everything re-runs
+  live, nothing from the log enters the sim, divergence = broken
+  determinism, halt and fail; **open-loop resimulation**
+  (`PlaybackComponent`, `--resim`) treats it as input stimulus — selected
+  recorded publishers are replaced by playback doubles re-publishing their
+  recorded messages, changed components run live against them, nothing is
+  compared, and divergence from the recording is the engineering result
+  under study. Playback doubles are pure data, so hybrid runs stay fully
+  deterministic and recordable — resim experiments are themselves
+  verifiable. No general "divergence summary" mode: the sim cannot report
+  behavioral differences usefully; observe resim runs like any other run.
 
 ## Deferred (decided-not-now, revisit when they bite)
 

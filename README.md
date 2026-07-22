@@ -70,8 +70,13 @@ instant, and repeats.
   conductor emits a **fingerprint**: an FNV-1a 64 hash over each stepped
   component's outputs (and, for components implementing `state_bytes`, its
   internal state), chained into a running world hash. Two runs of the same
-  seeded world produce identical hash streams (tested), and runs can be
-  recorded to a JSON-lines event log and replay-verified.
+  seeded world produce identical hash streams (tested). Runs can be
+  recorded to a JSON-lines event log, then used two opposite ways:
+  **verification** (re-run everything live and check each event against the
+  log, stopping at the first divergence — divergence means broken
+  determinism) or **open-loop resimulation** (play selected recorded
+  publishers back into the sim as stimulus for changed components —
+  divergence from the recording is the result being studied).
 - **Human-readable messaging.** Every payload is canonical JSON. Time is
   decimal seconds; poses are named-field vectors and quaternions (never
   arrays); the wire format is directly inspectable and, later, hashable.
@@ -87,7 +92,7 @@ instant, and repeats.
 | [`continuo-transport`](crates/continuo-transport/) | `Transport` trait, deterministic `InProcTransport`, `MonitorTransport` for out-of-band message recording |
 | [`continuo-conductor`](crates/continuo-conductor/) | Registry (component tree as data), event schedule, the conductor loop, tick fingerprints + event log recording |
 | [`continuo-actors`](crates/continuo-actors/) | Sample components: waypoint path, path-follow controller, unicycle physics, pose logger |
-| [`continuo-examples`](crates/continuo-examples/) | Runnable example worlds (`examples/traffic.rs`) |
+| [`continuo-examples`](crates/continuo-examples/) | Runnable example worlds: `traffic` (base demo), `traffic_record`, `traffic_verify`, `traffic_resim` |
 
 Planned (see PLAN.md milestones): real-time pacing (M3), runtime join/leave
 (M4), Python visualization (M5), FMI 3.0 CS import (M6), Zenoh transport
@@ -116,10 +121,17 @@ cargo fmt --all
 # Run the demo: three cars circulating an oval, free-run, 30 sim-seconds
 cargo run -p continuo-examples --example traffic
 
-# Record the run's event log (messages + tick fingerprints), then verify a
-# re-run against it (exits non-zero at the first divergence)
-cargo run -p continuo-examples --example traffic -- --record run.jsonl
-cargo run -p continuo-examples --example traffic -- --replay run.jsonl
+# Record the run's event log (messages + tick fingerprints)
+cargo run -p continuo-examples --example traffic_record -- run.jsonl
+
+# Determinism verification: re-run everything live, checking each event
+# against the log as it happens; stops and exits non-zero at the first
+# divergence
+cargo run -p continuo-examples --example traffic_verify -- run.jsonl
+
+# Open-loop resimulation: car1 runs live while car2/car3 are played back
+# from the log — the harness for what-if experiments (nothing is compared)
+cargo run -p continuo-examples --example traffic_resim -- run.jsonl
 ```
 
 The demo logs each car's pose once per sim-second and finishes in a fraction
@@ -133,7 +145,7 @@ INFO initial pose sim_time=0.0 key="continuo/demo/actor/car3/pose" x=-17.02 y=-2
 INFO pose sim_time=1.0 key="continuo/demo/actor/car1/pose" x=38.36 y=7.79 yaw_deg=112.3
 INFO pose sim_time=1.0 key="continuo/demo/actor/car2/pose" x=-24.51 y=19.83 yaw_deg=-155.9
 ...
-done: world 'demo' reached sim time 30.0 in 3031 ticks (free-run), 9906 messages published
+done: world 'demo' reached sim time 30.0 in 3031 ticks (free-run)
 actual time: 0.246 s (122x real-time), world hash 29b27762a793f916
 ```
 

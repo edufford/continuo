@@ -41,27 +41,32 @@ jobs:
       - name: Run the traffic demo
         run: cargo run -p continuo-examples --example traffic
 
-      - name: Record a run and verify replay of the unmodified log
+      - name: Record a run and verify the unmodified log
         shell: bash
         run: |
-          cargo run -q -p continuo-examples --example traffic -- --record ci-run.jsonl
-          cargo run -q -p continuo-examples --example traffic -- --replay ci-run.jsonl
+          cargo run -q -p continuo-examples --example traffic_record -- ci-run.jsonl
+          cargo run -q -p continuo-examples --example traffic_verify -- ci-run.jsonl
 
-      - name: Verify replay detects divergence when the log is modified
+      - name: Verify divergence is detected when the log is modified
         shell: bash
         run: |
           # Corrupt one pose x-coordinate mid-run — the first match at or
           # after line 6000, roughly sim time 14 s of 30 — keeping the JSON
-          # valid, so replay verifies a long clean prefix before diverging.
+          # valid, so verification checks a long clean prefix before
+          # diverging (and stops there rather than running to completion).
           awk 'NR>=6000 && !done && /"x":/ { sub(/"x":[-0-9.eE]*/, "\"x\":99.9"); done=1 } { print }' \
             ci-run.jsonl > ci-tampered.jsonl
           if cmp -s ci-run.jsonl ci-tampered.jsonl; then
-            echo "ERROR: sed matched nothing, log was NOT modified - this check would be vacuous"
+            echo "ERROR: awk matched nothing, log was NOT modified - this check would be vacuous"
             exit 1
           fi
-          echo "OK: log modified (first pose x-coordinate corrupted to 99.9)"
-          if cargo run -q -p continuo-examples --example traffic -- --replay ci-tampered.jsonl; then
-            echo "ERROR: replay PASSED on the modified log - divergence was NOT detected"
+          echo "OK: log modified (one pose x-coordinate corrupted to 99.9)"
+          if cargo run -q -p continuo-examples --example traffic_verify -- ci-tampered.jsonl; then
+            echo "ERROR: verification PASSED on the modified log - divergence was NOT detected"
             exit 1
           fi
-          echo "OK: replay failed with nonzero exit - divergence detected as expected"
+          echo "OK: verification failed with nonzero exit - divergence detected as expected"
+
+      - name: Run open-loop resimulation from the recorded log
+        shell: bash
+        run: cargo run -q -p continuo-examples --example traffic_resim -- ci-run.jsonl

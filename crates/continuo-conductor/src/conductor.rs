@@ -78,6 +78,13 @@ impl<T: Transport> Conductor<T> {
         self.sim_time
     }
 
+    /// The earliest scheduled due time, if anything remains scheduled —
+    /// lets callers drive `step_once` themselves (e.g. live replay checking
+    /// that stops at the first divergence).
+    pub fn next_scheduled(&self) -> Option<SimTime> {
+        self.schedule.earliest()
+    }
+
     /// Total steps executed so far (each instant with due components is one
     /// tick).
     pub fn tick(&self) -> u64 {

@@ -1,7 +1,10 @@
 //! Determinism-harness semantics: seeded RNG streams, tick fingerprints, and the
 //! state-hash vs. output-hash distinction.
 
-use continuo_conductor::{Conductor, ConductorConfig, EventLog, Recorder};
+use continuo_conductor::record::LogEvent;
+use continuo_conductor::{
+    Conductor, ConductorConfig, EventLog, PlaybackComponent, Recorder, Verifier,
+};
 use continuo_core::{Component, ComponentId, DetRng, KeyExpr, SimDuration, SimTime, StepCtx};
 use continuo_transport::{InProcTransport, MonitorTransport};
 
@@ -152,6 +155,109 @@ fn state_bytes_exposes_hidden_state_to_the_hash() {
     assert_ne!(run_hidden_world(0, true), run_hidden_world(1000, true));
     // And it stays deterministic: same hidden state, same hash.
     assert_eq!(run_hidden_world(7, true), run_hidden_world(7, true));
+}
+
+#[test]
+fn live_verification_stops_at_the_first_divergence() {
+    let mut expected = run_noise_world(42);
+    let total_events = expected.events.len();
+    assert_eq!(total_events, 22, "11 steps, one message + one tick each");
+
+    // Tamper with a mid-log message payload (event 8 = the 5th step's
+    // message, at sim time 40 ms of 100).
+    let LogEvent::Msg(message) = &mut expected.events[8] else {
+        panic!("event 8 is expected to be a message");
+    };
+    message.payload =
+        serde_json::value::RawValue::from_string("0.5".to_string()).expect("valid JSON");
+
+    // Re-run the same world against the tampered log, stopping on
+    // divergence.
+    let checker = Verifier::new(expected, "hashing-test", 42);
+    let transport = MonitorTransport::new(InProcTransport::new(), checker.message_callback());
+    let mut conductor = Conductor::new(
+        ConductorConfig {
+            world: "hashing-test".into(),
+            seed: 42,
+            real_time_pacing: false,
+        },
+        transport,
+    )
+    .expect("free-run config is always accepted");
+    conductor.set_tick_callback(checker.tick_callback());
+    conductor
+        .add_component(
+            "",
+            Box::new(NoiseSource {
+                id: "noise",
+                rng: None,
+            }),
+        )
+        .expect("registration succeeds");
+
+    let end = SimTime::from_millis(100);
+    while !checker.diverged() && conductor.next_scheduled().is_some_and(|t| t <= end) {
+        conductor.step_once().expect("steps succeed");
+    }
+
+    let divergence = checker.finish().expect_err("tampered log must diverge");
+    assert_eq!(divergence.event_index, Some(8));
+    // The run stopped early: 5 of 11 steps executed, not the full schedule.
+    assert_eq!(conductor.tick(), 5, "stopped at the diverging step");
+    assert!(conductor.sim_time() < end);
+}
+
+#[test]
+fn playback_double_reproduces_the_recorded_messages() {
+    let original = run_noise_world(42);
+
+    // Rebuild the world with the noise source replaced by its playback
+    // double, recording what the double publishes.
+    let recorder = Recorder::new("hashing-test", 42);
+    let transport = MonitorTransport::new(InProcTransport::new(), recorder.message_callback());
+    let mut conductor = Conductor::new(
+        ConductorConfig {
+            world: "hashing-test".into(),
+            seed: 42,
+            real_time_pacing: false,
+        },
+        transport,
+    )
+    .expect("free-run config is always accepted");
+    conductor.set_tick_callback(recorder.tick_callback());
+    conductor
+        .add_component(
+            "",
+            Box::new(PlaybackComponent::from_log(
+                ComponentId::new("noise").expect("valid id"),
+                &original,
+                "noise",
+            )),
+        )
+        .expect("registration succeeds");
+    conductor
+        .run_until(SimTime::from_millis(100))
+        .expect("playback schedules strictly forward");
+    let replayed = recorder.finish();
+
+    // The doubles' messages must be indistinguishable from the originals:
+    // same times, keys, sequence numbers, and byte-identical payloads.
+    let messages = |log: &EventLog| -> Vec<(String, String, u64, String)> {
+        log.events
+            .iter()
+            .filter_map(|e| match e {
+                LogEvent::Msg(m) => Some((
+                    m.time.to_canonical_string(),
+                    m.key.clone(),
+                    m.seq,
+                    m.payload.get().to_string(),
+                )),
+                _ => None,
+            })
+            .collect()
+    };
+    assert_eq!(messages(&original), messages(&replayed));
+    assert!(!replayed.events.is_empty());
 }
 
 #[test]

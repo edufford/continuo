@@ -7,10 +7,12 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
-[dev-dependencies]
+[dependencies]
 continuo-core = { workspace = true }
 continuo-transport = { workspace = true }
 continuo-conductor = { workspace = true }
 continuo-actors = { workspace = true }
+
+[dev-dependencies]
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
