@@ -50,9 +50,11 @@ jobs:
       - name: Verify replay detects divergence when the log is modified
         shell: bash
         run: |
-          cp ci-run.jsonl ci-tampered.jsonl
-          # Corrupt the first pose x-coordinate (keeps the JSON valid).
-          sed -i '0,/"x":/s/"x":[-0-9.eE]*/"x":99.9/' ci-tampered.jsonl
+          # Corrupt one pose x-coordinate mid-run — the first match at or
+          # after line 6000, roughly sim time 14 s of 30 — keeping the JSON
+          # valid, so replay verifies a long clean prefix before diverging.
+          awk 'NR>=6000 && !done && /"x":/ { sub(/"x":[-0-9.eE]*/, "\"x\":99.9"); done=1 } { print }' \
+            ci-run.jsonl > ci-tampered.jsonl
           if cmp -s ci-run.jsonl ci-tampered.jsonl; then
             echo "ERROR: sed matched nothing, log was NOT modified - this check would be vacuous"
             exit 1
