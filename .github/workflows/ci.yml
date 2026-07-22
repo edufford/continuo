@@ -40,3 +40,26 @@ jobs:
 
       - name: Run the traffic demo
         run: cargo run -p continuo-examples --example traffic
+
+      - name: Record a run and verify replay of the unmodified log
+        shell: bash
+        run: |
+          cargo run -q -p continuo-examples --example traffic -- --record ci-run.jsonl
+          cargo run -q -p continuo-examples --example traffic -- --replay ci-run.jsonl
+
+      - name: Verify replay detects divergence when the log is modified
+        shell: bash
+        run: |
+          cp ci-run.jsonl ci-tampered.jsonl
+          # Corrupt the first pose x-coordinate (keeps the JSON valid).
+          sed -i '0,/"x":/s/"x":[-0-9.eE]*/"x":99.9/' ci-tampered.jsonl
+          if cmp -s ci-run.jsonl ci-tampered.jsonl; then
+            echo "ERROR: sed matched nothing, log was NOT modified - this check would be vacuous"
+            exit 1
+          fi
+          echo "OK: log modified (first pose x-coordinate corrupted to 99.9)"
+          if cargo run -q -p continuo-examples --example traffic -- --replay ci-tampered.jsonl; then
+            echo "ERROR: replay PASSED on the modified log - divergence was NOT detected"
+            exit 1
+          fi
+          echo "OK: replay failed with nonzero exit - divergence detected as expected"
