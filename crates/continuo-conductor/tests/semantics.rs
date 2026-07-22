@@ -54,6 +54,8 @@ impl Component for Probe {
             ctx.publish(KeyExpr::new(key).unwrap(), &ctx.now().to_canonical_string())
                 .unwrap();
         }
+
+        // Return the next due time, one period from now.
         ctx.now() + self.period
     }
 }
@@ -70,6 +72,7 @@ fn new_conductor() -> Conductor<InProcTransport> {
     Conductor::new(
         ConductorConfig {
             world: "test".into(),
+            seed: 0,
             real_time_pacing: false,
         },
         InProcTransport::new(),
@@ -296,6 +299,7 @@ fn real_time_pacing_is_rejected_until_m3() {
     let result = Conductor::new(
         ConductorConfig {
             world: "test".into(),
+            seed: 0,
             real_time_pacing: true,
         },
         InProcTransport::new(),

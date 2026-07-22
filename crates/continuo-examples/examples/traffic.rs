@@ -1,4 +1,5 @@
-//! Milestone 1 demo: three cars circulating an oval loop, free-run.
+//! Milestone 1/2 demo: three cars circulating an oval loop, free-run, with
+//! determinism recording.
 //!
 //! Each car is a composite `carN = [controller, physics]` — the controller
 //! (100 ms period) reads the pose from the previous physics step and
@@ -6,48 +7,73 @@
 //! receives the command same-instant and integrates. A world-level
 //! `PoseLogger` samples every second.
 //!
-//! Run with: `cargo run -p continuo-examples --example traffic`
+//! Usage:
+//!   cargo run -p continuo-examples --example traffic
+//!   cargo run -p continuo-examples --example traffic -- --record run.jsonl
+//!   cargo run -p continuo-examples --example traffic -- --replay run.jsonl
+//!
+//! `--record` writes the event log (messages + tick fingerprints) to a file;
+//! `--replay` re-runs the same seeded world and verifies the new run against
+//! the recorded log, exiting non-zero at the first divergence.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use continuo_actors::{PathFollowController, PoseLogger, UnicyclePhysics, Waypoints};
-use continuo_conductor::{Conductor, ConductorConfig};
+use continuo_conductor::{Conductor, ConductorConfig, EventLog, Recorder};
 use continuo_core::{Pose, Quat, SimDuration, SimTime};
 use continuo_transport::{InProcTransport, MonitorTransport};
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // TODO(PLAN "Scenario configuration"): this hand-built world becomes a
-    // JSON5 scenario file (seed, component tree, periods, parameters) once
-    // scenario loading lands; main() then shrinks to load-and-run.
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
-        .with_target(false)
-        .init();
+const WORLD_SEED: u64 = 42;
 
-    let path = Arc::new(Waypoints::ellipse((0.0, 0.0), 40.0, 25.0, 72));
+enum Mode {
+    Run,
+    Record(String),
+    Replay(String),
+}
+
+fn parse_args() -> Result<Mode, String> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match args.as_slice() {
+        [] => Ok(Mode::Run),
+        [flag, file] if flag == "--record" => Ok(Mode::Record(file.clone())),
+        [flag, file] if flag == "--replay" => Ok(Mode::Replay(file.clone())),
+        _ => Err("usage: traffic [--record <file> | --replay <file>]".to_string()),
+    }
+}
+
+/// Builds and free-runs the demo world for 30 sim-seconds, recording the
+/// full event log. Returns the log and the published-message count.
+fn run_world() -> Result<(EventLog, u64), Box<dyn std::error::Error>> {
+    let recorder = Recorder::new("demo", WORLD_SEED);
 
     // A transport monitor observes every published message out-of-band (at
-    // publish time, independent of subscriptions and visibility). Here it
-    // just counts; a recorder would write `m` to the event log instead.
+    // publish time, independent of subscriptions and visibility): here it
+    // counts and feeds the recorder.
     let published = Arc::new(AtomicU64::new(0));
     let transport = MonitorTransport::new(InProcTransport::new(), {
         let published = published.clone();
-        // `move` applies to the closure's captures (the `published` Arc
-        // clone), not to the message: the sink still receives each message
-        // by reference (`&Message`) and never takes ownership of it.
-        move |_m| {
+        let mut record_message = recorder.message_callback();
+        // `move` applies to the closure's captures (the counter Arc and the
+        // recording callback), not to the message: the callback still receives each
+        // message by reference (`&Message`).
+        move |m| {
             published.fetch_add(1, Ordering::Relaxed);
+            record_message(m);
         }
     });
+
+    let path = Arc::new(Waypoints::ellipse((0.0, 0.0), 40.0, 25.0, 72));
 
     let mut conductor = Conductor::new(
         ConductorConfig {
             world: "demo".into(),
+            seed: WORLD_SEED,
             real_time_pacing: false,
         },
         transport,
     )?;
+    conductor.set_tick_callback(recorder.tick_callback());
 
     for (i, car) in ["car1", "car2", "car3"].into_iter().enumerate() {
         let s0 = path.total_length() * i as f64 / 3.0;
@@ -105,9 +131,52 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         published.load(Ordering::Relaxed)
     );
     println!(
-        "actual time: {:.3} s ({:.0}x real-time)",
+        "actual time: {:.3} s ({:.0}x real-time), world hash {:016x}",
         elapsed.as_secs_f64(),
-        conductor.sim_time().as_secs_f64() / elapsed.as_secs_f64()
+        conductor.sim_time().as_secs_f64() / elapsed.as_secs_f64(),
+        conductor.world_hash()
     );
+
+    // Return the recorded log and the number of messages published.
+    Ok((recorder.finish(), published.load(Ordering::Relaxed)))
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .with_target(false)
+        .init();
+
+    let mode = parse_args().map_err(|usage| -> Box<dyn std::error::Error> { usage.into() })?;
+
+    match mode {
+        Mode::Run => {
+            run_world()?;
+        }
+        Mode::Record(file) => {
+            let (log, _) = run_world()?;
+            log.write_file(&file)?;
+            println!("recorded {} events to {file}", log.events.len());
+        }
+        Mode::Replay(file) => {
+            let expected = EventLog::read_file(&file)?;
+            let (actual, _) = run_world()?;
+            match expected.first_divergence(&actual) {
+                None => println!(
+                    "replay verified: {} events match, final world hash {:016x}",
+                    expected.events.len(),
+                    expected
+                        .final_world_hash()
+                        .expect("recorded log contains ticks")
+                ),
+                Some(divergence) => {
+                    eprintln!("replay FAILED: {divergence}");
+                    std::process::exit(1);
+                }
+            }
+        }
+    }
+
+    // Return success for the completed mode.
     Ok(())
 }

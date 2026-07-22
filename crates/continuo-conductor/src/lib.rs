@@ -8,9 +8,11 @@
 mod conductor;
 mod config;
 mod error;
+pub mod record;
 mod registry;
 mod schedule;
 
 pub use conductor::Conductor;
 pub use config::ConductorConfig;
 pub use error::ConductorError;
+pub use record::{Divergence, EventLog, Recorder, TickFingerprint};

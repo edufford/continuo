@@ -2,28 +2,28 @@ use continuo_core::{ComponentPath, KeyExpr, Message};
 
 use crate::Transport;
 
-/// Wraps a transport and invokes a sink for every published message before
+/// Wraps a transport and invokes a callback for every published message before
 /// it is routed.
 ///
-/// This is the out-of-band observation mechanism: the sink sees **all**
+/// This is the out-of-band observation mechanism: the callback sees **all**
 /// traffic at publish time — regardless of subscriptions (including messages
 /// nobody subscribes to), with no visibility delay and no presence in the
 /// schedule. Use it for logging, debugging, and recording (the milestone 2
 /// event log builds on this).
 ///
-/// The sink is not part of the simulation: it must never feed data back into
+/// The callback is not part of the simulation: it must never feed data back into
 /// components. In-simulation observers (which see messages under the
 /// visibility rule, like any participant) are ordinary components instead.
 pub struct MonitorTransport<T: Transport> {
     inner: T,
-    sink: Box<dyn FnMut(&Message) + Send>,
+    callback: Box<dyn FnMut(&Message) + Send>,
 }
 
 impl<T: Transport> MonitorTransport<T> {
-    pub fn new(inner: T, sink: impl FnMut(&Message) + Send + 'static) -> Self {
+    pub fn new(inner: T, callback: impl FnMut(&Message) + Send + 'static) -> Self {
         MonitorTransport {
             inner,
-            sink: Box::new(sink),
+            callback: Box::new(callback),
         }
     }
 
@@ -38,16 +38,16 @@ impl<T: Transport> Transport for MonitorTransport<T> {
     }
 
     fn publish(&mut self, message: Message) {
-        (self.sink)(&message);
+        (self.callback)(&message);
         self.inner.publish(message);
     }
 
     fn drain(
         &mut self,
         subscriber: &ComponentPath,
-        release: &dyn Fn(&Message) -> bool,
+        release_condition: &dyn Fn(&Message) -> bool,
     ) -> Vec<Message> {
-        self.inner.drain(subscriber, release)
+        self.inner.drain(subscriber, release_condition)
     }
 }
 
@@ -69,7 +69,7 @@ mod tests {
     }
 
     #[test]
-    fn sink_sees_every_publish_even_without_subscribers() {
+    fn callback_sees_every_publish_even_without_subscribers() {
         let seen = Arc::new(Mutex::new(Vec::new()));
         let mut monitor = MonitorTransport::new(InProcTransport::new(), {
             let seen = seen.clone();

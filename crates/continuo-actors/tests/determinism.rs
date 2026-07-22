@@ -1,36 +1,18 @@
-//! Determinism smoke test ahead of milestone 2's state hashes: two identical
-//! runs of the traffic world must produce byte-identical message streams.
-//!
-//! Capture uses a transport monitor, which observes every published message
-//! (poses *and* commands) at publish time — the same mechanism the milestone
-//! 2 event log will use.
+//! Determinism tests over the full traffic world: two identical runs must
+//! produce identical event logs — every message byte and every tick fingerprint
+//! (the milestone 2 hash stream).
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use continuo_actors::{PathFollowController, UnicyclePhysics, Waypoints};
-use continuo_conductor::{Conductor, ConductorConfig};
-use continuo_core::{Message, Pose, Quat, SimDuration, SimTime};
+use continuo_conductor::record::LogEvent;
+use continuo_conductor::{Conductor, ConductorConfig, EventLog, Recorder};
+use continuo_core::{Pose, Quat, SimDuration, SimTime};
 use continuo_transport::{InProcTransport, MonitorTransport};
 
-fn run_world(sim_seconds: i64) -> Vec<String> {
-    let events = Arc::new(Mutex::new(Vec::new()));
-    let transport = MonitorTransport::new(InProcTransport::new(), {
-        let events = events.clone();
-        move |m: &Message| {
-            events
-                .lock()
-                .expect("events mutex is never poisoned (no panicking holders)")
-                .push(format!(
-                    "{}|{}|{}|{}|{}",
-                    m.time.to_canonical_string(),
-                    m.key,
-                    m.publisher,
-                    m.seq,
-                    String::from_utf8(m.payload.clone())
-                        .expect("payloads are serialized JSON, which is always valid UTF-8")
-                ));
-        }
-    });
+fn run_world(sim_seconds: i64, seed: u64) -> EventLog {
+    let recorder = Recorder::new("demo", seed);
+    let transport = MonitorTransport::new(InProcTransport::new(), recorder.message_callback());
 
     // 72 samples = one point per 5 degrees of arc; on the 40 m semi-axis the
     // worst-case chord deviation is ~4 cm, smooth enough for the
@@ -40,11 +22,13 @@ fn run_world(sim_seconds: i64) -> Vec<String> {
     let mut conductor = Conductor::new(
         ConductorConfig {
             world: "demo".into(),
+            seed,
             real_time_pacing: false,
         },
         transport,
     )
     .expect("free-run config is always accepted");
+    conductor.set_tick_callback(recorder.tick_callback());
 
     // Each car is registered as a composite `carN = [controller, physics]`.
     // Registration order is declared sibling order, which fixes both the
@@ -89,43 +73,41 @@ fn run_world(sim_seconds: i64) -> Vec<String> {
         .run_until(SimTime::from_secs(sim_seconds))
         .expect("demo components always schedule strictly forward");
 
-    // The monitor's sink closure (owned by the conductor's transport) holds
-    // the second Arc reference to `events`. Dropping the conductor releases
-    // it, so the Vec can be taken out of the Arc/Mutex without cloning.
-    drop(conductor);
-    Arc::try_unwrap(events)
-        .expect("conductor drop released the only other Arc reference")
-        .into_inner()
-        .expect("events mutex is never poisoned (no panicking holders)")
+    // Return the recorded run for comparison.
+    recorder.finish()
 }
 
 #[test]
-fn identical_runs_produce_identical_message_streams() {
-    let first = run_world(5);
-    let second = run_world(5);
-    assert!(!first.is_empty(), "expected message traffic");
-    assert_eq!(first, second, "two identical runs diverged");
+fn identical_runs_produce_identical_event_logs() {
+    let first = run_world(5, 42);
+    let second = run_world(5, 42);
+    assert!(!first.events.is_empty(), "expected recorded traffic");
+    // Full comparison: every message byte and every tick fingerprint.
+    assert_eq!(first.first_divergence(&second), None);
+    assert!(first.final_world_hash().is_some());
 }
 
 #[test]
 fn cars_actually_move_around_the_loop() {
-    let events = run_world(5);
-    let car1: Vec<&String> = events.iter().filter(|e| e.contains("/car1/pose")).collect();
+    let log = run_world(5, 42);
+    let car1_poses: Vec<Pose> = log
+        .events
+        .iter()
+        .filter_map(|e| match e {
+            LogEvent::Msg(m) if m.key.contains("/car1/pose") => Some(
+                serde_json::from_str(m.payload.get()).expect("pose payloads deserialize as Pose"),
+            ),
+            _ => None,
+        })
+        .collect();
     assert!(
-        car1.len() > 100,
+        car1_poses.len() > 100,
         "expected steady pose stream, got {}",
-        car1.len()
+        car1_poses.len()
     );
 
-    let pose = |line: &str| -> Pose {
-        let json = line
-            .rsplit('|')
-            .next()
-            .expect("rsplit yields at least one piece for any line");
-        serde_json::from_str(json).expect("pose payloads deserialize as Pose")
-    };
-    let first = pose(car1.first().expect("stream verified non-empty above"));
-    let last = pose(car1.last().expect("stream verified non-empty above"));
+    let first = car1_poses.first().expect("stream verified non-empty above");
+    let last = car1_poses.last().expect("stream verified non-empty above");
     let dist = ((last.position.x - first.position.x).powi(2)
         + (last.position.y - first.position.y).powi(2))
     .sqrt();

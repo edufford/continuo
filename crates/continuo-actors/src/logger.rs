@@ -68,6 +68,9 @@ impl Component for PoseLogger {
         for (key, (time, pose)) in &self.latest {
             log_pose("pose", *time, key, pose);
         }
+
+        // Return the next due time: the phase offset after the first step,
+        // then every period.
         if ctx.dt().is_none() {
             // First step (at join time): establish the phase offset.
             ctx.now() + self.offset

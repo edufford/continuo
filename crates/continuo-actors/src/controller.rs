@@ -57,6 +57,8 @@ impl PathFollowController {
 
 fn wrap_pi(angle: f64) -> f64 {
     let wrapped = angle.rem_euclid(std::f64::consts::TAU);
+
+    // Return the equivalent angle in (-pi, pi].
     if wrapped > std::f64::consts::PI {
         wrapped - std::f64::consts::TAU
     } else {
@@ -99,6 +101,7 @@ impl Component for PathFollowController {
         let key = crate::cmd_key(ctx.world(), &self.actor);
         ctx.publish(key, &cmd).expect("cmd serializes");
 
+        // Return the next due time, one control period from now.
         ctx.now() + self.period
     }
 }

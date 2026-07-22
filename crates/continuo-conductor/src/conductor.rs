@@ -1,11 +1,17 @@
-use continuo_core::{Component, ComponentPath, Message, SimTime, StepCtx, TickDone, TickStart};
+use continuo_core::{
+    Component, ComponentPath, Fnv1a64, Message, SimTime, StepCtx, TickDone, TickStart, hash_bytes,
+    rng::mix,
+};
 use continuo_transport::Transport;
 use tracing::trace;
 
 use crate::config::ConductorConfig;
 use crate::error::ConductorError;
+use crate::record::TickFingerprint;
 use crate::registry::Registry;
 use crate::schedule::Schedule;
+
+type TickCallback = Box<dyn FnMut(&TickFingerprint) + Send>;
 
 /// Owns simulation time and drives the discrete-event loop over a
 /// [`Transport`].
@@ -16,6 +22,11 @@ pub struct Conductor<T: Transport> {
     schedule: Schedule,
     sim_time: SimTime,
     tick: u64,
+    /// Running determinism fingerprint: seeded from the world config, then
+    /// chained with each tick's hash. Identical runs produce identical
+    /// values at every tick.
+    world_hash: u64,
+    tick_callback: Option<TickCallback>,
 }
 
 impl<T: Transport> Conductor<T> {
@@ -27,6 +38,12 @@ impl<T: Transport> Conductor<T> {
         if config.real_time_pacing {
             return Err(ConductorError::RealTimePacingUnsupported);
         }
+        // Fold the seed and world name into the initial hash so runs with
+        // different seeds have different fingerprints even before (or
+        // without) any component using randomness.
+        let world_hash = mix(config.seed, hash_bytes(config.world.as_bytes()));
+
+        // Return a conductor at sim time zero with an empty schedule.
         Ok(Conductor {
             config,
             transport,
@@ -34,7 +51,23 @@ impl<T: Transport> Conductor<T> {
             schedule: Schedule::default(),
             sim_time: SimTime::ZERO,
             tick: 0,
+            world_hash,
+            tick_callback: None,
         })
+    }
+
+    /// Installs a callback invoked with every tick's [`TickFingerprint`] — the hook
+    /// for recording (see [`crate::Recorder::tick_callback`]) or live
+    /// divergence checking.
+    pub fn set_tick_callback(&mut self, callback: impl FnMut(&TickFingerprint) + Send + 'static) {
+        self.tick_callback = Some(Box::new(callback));
+    }
+
+    /// The current running determinism fingerprint (see PLAN.md,
+    /// Determinism rules). Two runs of the same seeded scenario must agree
+    /// on this value at every tick.
+    pub fn world_hash(&self) -> u64 {
+        self.world_hash
     }
 
     pub fn world(&self) -> &str {
@@ -80,11 +113,13 @@ impl<T: Transport> Conductor<T> {
         // assignment work identically on both since they only use metadata.
         let parent = ComponentPath::parse(parent)?;
         let subscriptions = component.subscriptions();
-        let (index, path) = self.registry.add(&parent, component)?;
+        let (index, path) = self.registry.add(&parent, component, self.config.seed)?;
         for key in subscriptions {
             self.transport.subscribe(path.clone(), key);
         }
         self.schedule.insert(SimTime::ZERO, index);
+
+        // Return the registered component's full path.
         Ok(path)
     }
 
@@ -97,6 +132,13 @@ impl<T: Transport> Conductor<T> {
         debug_assert!(now >= self.sim_time, "schedule went backwards");
         self.sim_time = now;
         self.tick += 1;
+
+        // Per-tick determinism fingerprint: covers, in declaration order,
+        // every stepped component's path, next-due time, published bytes,
+        // and (when provided via `state_bytes`) internal state.
+        let mut tick_hasher = Fnv1a64::new();
+        tick_hasher.write_u64(self.tick);
+        tick_hasher.write_i64(now.as_nanos());
 
         // TODO(M7): in distributed mode the conductor publishes TickStart on
         // the transport; every component (host) subscribes, and steps itself
@@ -115,17 +157,18 @@ impl<T: Transport> Conductor<T> {
             let dt = self.registry.entries[index]
                 .last_step
                 .map(|prev| now - prev);
+            let component_seed = self.registry.entries[index].component_seed;
 
             // The visibility rule (PLAN.md): everything published before this
             // instant is released; same-instant messages only from an
             // earlier-ordered sibling branch within the same composite.
             let tree = &self.registry.tree;
-            let release = |m: &Message| {
+            let release_condition = |m: &Message| {
                 m.time < now || (m.time == now && tree.releases_same_instant(&m.publisher, &path))
             };
-            let inbox = self.transport.drain(&path, &release);
+            let inbox = self.transport.drain(&path, &release_condition);
 
-            let mut ctx = StepCtx::new(now, dt, &self.config.world, inbox);
+            let mut ctx = StepCtx::new(now, dt, &self.config.world, component_seed, inbox);
             let entry = &mut self.registry.entries[index];
             let next_due = entry.component.step(&mut ctx);
 
@@ -148,13 +191,14 @@ impl<T: Transport> Conductor<T> {
             // misattribute or reorder their own traffic, which the
             // deterministic (publisher, seq) delivery order depends on. In
             // distributed mode the component's *host* plays this role.
-            //
-            // TODO(M2): feed the canonical payload bytes into the per-tick
-            // state hash and the record/replay event log (a MonitorTransport
-            // sink over these publishes).
+            tick_hasher.write(path.to_string().as_bytes());
+            tick_hasher.write_i64(next_due.as_nanos());
             for (key, payload) in ctx.take_outbox() {
                 let seq = entry.next_seq;
                 entry.next_seq += 1;
+                tick_hasher.write(key.as_str().as_bytes());
+                tick_hasher.write_u64(seq);
+                tick_hasher.write(&payload);
                 self.transport.publish(Message {
                     key,
                     publisher: path.clone(),
@@ -165,6 +209,13 @@ impl<T: Transport> Conductor<T> {
             }
 
             let entry = &mut self.registry.entries[index];
+            // Components exposing internal state join the hash in
+            // state-hash mode; the rest are covered by their output bytes
+            // above (output-hash mode).
+            if let Some(state) = entry.component.state_bytes() {
+                tick_hasher.write(b"|state|");
+                tick_hasher.write(&state);
+            }
             entry.last_step = Some(now);
             self.schedule.insert(next_due, index);
 
@@ -193,6 +244,22 @@ impl<T: Transport> Conductor<T> {
             );
         }
 
+        // Chain this tick into the running world hash and emit the
+        // fingerprint.
+        let tick_hash = tick_hasher.finish();
+        let mut chain = Fnv1a64::resume(self.world_hash);
+        chain.write_u64(tick_hash);
+        self.world_hash = chain.finish();
+        if let Some(callback) = self.tick_callback.as_mut() {
+            callback(&TickFingerprint {
+                tick: self.tick,
+                sim_time: now,
+                tick_hash,
+                world_hash: self.world_hash,
+            });
+        }
+
+        // Return true: a tick was executed (more may be scheduled).
         Ok(true)
     }
 
@@ -205,6 +272,8 @@ impl<T: Transport> Conductor<T> {
             }
             self.step_once()?;
         }
+
+        // Return once nothing remains scheduled at or before `end`.
         Ok(())
     }
 }

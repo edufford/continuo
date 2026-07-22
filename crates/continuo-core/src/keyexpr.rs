@@ -36,6 +36,8 @@ impl KeyExpr {
                 _ => {}
             }
         }
+
+        // Return the validated key expression.
         Ok(KeyExpr(expr))
     }
 
@@ -54,6 +56,8 @@ impl KeyExpr {
     pub fn matches(&self, key: &KeyExpr) -> bool {
         let expr: Vec<&str> = self.chunks().collect();
         let key: Vec<&str> = key.chunks().collect();
+
+        // Return whether the pattern chunks match all of the key's chunks.
         matches_chunks(&expr, &key)
     }
 }

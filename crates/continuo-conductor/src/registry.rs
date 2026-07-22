@@ -60,6 +60,9 @@ impl Tree {
         };
         let pub_order = order.iter().position(|c| c == pub_branch);
         let sub_order = order.iter().position(|c| c == sub_branch);
+
+        // Return whether the publisher's branch is declared earlier than
+        // the subscriber's.
         matches!((pub_order, sub_order), (Some(p), Some(s)) if p < s)
     }
 }
@@ -70,6 +73,8 @@ pub(crate) struct Entry {
     pub(crate) component: Box<dyn Component>,
     pub(crate) last_step: Option<SimTime>,
     pub(crate) next_seq: u64,
+    /// Derived from `(world_seed, path)`; handed to every `StepCtx`.
+    pub(crate) component_seed: u64,
 }
 
 /// All registered leaves (indexed by declaration order — the deterministic
@@ -92,6 +97,7 @@ impl Registry {
         &mut self,
         parent: &ComponentPath,
         component: Box<dyn Component>,
+        world_seed: u64,
     ) -> Result<(usize, ComponentPath), ConductorError> {
         let path = parent.join(component.id());
 
@@ -129,12 +135,16 @@ impl Registry {
 
         let index = self.entries.len();
         self.by_path.insert(path.clone(), index);
+        let component_seed = continuo_core::derive_component_seed(world_seed, &path);
         self.entries.push(Entry {
             path: path.clone(),
             component,
             last_step: None,
             next_seq: 0,
+            component_seed,
         });
+
+        // Return the new entry's declaration index and full path.
         Ok((index, path))
     }
 }
@@ -166,9 +176,9 @@ mod tests {
         let mut reg = Registry::default();
         let car1 = path("car1");
         let car2 = path("car2");
-        reg.add(&car1, Box::new(Dummy("controller"))).unwrap();
-        reg.add(&car1, Box::new(Dummy("physics"))).unwrap();
-        reg.add(&car2, Box::new(Dummy("controller"))).unwrap();
+        reg.add(&car1, Box::new(Dummy("controller")), 0).unwrap();
+        reg.add(&car1, Box::new(Dummy("physics")), 0).unwrap();
+        reg.add(&car2, Box::new(Dummy("controller")), 0).unwrap();
 
         let t = &reg.tree;
         // Earlier sibling → later sibling: released.
@@ -185,21 +195,21 @@ mod tests {
     fn path_conflicts_rejected() {
         let mut reg = Registry::default();
         let root = ComponentPath::root();
-        reg.add(&root, Box::new(Dummy("a"))).unwrap();
+        reg.add(&root, Box::new(Dummy("a")), 0).unwrap();
         // Duplicate leaf.
         assert!(matches!(
-            reg.add(&root, Box::new(Dummy("a"))),
+            reg.add(&root, Box::new(Dummy("a")), 0),
             Err(ConductorError::DuplicatePath(_))
         ));
         // Leaf "a" cannot become a composite.
         assert!(matches!(
-            reg.add(&path("a"), Box::new(Dummy("b"))),
+            reg.add(&path("a"), Box::new(Dummy("b")), 0),
             Err(ConductorError::PathConflict { .. })
         ));
         // Composite "c" (via c/x) cannot become a leaf.
-        reg.add(&path("c"), Box::new(Dummy("x"))).unwrap();
+        reg.add(&path("c"), Box::new(Dummy("x")), 0).unwrap();
         assert!(matches!(
-            reg.add(&root, Box::new(Dummy("c"))),
+            reg.add(&root, Box::new(Dummy("c")), 0),
             Err(ConductorError::PathConflict { .. })
         ));
     }

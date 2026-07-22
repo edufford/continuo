@@ -9,5 +9,7 @@ rust-version.workspace = true
 [dependencies]
 continuo-core = { workspace = true }
 continuo-transport = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }

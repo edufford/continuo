@@ -152,7 +152,7 @@ Baked in from the start — hard to retrofit:
 - Join/leave applied **only at tick boundaries** and recorded in an event log, so
   runs with dynamic actors are replayable.
 - Per-tick canonical **state hash** (e.g. xxhash over serialized state) as the
-  determinism oracle. Two runs with the same seed must produce identical hash
+  determinism check. Two runs with the same seed must produce identical hash
   streams; this becomes a CI test.
 - FMU caveat: FMUs are black-box native code. If an FMU supports
   `SerializeFMUState`, its state joins the hash; otherwise hash its outputs and
@@ -227,7 +227,7 @@ advances sim time to the earliest due time each iteration.
   components (reschedule sooner in response to an input) all use the same
   mechanism.
 - **Fixed-interval world services still work**: a constant period is just the
-  degenerate case of self-scheduling, and because the conductor advances to
+  simplest case of self-scheduling, and because the conductor advances to
   the earliest due time, sim time lands *exactly* on those grid points. E.g. a
   scene-graph publisher stepping every 1/60 s aggregates latest actor poses
   (sample-and-hold) and publishes a world state update for renderers. Such
@@ -433,6 +433,17 @@ the mix. They are independent and can swap if priorities shift.
   actor's namespace/lifecycle but use next-step visibility, freeing their
   host placement and pipelining with their actor instead of serializing the
   instant. Coupling flag joins registration metadata in milestone 4.
+- **2026-07-18** — Milestone 2 implementation choices: hash and RNG are
+  **owned implementations** (FNV-1a 64, SplitMix64) so fingerprints and
+  random streams are bit-stable across platforms and versions forever — no
+  external RNG/hash crates. Components are **output-hashed by default**;
+  the opt-in `Component::state_bytes` hook adds state-hash mode. The world
+  hash starts from `(seed, world name)` and chains per-tick hashes. Event
+  log is JSON lines (header + interleaved msg/tick events, hashes as hex
+  strings); milestone 2 replay is **re-execution + comparison** via
+  `EventLog::first_divergence`. `StepCtx::rng()` gives a fresh per-step
+  stream from `(component_seed, now)`; persistent streams seed a stored
+  `DetRng` from `ctx.component_seed()`.
 
 ## Deferred (decided-not-now, revisit when they bite)
 

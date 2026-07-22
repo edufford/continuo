@@ -2,7 +2,7 @@
 //!
 //! Milestone 1 ships the deterministic in-process implementation. The trait
 //! is intentionally minimal and in-proc-shaped for now (`drain` with a
-//! release predicate is an in-proc convenience); it will be revisited when
+//! release condition is an in-proc convenience); it will be revisited when
 //! the Zenoh transport lands (milestone 7).
 
 mod inproc;
@@ -26,20 +26,20 @@ pub trait Transport {
     fn publish(&mut self, message: Message);
 
     /// Removes and returns the queued messages for `subscriber` that satisfy
-    /// `release`, sorted by `(publisher, seq)`. Messages not released stay
-    /// queued in order.
+    /// `release_condition`, sorted by `(publisher, seq)`. Messages not
+    /// released stay queued in order.
     ///
-    /// The release predicate is supplied by the conductor, which is the only
+    /// The release condition is supplied by the conductor, which is the only
     /// party that knows the component tree and can apply the visibility rule
     /// (PLAN.md): published-before-now always releases; published-at-now
     /// releases only from an earlier-ordered sibling branch within the same
     /// composite.
-    // TODO(M7): drain-with-predicate is in-proc-shaped. The Zenoh transport
+    // TODO(M7): drain-with-condition is in-proc-shaped. The Zenoh transport
     // will receive messages asynchronously and gather/order them per step on
     // the consuming host; revisit this trait when it lands.
     fn drain(
         &mut self,
         subscriber: &ComponentPath,
-        release: &dyn Fn(&Message) -> bool,
+        release_condition: &dyn Fn(&Message) -> bool,
     ) -> Vec<Message>;
 }
