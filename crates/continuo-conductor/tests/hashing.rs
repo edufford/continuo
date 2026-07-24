@@ -263,15 +263,15 @@ fn playback_double_reproduces_the_recorded_messages() {
 }
 
 #[test]
-fn per_step_rng_is_reproducible_and_time_dependent() {
-    // StepCtx::rng is pure over (component_seed, now): identical inputs
+fn per_step_random_is_reproducible_and_time_dependent() {
+    // StepCtx::step_random is pure over (component_seed, now): identical inputs
     // give identical streams, different times give different streams.
     let mut a = StepCtx::new(SimTime::from_millis(10), None, "w", 99, Vec::new());
     let mut b = StepCtx::new(SimTime::from_millis(10), None, "w", 99, Vec::new());
-    assert_eq!(a.rng().next_u64(), b.rng().next_u64());
+    assert_eq!(a.step_random().next_u64(), b.step_random().next_u64());
 
     let mut later = StepCtx::new(SimTime::from_millis(20), None, "w", 99, Vec::new());
-    assert_ne!(a.rng().next_u64(), later.rng().next_u64());
+    assert_ne!(a.step_random().next_u64(), later.step_random().next_u64());
 
     // Silence unused-mut lints via harmless use.
     let _ = (a.take_outbox(), b.take_outbox(), later.take_outbox());

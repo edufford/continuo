@@ -90,17 +90,18 @@ impl<'a> StepCtx<'a> {
         self.component_seed
     }
 
-    /// A fresh deterministic RNG for this `(component, step)` pair — the
-    /// zero-state-to-carry way to add noise. The stream depends only on the
-    /// component seed and the current sim time, so replays reproduce it
-    /// exactly; draws are independent between steps. For a stream that is
-    /// continuous *across* steps, store
+    /// A fresh deterministic random stream for this `(component, step)`
+    /// pair — the zero-state-to-carry way to add noise. The stream depends
+    /// only on the component seed and the current sim time, so replays
+    /// reproduce it exactly; draws are independent between steps. For a
+    /// stream that is continuous *across* steps, store
     /// `RandomSplitMix64::new(ctx.component_seed())` in the component at
     /// first step instead.
-    pub fn rng(&self) -> crate::RandomSplitMix64 {
-        crate::RandomSplitMix64::new(crate::random::mix(
+    pub fn step_random(&self) -> crate::RandomSplitMix64 {
+        // Return a stream seeded by who is stepping and when.
+        crate::RandomSplitMix64::new(crate::seed::derive_step_seed(
             self.component_seed,
-            self.now.as_nanos() as u64,
+            self.now.as_nanos(),
         ))
     }
 

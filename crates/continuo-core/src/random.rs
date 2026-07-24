@@ -15,12 +15,12 @@
 //!   reason. That matters here because seeds arrive from structured,
 //!   correlated inputs (hashed paths, mixed sim times, world seed
 //!   arithmetic), and consecutive-ish seeds must still yield unrelated
-//!   streams. The same property makes it the natural `mix` primitive for
-//!   deriving child seeds from `(world_seed, path)` and `(seed, time)` —
-//!   one algorithm serves both roles.
-//! - **Stateless-friendly**: a single u64 of state, so `StepCtx::rng()`'s
-//!   fresh-per-step streams cost nothing to construct and components that
-//!   persist a stream store 8 bytes.
+//!   streams. The same property makes it the scrambling primitive behind
+//!   [`crate::seed`]'s derivation of child seeds from `(world_seed, path)`
+//!   and `(component_seed, time)` — one algorithm serves both roles.
+//! - **Stateless-friendly**: a single u64 of state, so
+//!   `StepCtx::step_random()`'s fresh-per-step streams cost nothing to
+//!   construct and components that persist a stream store 8 bytes.
 //! - **Small enough to be obviously correct and trivially portable**: a
 //!   handful of shift/multiply constants, verified against the reference
 //!   implementation's vectors (below), reimplementable identically in
@@ -32,10 +32,7 @@
 //!
 //! Seeding rules (PLAN.md, Determinism): every component's randomness
 //! derives from `(world_seed, component_path)` — never OS entropy, never
-//! wall time.
-
-use crate::hash::hash_bytes;
-use crate::ids::ComponentPath;
+//! wall time. See [`crate::seed`] for the derivation itself.
 
 /// SplitMix64. Reference: Steele, Lea, Flood — "Fast Splittable
 /// Pseudorandom Number Generators" (OOPSLA 2014); constants as in the
@@ -52,7 +49,7 @@ impl RandomSplitMix64 {
     }
 
     pub fn next_u64(&mut self) -> u64 {
-        self.state = self.state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        self.state = self.state.wrapping_add(GOLDEN_GAMMA);
         let mut z = self.state;
         z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
         z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
@@ -72,16 +69,11 @@ impl RandomSplitMix64 {
     }
 }
 
-/// Deterministically combines two seeds (one SplitMix64 scramble of their
-/// mix), used for seed derivation trees.
-pub fn mix(a: u64, b: u64) -> u64 {
-    RandomSplitMix64::new(a ^ b.wrapping_mul(0x9E37_79B9_7F4A_7C15)).next_u64()
-}
-
-/// The per-component seed: `(world_seed, component_path)` per PLAN.md.
-pub fn derive_component_seed(world_seed: u64, path: &ComponentPath) -> u64 {
-    mix(world_seed, hash_bytes(path.to_string().as_bytes()))
-}
+/// SplitMix64's state increment: the 64-bit odd approximation of the golden
+/// ratio, chosen by the algorithm's authors so successive states are spread
+/// as evenly as possible. Also used by [`crate::seed`] to spread one input
+/// before combining it with another.
+pub(crate) const GOLDEN_GAMMA: u64 = 0x9E37_79B9_7F4A_7C15;
 
 #[cfg(test)]
 mod tests {
@@ -113,14 +105,5 @@ mod tests {
             let x = r.next_f64();
             assert!((0.0..1.0).contains(&x));
         }
-    }
-
-    #[test]
-    fn component_seeds_differ_by_path_and_world_seed() {
-        let p1 = ComponentPath::parse("car1/physics").unwrap();
-        let p2 = ComponentPath::parse("car2/physics").unwrap();
-        assert_ne!(derive_component_seed(1, &p1), derive_component_seed(1, &p2));
-        assert_ne!(derive_component_seed(1, &p1), derive_component_seed(2, &p1));
-        assert_eq!(derive_component_seed(1, &p1), derive_component_seed(1, &p1));
     }
 }

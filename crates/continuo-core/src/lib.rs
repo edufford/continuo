@@ -11,6 +11,7 @@ mod keyexpr;
 mod math;
 mod messages;
 pub mod random;
+pub mod seed;
 mod time;
 
 pub use component::{Component, StepCtx};
@@ -20,5 +21,6 @@ pub use ids::{ComponentId, ComponentPath};
 pub use keyexpr::KeyExpr;
 pub use math::{EulerDeg, EulerRad, Quat, Vec3};
 pub use messages::{Message, Pose, TickDone, TickStart};
-pub use random::{RandomSplitMix64, derive_component_seed};
+pub use random::RandomSplitMix64;
+pub use seed::{derive_component_seed, mix_seeds};
 pub use time::{SimDuration, SimTime};

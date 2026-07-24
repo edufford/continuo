@@ -1,6 +1,6 @@
 use continuo_core::{
     Component, ComponentPath, HashFnv1a64, Message, SimTime, StepCtx, TickDone, TickStart,
-    hash_bytes, random::mix,
+    hash_bytes, mix_seeds,
 };
 use continuo_transport::Transport;
 use tracing::trace;
@@ -41,7 +41,7 @@ impl<T: Transport> Conductor<T> {
         // Fold the seed and world name into the initial hash so runs with
         // different seeds have different fingerprints even before (or
         // without) any component using randomness.
-        let world_hash = mix(config.seed, hash_bytes(config.world.as_bytes()));
+        let world_hash = mix_seeds(config.seed, hash_bytes(config.world.as_bytes()));
 
         // Return a conductor at sim time zero with an empty schedule.
         Ok(Conductor {
