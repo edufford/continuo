@@ -462,6 +462,34 @@ the mix. They are independent and can swap if priorities shift.
   deterministic and recordable — resim experiments are themselves
   verifiable. No general "divergence summary" mode: the sim cannot report
   behavioral differences usefully; observe resim runs like any other run.
+- **2026-07-23** — Milestone 2 review outcomes (naming and module shape; no
+  behavior change — the demo's world hash is unchanged):
+  - Determinism primitives are named for what they are, algorithm
+    included: `HashFnv1a64` and `RandomSplitMix64` (spelled out, not an
+    acronym), with the module following the type: `core::random`.
+  - **Seed derivation is its own concern**, `continuo-core::seed`: it uses
+    the hash to fold names down to 64 bits and the generator's scrambler to
+    combine values, and belongs to neither. `mix` → `mix_seeds`;
+    `derive_component_seed` and the new `derive_step_seed` live there.
+    `StepCtx::rng()` → `step_random()`.
+  - The world's two identifying values are named for what they hold, and
+    named the same way everywhere — **`world_name` and `world_seed`** — in
+    `ConductorConfig`, the event-log header, `StepCtx`, and the derivation
+    functions. A bare `world: String` reads like it holds the world; it
+    holds the world's name.
+  - `Recorder::new` and `Verifier::new` take **`&ConductorConfig`** instead
+    of a restated world name and seed, so a log's header always names the
+    run that produced it, and verification always checks the log against
+    the run actually about to execute. Verification never takes the
+    expected world/seed *from* the log — that would make the header check
+    vacuous.
+  - The event log splits by what each part does with it: `record` (log +
+    `Recorder`), `verify` (`Divergence`, `EventLog::first_divergence`,
+    `Verifier`), `playback` (`PlaybackComponent`), with their tests in
+    `tests/event_log.rs` against one shared fixture log.
+    `PlaybackComponent` stays in `continuo-conductor` — it is harness
+    machinery built on `EventLog`, not a sample actor, and moving it to
+    `continuo-actors` would invert the crate layering.
 
 ## Deferred (decided-not-now, revisit when they bite)
 
