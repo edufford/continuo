@@ -11,7 +11,12 @@ use continuo_core::{Pose, Quat, SimDuration, SimTime};
 use continuo_transport::{InProcTransport, MonitorTransport};
 
 fn run_world(sim_seconds: i64, world_seed: u64) -> EventLog {
-    let recorder = Recorder::new("demo", world_seed);
+    let config = ConductorConfig {
+        world_name: "demo".into(),
+        world_seed,
+        real_time_pacing: false,
+    };
+    let recorder = Recorder::new(&config);
     let transport = MonitorTransport::new(InProcTransport::new(), recorder.message_callback());
 
     // 72 samples = one point per 5 degrees of arc; on the 40 m semi-axis the
@@ -19,15 +24,8 @@ fn run_world(sim_seconds: i64, world_seed: u64) -> EventLog {
     // controller's 6 m lookahead. Any fixed count is equally deterministic —
     // this one just keeps the polyline visually round.
     let path = Arc::new(Waypoints::ellipse((0.0, 0.0), 40.0, 25.0, 72));
-    let mut conductor = Conductor::new(
-        ConductorConfig {
-            world_name: "demo".into(),
-            world_seed,
-            real_time_pacing: false,
-        },
-        transport,
-    )
-    .expect("free-run config is always accepted");
+    let mut conductor =
+        Conductor::new(config, transport).expect("free-run config is always accepted");
     conductor.set_tick_callback(recorder.tick_callback());
 
     // Each car is registered as a composite `carN = [controller, physics]`.

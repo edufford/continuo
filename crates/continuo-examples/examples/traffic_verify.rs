@@ -26,14 +26,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let expected = EventLog::read_file(&file)?;
 
     // The verifier taps the same observation points the recorder used,
-    // comparing instead of collecting.
-    let verifier = Verifier::new(
-        expected,
-        traffic_world::WORLD_NAME,
-        traffic_world::WORLD_SEED,
-    );
+    // comparing instead of collecting. It checks the log header against the
+    // config this run is about to use — the log does not get to say what is
+    // being replayed.
+    let config = traffic_world::config();
+    let verifier = Verifier::new(expected, &config);
     let transport = MonitorTransport::new(InProcTransport::new(), verifier.message_callback());
-    let mut conductor = Conductor::new(traffic_world::config(), transport)?;
+    let mut conductor = Conductor::new(config, transport)?;
     conductor.set_tick_callback(verifier.tick_callback());
     traffic_world::populate(&mut conductor)?;
 

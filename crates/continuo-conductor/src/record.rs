@@ -34,6 +34,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 use thiserror::Error;
 
+use crate::config::ConductorConfig;
+
 /// Per-tick determinism fingerprint emitted by the conductor.
 ///
 /// `tick_hash` covers everything the tick's stepped components did in
@@ -264,13 +266,17 @@ pub struct Recorder {
 }
 
 impl Recorder {
-    pub fn new(world_name: impl Into<String>, world_seed: u64) -> Self {
+    /// Starts a recording of the run `config` describes. The header comes
+    /// from the same config the conductor runs with, so a log can never
+    /// claim a world or seed the run did not use.
+    pub fn new(config: &ConductorConfig) -> Self {
+        // Return an empty log headed by this run's identity.
         Recorder {
             inner: Arc::new(Mutex::new(EventLog {
                 header: LogHeader {
                     version: 1,
-                    world_name: world_name.into(),
-                    world_seed,
+                    world_name: config.world_name.clone(),
+                    world_seed: config.world_seed,
                 },
                 events: Vec::new(),
             })),
@@ -351,17 +357,24 @@ struct CheckerInner {
 }
 
 impl Verifier {
-    /// Builds a checker against `expected`. The re-run's world name and
-    /// seed are verified against the log header immediately, so a checker
-    /// for the wrong scenario is diverged before the first event.
-    pub fn new(expected: EventLog, world: &str, seed: u64) -> Self {
-        let divergence = (expected.header.world_name != world
-            || expected.header.world_seed != seed)
+    /// Builds a checker that checks `expected` against the run `config`
+    /// describes. The world name and seed come from the *re-run*, never
+    /// from the log: they are the actual side of the comparison, and taking
+    /// them from the config the conductor is built with is what makes the
+    /// header check meaningful — a log recorded for another scenario is
+    /// diverged before the first event rather than silently verified
+    /// against the wrong run.
+    pub fn new(expected: EventLog, config: &ConductorConfig) -> Self {
+        let divergence = (expected.header.world_name != config.world_name
+            || expected.header.world_seed != config.world_seed)
             .then(|| Divergence {
                 event_index: None,
                 description: format!(
                     "log was recorded for world {:?} seed {}; replaying world {:?} seed {}",
-                    expected.header.world_name, expected.header.world_seed, world, seed
+                    expected.header.world_name,
+                    expected.header.world_seed,
+                    config.world_name,
+                    config.world_seed
                 ),
             });
 
@@ -542,8 +555,17 @@ impl Component for PlaybackComponent {
 mod tests {
     use super::*;
 
+    /// The config the fixture log claims to have been recorded from.
+    fn sample_config() -> ConductorConfig {
+        ConductorConfig {
+            world_name: "test".to_string(),
+            world_seed: 7,
+            real_time_pacing: false,
+        }
+    }
+
     fn sample_log() -> EventLog {
-        let recorder = Recorder::new("test", 7);
+        let recorder = Recorder::new(&sample_config());
         let mut msg_callback = recorder.message_callback();
         let mut tick_callback = recorder.tick_callback();
         msg_callback(&Message {
@@ -596,7 +618,7 @@ mod tests {
 
     #[test]
     fn checker_accepts_a_matching_stream() {
-        let checker = Verifier::new(sample_log(), "test", 7);
+        let checker = Verifier::new(sample_log(), &sample_config());
         checker.message_callback()(&sample_message());
         checker.tick_callback()(&sample_fingerprint());
         assert!(!checker.diverged());
@@ -609,7 +631,7 @@ mod tests {
         if let LogEvent::Tick(fingerprint) = &mut expected.events[1] {
             fingerprint.world_hash ^= 1;
         }
-        let checker = Verifier::new(expected, "test", 7);
+        let checker = Verifier::new(expected, &sample_config());
         checker.message_callback()(&sample_message());
         assert!(!checker.diverged(), "message still matches");
         checker.tick_callback()(&sample_fingerprint());
@@ -620,7 +642,7 @@ mod tests {
 
     #[test]
     fn checker_flags_a_truncated_rerun() {
-        let checker = Verifier::new(sample_log(), "test", 7);
+        let checker = Verifier::new(sample_log(), &sample_config());
         checker.message_callback()(&sample_message());
         // The re-run ends here; the recorded tick is never matched.
         let divergence = checker.finish().expect_err("must diverge");
@@ -630,7 +652,11 @@ mod tests {
 
     #[test]
     fn checker_rejects_a_header_mismatch_immediately() {
-        let checker = Verifier::new(sample_log(), "test", 8); // wrong seed
+        let wrong_seed = ConductorConfig {
+            world_seed: 8,
+            ..sample_config()
+        };
+        let checker = Verifier::new(sample_log(), &wrong_seed);
         assert!(checker.diverged());
         let divergence = checker.finish().expect_err("must diverge");
         assert_eq!(divergence.event_index, None);
@@ -648,7 +674,11 @@ mod tests {
         let div = a.first_divergence(&b).expect("must diverge");
         assert_eq!(div.event_index, Some(1));
 
-        let c = Recorder::new("test", 8).finish(); // different seed
+        let different_seed = ConductorConfig {
+            world_seed: 8,
+            ..sample_config()
+        };
+        let c = Recorder::new(&different_seed).finish();
         assert!(
             a.first_divergence(&c)
                 .expect("header differs")

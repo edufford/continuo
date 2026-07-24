@@ -68,18 +68,22 @@ impl Component for HiddenCounter {
     }
 }
 
+/// The world these tests run, as a config both the conductor and the
+/// recorder/verifier are built from.
+fn hashing_world(world_seed: u64) -> ConductorConfig {
+    ConductorConfig {
+        world_name: "hashing-test".into(),
+        world_seed,
+        real_time_pacing: false,
+    }
+}
+
 fn run_noise_world(world_seed: u64) -> EventLog {
-    let recorder = Recorder::new("hashing-test", world_seed);
+    let config = hashing_world(world_seed);
+    let recorder = Recorder::new(&config);
     let transport = MonitorTransport::new(InProcTransport::new(), recorder.message_callback());
-    let mut conductor = Conductor::new(
-        ConductorConfig {
-            world_name: "hashing-test".into(),
-            world_seed,
-            real_time_pacing: false,
-        },
-        transport,
-    )
-    .expect("free-run config is always accepted");
+    let mut conductor =
+        Conductor::new(config, transport).expect("free-run config is always accepted");
     conductor.set_tick_callback(recorder.tick_callback());
 
     conductor
@@ -175,17 +179,11 @@ fn live_verification_stops_at_the_first_divergence() {
 
     // Re-run the same world against the tampered log, stopping on
     // divergence.
-    let checker = Verifier::new(expected, "hashing-test", 42);
+    let config = hashing_world(42);
+    let checker = Verifier::new(expected, &config);
     let transport = MonitorTransport::new(InProcTransport::new(), checker.message_callback());
-    let mut conductor = Conductor::new(
-        ConductorConfig {
-            world_name: "hashing-test".into(),
-            world_seed: 42,
-            real_time_pacing: false,
-        },
-        transport,
-    )
-    .expect("free-run config is always accepted");
+    let mut conductor =
+        Conductor::new(config, transport).expect("free-run config is always accepted");
     conductor.set_tick_callback(checker.tick_callback());
     conductor
         .add_component(
@@ -215,17 +213,11 @@ fn playback_double_reproduces_the_recorded_messages() {
 
     // Rebuild the world with the noise source replaced by its playback
     // double, recording what the double publishes.
-    let recorder = Recorder::new("hashing-test", 42);
+    let config = hashing_world(42);
+    let recorder = Recorder::new(&config);
     let transport = MonitorTransport::new(InProcTransport::new(), recorder.message_callback());
-    let mut conductor = Conductor::new(
-        ConductorConfig {
-            world_name: "hashing-test".into(),
-            world_seed: 42,
-            real_time_pacing: false,
-        },
-        transport,
-    )
-    .expect("free-run config is always accepted");
+    let mut conductor =
+        Conductor::new(config, transport).expect("free-run config is always accepted");
     conductor.set_tick_callback(recorder.tick_callback());
     conductor
         .add_component(

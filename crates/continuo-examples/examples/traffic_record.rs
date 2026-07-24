@@ -23,10 +23,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok_or("usage: traffic_record <file>")?;
 
     // The recorder taps the two observation points: a transport monitor for
-    // every published message, the tick callback for every fingerprint.
-    let recorder = Recorder::new(traffic_world::WORLD_NAME, traffic_world::WORLD_SEED);
+    // every published message, the tick callback for every fingerprint. It
+    // takes the same config the conductor runs with, so the log header
+    // always names the run that produced it.
+    let config = traffic_world::config();
+    let recorder = Recorder::new(&config);
     let transport = MonitorTransport::new(InProcTransport::new(), recorder.message_callback());
-    let mut conductor = Conductor::new(traffic_world::config(), transport)?;
+    let mut conductor = Conductor::new(config, transport)?;
     conductor.set_tick_callback(recorder.tick_callback());
     traffic_world::populate(&mut conductor)?;
 
