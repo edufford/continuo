@@ -171,14 +171,21 @@ mod tests {
         ComponentPath::parse(s).unwrap()
     }
 
+    /// These tests exercise tree structure only; the seed just has to be
+    /// some fixed value, since no component here draws random numbers.
+    const TEST_WORLD_SEED: u64 = 0;
+
     #[test]
     fn same_instant_rule() {
         let mut reg = Registry::default();
         let car1 = path("car1");
         let car2 = path("car2");
-        reg.add(&car1, Box::new(Dummy("controller")), 0).unwrap();
-        reg.add(&car1, Box::new(Dummy("physics")), 0).unwrap();
-        reg.add(&car2, Box::new(Dummy("controller")), 0).unwrap();
+        reg.add(&car1, Box::new(Dummy("controller")), TEST_WORLD_SEED)
+            .unwrap();
+        reg.add(&car1, Box::new(Dummy("physics")), TEST_WORLD_SEED)
+            .unwrap();
+        reg.add(&car2, Box::new(Dummy("controller")), TEST_WORLD_SEED)
+            .unwrap();
 
         let t = &reg.tree;
         // Earlier sibling → later sibling: released.
@@ -195,21 +202,23 @@ mod tests {
     fn path_conflicts_rejected() {
         let mut reg = Registry::default();
         let root = ComponentPath::root();
-        reg.add(&root, Box::new(Dummy("a")), 0).unwrap();
+        reg.add(&root, Box::new(Dummy("a")), TEST_WORLD_SEED)
+            .unwrap();
         // Duplicate leaf.
         assert!(matches!(
-            reg.add(&root, Box::new(Dummy("a")), 0),
+            reg.add(&root, Box::new(Dummy("a")), TEST_WORLD_SEED),
             Err(ConductorError::DuplicatePath(_))
         ));
         // Leaf "a" cannot become a composite.
         assert!(matches!(
-            reg.add(&path("a"), Box::new(Dummy("b")), 0),
+            reg.add(&path("a"), Box::new(Dummy("b")), TEST_WORLD_SEED),
             Err(ConductorError::PathConflict { .. })
         ));
         // Composite "c" (via c/x) cannot become a leaf.
-        reg.add(&path("c"), Box::new(Dummy("x")), 0).unwrap();
+        reg.add(&path("c"), Box::new(Dummy("x")), TEST_WORLD_SEED)
+            .unwrap();
         assert!(matches!(
-            reg.add(&root, Box::new(Dummy("c")), 0),
+            reg.add(&root, Box::new(Dummy("c")), TEST_WORLD_SEED),
             Err(ConductorError::PathConflict { .. })
         ));
     }
