@@ -19,6 +19,10 @@ pub const WORLD_SEED: u64 = 42;
 pub const WORLD_NAME: &str = "demo";
 pub const SIM_SECONDS: i64 = 30;
 
+/// The cars of the demo world, in declaration order. They start evenly
+/// spaced around the loop, one start slot each.
+pub const CARS: [&str; 3] = ["car1", "car2", "car3"];
+
 /// The demo world's conductor configuration (free-run).
 pub fn config() -> ConductorConfig {
     ConductorConfig {
@@ -35,17 +39,17 @@ pub fn demo_path() -> Arc<Waypoints> {
     Arc::new(Waypoints::ellipse((0.0, 0.0), 40.0, 25.0, 72))
 }
 
-/// Registers one live car (composite `controller → physics`) staggered to
-/// position `i` of 3 around the loop. Declared order matters: the
-/// controller is registered before the physics, so its command reaches the
-/// physics same-instant when both are due.
+/// Registers one live car (composite `controller → physics`) at start slot
+/// `start_slot` of [`CARS`], evenly spaced around the loop. Declared order
+/// matters: the controller is registered before the physics, so its
+/// command reaches the physics same-instant when both are due.
 pub fn add_live_car<T: Transport>(
     conductor: &mut Conductor<T>,
     path: &Arc<Waypoints>,
     car: &str,
-    i: usize,
+    start_slot: usize,
 ) -> Result<(), ConductorError> {
-    let s0 = path.total_length() * i as f64 / 3.0;
+    let s0 = path.total_length() * start_slot as f64 / CARS.len() as f64;
     let initial_pose = Pose {
         position: path.point_at(s0),
         orientation: Quat::from_yaw(path.heading_at(s0)),
@@ -93,11 +97,11 @@ pub fn add_logger<T: Transport>(conductor: &mut Conductor<T>) -> Result<(), Cond
     Ok(())
 }
 
-/// Populates the full live world: three cars plus the pose logger.
+/// Populates the full live world: every car plus the pose logger.
 pub fn populate<T: Transport>(conductor: &mut Conductor<T>) -> Result<(), ConductorError> {
     let path = demo_path();
-    for (i, car) in ["car1", "car2", "car3"].into_iter().enumerate() {
-        add_live_car(conductor, &path, car, i)?;
+    for (start_slot, car) in CARS.into_iter().enumerate() {
+        add_live_car(conductor, &path, car, start_slot)?;
     }
     add_logger(conductor)?;
 

@@ -28,12 +28,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut conductor = Conductor::new(traffic_world::config(), InProcTransport::new())?;
     let path = traffic_world::demo_path();
-    traffic_world::add_live_car(&mut conductor, &path, "car1", 0)?;
-    for car in ["car2", "car3"] {
+    traffic_world::add_live_car(&mut conductor, &path, traffic_world::CARS[0], 0)?;
+    for car in &traffic_world::CARS[1..] {
         conductor.add_component(
             "",
             Box::new(PlaybackComponent::from_log(
-                ComponentId::new(car)?,
+                ComponentId::new(*car)?,
                 &log,
                 car,
             )),
