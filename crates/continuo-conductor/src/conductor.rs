@@ -220,7 +220,12 @@ impl<T: Transport> Conductor<T> {
             let entry = &mut self.registry.entries[index];
             // Components exposing internal state join the hash in
             // state-hash mode; the rest are covered by their output bytes
-            // above (output-hash mode).
+            // above (output-hash mode). The b"|state|" marker below
+            // separates state bytes from the payload bytes they follow:
+            // without it, two runs over the same concatenation but a
+            // different split (published "ab" with state "c" vs. published
+            // "a" with state "bc") hash alike, and a divergence that only
+            // moves the boundary would go unseen.
             if let Some(state) = entry.component.state_bytes() {
                 tick_hasher.write(b"|state|");
                 tick_hasher.write(&state);
