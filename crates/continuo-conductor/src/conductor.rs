@@ -7,6 +7,7 @@ use tracing::trace;
 
 use crate::config::ConductorConfig;
 use crate::error::ConductorError;
+use crate::pacing::{Pacer, Pacing, SystemClock};
 use crate::record::TickFingerprint;
 use crate::registry::Registry;
 use crate::schedule::Schedule;
@@ -27,17 +28,21 @@ pub struct Conductor<T: Transport> {
     /// values at every tick.
     world_hash: u64,
     tick_callback: Option<TickCallback>,
+    /// `Some` in 1× real-time mode, gating each instant to wall time;
+    /// `None` in free-run. Pacing never affects `world_hash`.
+    pacer: Option<Pacer<SystemClock>>,
 }
 
 impl<T: Transport> Conductor<T> {
     pub fn new(config: ConductorConfig, transport: T) -> Result<Self, ConductorError> {
-        // TODO(M3): implement 1x real-time pacing (sleep until the wall time
-        // corresponding to the next step's sim time; on overrun, log and let
-        // the wall anchor slip — see PLAN.md "Pacing"). Until then only
-        // free-run is supported.
-        if config.real_time_pacing {
-            return Err(ConductorError::RealTimePacingUnsupported);
-        }
+        // 1× real-time pacing (PLAN.md "Pacing") gates each instant to wall
+        // time; free-run leaves the pacer off and advances immediately. The
+        // spin padding only picks how the wait is spent (OS sleep vs.
+        // sleep-then-spin) — never what happens in the instant.
+        let pacer = match config.pacing {
+            Pacing::FreeRun => None,
+            Pacing::RealTime { spin_padding } => Some(Pacer::new(SystemClock::new(spin_padding))),
+        };
         // Fold the seed and world name into the initial hash so runs with
         // different seeds have different fingerprints even before (or
         // without) any component using randomness.
@@ -53,6 +58,7 @@ impl<T: Transport> Conductor<T> {
             tick: 0,
             world_hash,
             tick_callback: None,
+            pacer,
         })
     }
 
@@ -89,6 +95,21 @@ impl<T: Transport> Conductor<T> {
     /// tick).
     pub fn tick(&self) -> u64 {
         self.tick
+    }
+
+    /// How many instants ran late in 1× real-time mode — i.e. the sim
+    /// could not keep up and the wall-time anchor slipped. Always 0 in
+    /// free-run.
+    pub fn overrun_count(&self) -> u64 {
+        self.pacer.as_ref().map_or(0, Pacer::overrun_count)
+    }
+
+    /// Total wall-clock time the run has fallen behind real time across all
+    /// overruns (0 in free-run, or when 1× pacing kept up).
+    pub fn total_slip(&self) -> std::time::Duration {
+        self.pacer
+            .as_ref()
+            .map_or(std::time::Duration::ZERO, Pacer::total_slip)
     }
 
     /// Registers a component under `parent` (`""` for a world-level actor;
@@ -141,6 +162,14 @@ impl<T: Transport> Conductor<T> {
         debug_assert!(now >= self.sim_time, "schedule went backwards");
         self.sim_time = now;
         self.tick += 1;
+
+        // In 1× real-time mode, wait for this instant's wall-clock target
+        // before doing any of its work. This only delays entry to the
+        // instant; it never changes what happens in it, so the world hash
+        // is identical to a free run.
+        if let Some(pacer) = self.pacer.as_mut() {
+            pacer.pace(now);
+        }
 
         // Per-tick determinism fingerprint: covers, in declaration order,
         // every stepped component's path, next-due time, published bytes,

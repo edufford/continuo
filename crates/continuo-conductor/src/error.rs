@@ -3,9 +3,6 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum ConductorError {
-    #[error("real-time pacing is not implemented yet (milestone 3); set real_time_pacing = false")]
-    RealTimePacingUnsupported,
-
     #[error("a component is already registered at path {0}")]
     DuplicatePath(ComponentPath),
 

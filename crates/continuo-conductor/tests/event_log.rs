@@ -5,7 +5,8 @@
 
 use continuo_conductor::record::{LogEvent, LogHeader};
 use continuo_conductor::{
-    Conductor, ConductorConfig, EventLog, PlaybackComponent, Recorder, TickFingerprint, Verifier,
+    Conductor, ConductorConfig, EventLog, Pacing, PlaybackComponent, Recorder, TickFingerprint,
+    Verifier,
 };
 use continuo_core::{Component, ComponentId, ComponentPath, KeyExpr, Message, SimTime, StepCtx};
 use continuo_transport::InProcTransport;
@@ -23,7 +24,7 @@ fn sample_config() -> ConductorConfig {
     ConductorConfig {
         world_name: WORLD_NAME.to_string(),
         world_seed: WORLD_SEED,
-        real_time_pacing: false,
+        pacing: Pacing::FreeRun,
     }
 }
 

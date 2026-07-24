@@ -370,8 +370,8 @@ owning an async runtime later.
 2. **Determinism harness** — seeding, per-tick state hash (state-hash vs.
    output-hash per component), record/replay, CI test asserting identical hash
    streams.
-3. **Pacing** — `--real-time-pacing` flag (default off = free-run), overrun
-   logging.
+3. **Pacing** — `real_time_pacing` config flag (default off = free-run),
+   1× wall-time gating with anchor-slip on overrun, overrun logging.
 4. **Dynamic join/leave** — registration over transport, tick-boundary
    application, live traffic spawner, replay still deterministic via event log.
 5. **Visualization** — viz bridge + Python package; watch the traffic move.
@@ -490,6 +490,41 @@ the mix. They are independent and can swap if priorities shift.
     `PlaybackComponent` stays in `continuo-conductor` — it is harness
     machinery built on `EventLog`, not a sample actor, and moving it to
     `continuo-actors` would invert the crate layering.
+- **2026-07-23** — Milestone 3 (pacing) implementation choices:
+  - Pacing gates each instant at the **top of `step_once`**, before any
+    component runs, so every driver (`run_until` and the manual
+    `next_scheduled` loops alike) gets it for free and it delays entry to an
+    instant without ever touching its content. Consequence: a paced run and
+    a free run of the same seeded world produce the **identical world
+    hash** — the milestone's headline test.
+  - The map from sim time to wall time is one **anchor `(sim, wall)`**.
+    Keeping the anchor fixed while sleeping means an oversleep on one step
+    is absorbed by a shorter sleep on the next (no drift). An **overrun
+    re-anchors** to when the late instant actually starts — the anchor slips
+    by the overrun amount, so the run stays behind rather than sprinting to
+    catch up (PLAN.md "Pacing"). Steps are never skipped.
+  - Overruns are logged (`tracing::warn`, target `continuo::pacing`) and
+    counted; `Conductor::overrun_count()` / `total_slip()` expose them.
+  - The anchor/slip arithmetic is isolated behind a `WallClock` trait so it
+    is unit-tested against a manual clock (no real sleeps); the conductor
+    uses `SystemClock`.
+  - Pacing is **one config field**, `pacing: Pacing` — `FreeRun` or
+    `RealTime { spin_padding }` — replacing the earlier
+    `real_time_pacing: bool` + separate precision enum (which left precision
+    meaningless whenever the bool was false). `spin_padding` tunes only how
+    each wait is *spent*, never the result: `Duration::ZERO` sleeps on the
+    OS timer alone (Rust's std already uses a high-resolution waitable timer
+    on modern Windows, ~0.5 ms) and spends no CPU between instants; a small
+    positive value sleeps to within that padding of the target then
+    busy-spins the tail for sub-millisecond accuracy at the cost of a core.
+    Every mode produces the identical world hash. `Pacing::real_time()` /
+    `real_time_precise()` name the two common choices so callers never
+    spell the padding (or the `ZERO`-means-coarse convention) out. Coarse is
+    exactly zero-padding spin — one `SystemClock::sleep` path, its
+    sleep-vs-spin cutoff a pure function with its own unit test.
+  - Failure handling at the barrier (`on_component_timeout`, PLAN.md) is
+    **not** part of M3 — it needs the join/leave machinery of M4 to drop a
+    component mid-run, so it lands there.
 
 ## Deferred (decided-not-now, revisit when they bite)
 

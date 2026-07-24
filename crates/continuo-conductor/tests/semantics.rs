@@ -3,7 +3,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use continuo_conductor::{Conductor, ConductorConfig, ConductorError};
+use continuo_conductor::{Conductor, ConductorConfig, ConductorError, Pacing};
 use continuo_core::{Component, ComponentId, KeyExpr, SimDuration, SimTime, StepCtx};
 use continuo_transport::InProcTransport;
 
@@ -73,7 +73,7 @@ fn new_conductor() -> Conductor<InProcTransport> {
         ConductorConfig {
             world_name: "test".into(),
             world_seed: 0,
-            real_time_pacing: false,
+            pacing: Pacing::FreeRun,
         },
         InProcTransport::new(),
     )
@@ -295,17 +295,17 @@ fn slow_consumer_receives_accumulated_messages_in_order() {
 }
 
 #[test]
-fn real_time_pacing_is_rejected_until_m3() {
-    let result = Conductor::new(
+fn real_time_pacing_is_accepted() {
+    // Pacing is a construction-time mode switch now, not an error path; its
+    // timing behavior is covered in tests/pacing.rs.
+    let conductor = Conductor::new(
         ConductorConfig {
             world_name: "test".into(),
             world_seed: 0,
-            real_time_pacing: true,
+            pacing: Pacing::real_time(),
         },
         InProcTransport::new(),
-    );
-    assert!(matches!(
-        result,
-        Err(ConductorError::RealTimePacingUnsupported)
-    ));
+    )
+    .expect("real-time pacing is supported");
+    assert_eq!(conductor.overrun_count(), 0);
 }

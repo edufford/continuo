@@ -9,7 +9,7 @@
 use std::sync::Arc;
 
 use continuo_actors::{PathFollowController, PoseLogger, UnicyclePhysics, Waypoints};
-use continuo_conductor::{Conductor, ConductorConfig, ConductorError};
+use continuo_conductor::{Conductor, ConductorConfig, ConductorError, Pacing};
 use continuo_core::{Pose, Quat, SimDuration};
 use continuo_transport::Transport;
 
@@ -25,10 +25,19 @@ pub const CARS: [&str; 3] = ["car1", "car2", "car3"];
 
 /// The demo world's conductor configuration (free-run).
 pub fn config() -> ConductorConfig {
+    // Return the free-run config; `config_paced` shares everything but the
+    // pacing mode, so every mode runs the identical world.
+    config_paced(Pacing::FreeRun)
+}
+
+/// The demo world's conductor configuration with the pacing mode chosen
+/// explicitly. Same seed and name whatever the pacing, so all modes produce
+/// the same world hash.
+pub fn config_paced(pacing: Pacing) -> ConductorConfig {
     ConductorConfig {
         world_name: WORLD_NAME.into(),
         world_seed: WORLD_SEED,
-        real_time_pacing: false,
+        pacing,
     }
 }
 

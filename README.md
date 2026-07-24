@@ -78,9 +78,11 @@ instant, and repeats.
 - **Human-readable messaging.** Every payload is canonical JSON. Time is
   decimal seconds; poses are named-field vectors and quaternions (never
   arrays); the wire format is directly inspectable and, later, hashable.
-- **Pacing is a boolean.** `RealTimePacing = false` free-runs as fast as
-  possible; `true` (milestone 3) sleeps to 1× wall time and logs overruns.
-  Sim logic never sees which mode is active.
+- **Pacing is a boolean.** `real_time_pacing = false` free-runs as fast as
+  possible; `true` sleeps to 1× wall time and logs overruns (when the sim
+  can't keep up, the wall anchor slips — no catch-up, no skipped steps). Sim
+  logic never sees which mode is active, and pacing never changes the world
+  hash.
 
 ### Crates
 
@@ -90,7 +92,7 @@ instant, and repeats.
 | [`continuo-transport`](crates/continuo-transport/) | `Transport` trait, deterministic `InProcTransport`, `MonitorTransport` for out-of-band message recording |
 | [`continuo-conductor`](crates/continuo-conductor/) | Registry (component tree as data), event schedule, the conductor loop, tick fingerprints, and the event log: `record`, `verify`, `playback` |
 | [`continuo-actors`](crates/continuo-actors/) | Sample components: waypoint path, path-follow controller, unicycle physics, pose logger |
-| [`continuo-examples`](crates/continuo-examples/) | Runnable example worlds: `traffic` (base demo), `traffic_record`, `traffic_verify`, `traffic_resim` |
+| [`continuo-examples`](crates/continuo-examples/) | Runnable example worlds: `traffic` (base demo), `traffic_realtime`, `traffic_record`, `traffic_verify`, `traffic_resim` |
 
 ### Milestones
 
@@ -99,7 +101,7 @@ See PLAN.md for what each one covers.
 - [x] **M1** — skeleton: core types, transport, conductor loop, traffic demo
 - [x] **M2** — determinism harness: seeding, tick fingerprints, event-log
       recording, verification, open-loop resimulation
-- [ ] **M3** — real-time pacing (1× wall time, overrun logging)
+- [x] **M3** — real-time pacing (1× wall time, overrun logging)
 - [ ] **M4** — runtime join/leave
 - [ ] **M5** — Python visualization package
 - [ ] **M6** — FMI 3.0 CS import (FMUs as components)
@@ -126,6 +128,9 @@ cargo fmt --all
 
 # Run the demo: three cars circulating an oval, free-run, 30 sim-seconds
 cargo run -p continuo-examples --example traffic
+
+# The same world paced to 1x real time (argument = sim-seconds to run)
+cargo run -p continuo-examples --example traffic_realtime -- 3
 
 # Record the run's event log (messages + tick fingerprints)
 cargo run -p continuo-examples --example traffic_record -- run.jsonl

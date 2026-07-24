@@ -8,6 +8,7 @@
 mod conductor;
 mod config;
 mod error;
+mod pacing;
 mod playback;
 pub mod record;
 mod registry;
@@ -17,6 +18,7 @@ mod verify;
 pub use conductor::Conductor;
 pub use config::ConductorConfig;
 pub use error::ConductorError;
+pub use pacing::Pacing;
 pub use playback::PlaybackComponent;
 pub use record::{EventLog, Recorder, TickFingerprint};
 pub use verify::{Divergence, Verifier};

@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use continuo_actors::{PathFollowController, UnicyclePhysics, Waypoints};
 use continuo_conductor::record::LogEvent;
-use continuo_conductor::{Conductor, ConductorConfig, EventLog, Recorder};
+use continuo_conductor::{Conductor, ConductorConfig, EventLog, Pacing, Recorder};
 use continuo_core::{Pose, Quat, SimDuration, SimTime};
 use continuo_transport::{InProcTransport, MonitorTransport};
 
@@ -14,7 +14,7 @@ fn run_world(sim_seconds: i64, world_seed: u64) -> EventLog {
     let config = ConductorConfig {
         world_name: "demo".into(),
         world_seed,
-        real_time_pacing: false,
+        pacing: Pacing::FreeRun,
     };
     let recorder = Recorder::new(&config);
     let transport = MonitorTransport::new(InProcTransport::new(), recorder.message_callback());
