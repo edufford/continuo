@@ -28,20 +28,20 @@
 
 /// FNV-1a, 64-bit. Reference: Fowler/Noll/Vo, http://www.isthe.com/chongo/tech/comp/fnv/
 #[derive(Debug, Clone, Copy)]
-pub struct Fnv1a64(u64);
+pub struct HashFnv1a64(u64);
 
 const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
 
-impl Fnv1a64 {
+impl HashFnv1a64 {
     pub const fn new() -> Self {
-        Fnv1a64(FNV_OFFSET_BASIS)
+        HashFnv1a64(FNV_OFFSET_BASIS)
     }
 
     /// Resumes hashing from a previous hash value — used to chain the
     /// running world hash across ticks.
     pub const fn resume(hash: u64) -> Self {
-        Fnv1a64(hash)
+        HashFnv1a64(hash)
     }
 
     pub fn write(&mut self, bytes: &[u8]) {
@@ -66,7 +66,7 @@ impl Fnv1a64 {
     }
 }
 
-impl Default for Fnv1a64 {
+impl Default for HashFnv1a64 {
     fn default() -> Self {
         Self::new()
     }
@@ -74,7 +74,7 @@ impl Default for Fnv1a64 {
 
 /// One-shot convenience.
 pub fn hash_bytes(bytes: &[u8]) -> u64 {
-    let mut h = Fnv1a64::new();
+    let mut h = HashFnv1a64::new();
     h.write(bytes);
 
     // Return the hash of the full byte slice.
@@ -113,7 +113,7 @@ mod tests {
 
     #[test]
     fn incremental_equals_one_shot() {
-        let mut h = Fnv1a64::new();
+        let mut h = HashFnv1a64::new();
         h.write(b"foo");
         h.write(b"bar");
         assert_eq!(h.finish(), hash_bytes(b"foobar"));
@@ -122,9 +122,9 @@ mod tests {
     #[test]
     fn resume_chains() {
         let first = hash_bytes(b"tick1");
-        let mut chained = Fnv1a64::resume(first);
+        let mut chained = HashFnv1a64::resume(first);
         chained.write(b"tick2");
-        let mut manual = Fnv1a64::new();
+        let mut manual = HashFnv1a64::new();
         manual.write(b"tick1");
         manual.write(b"tick2");
         assert_eq!(chained.finish(), manual.finish());

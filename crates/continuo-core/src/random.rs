@@ -42,13 +42,13 @@ use crate::ids::ComponentPath;
 /// public-domain reference implementation by Sebastiano Vigna
 /// (https://prng.di.unimi.it/splitmix64.c).
 #[derive(Debug, Clone)]
-pub struct DetRng {
+pub struct RandomSplitMix64 {
     state: u64,
 }
 
-impl DetRng {
+impl RandomSplitMix64 {
     pub const fn new(seed: u64) -> Self {
-        DetRng { state: seed }
+        RandomSplitMix64 { state: seed }
     }
 
     pub fn next_u64(&mut self) -> u64 {
@@ -75,7 +75,7 @@ impl DetRng {
 /// Deterministically combines two seeds (one SplitMix64 scramble of their
 /// mix), used for seed derivation trees.
 pub fn mix(a: u64, b: u64) -> u64 {
-    DetRng::new(a ^ b.wrapping_mul(0x9E37_79B9_7F4A_7C15)).next_u64()
+    RandomSplitMix64::new(a ^ b.wrapping_mul(0x9E37_79B9_7F4A_7C15)).next_u64()
 }
 
 /// The per-component seed: `(world_seed, component_path)` per PLAN.md.
@@ -89,8 +89,8 @@ mod tests {
 
     #[test]
     fn deterministic_stream() {
-        let mut a = DetRng::new(42);
-        let mut b = DetRng::new(42);
+        let mut a = RandomSplitMix64::new(42);
+        let mut b = RandomSplitMix64::new(42);
         for _ in 0..100 {
             assert_eq!(a.next_u64(), b.next_u64());
         }
@@ -100,7 +100,7 @@ mod tests {
     fn splitmix64_reference_vector() {
         // First outputs of splitmix64 with seed 0, from the reference
         // implementation.
-        let mut r = DetRng::new(0);
+        let mut r = RandomSplitMix64::new(0);
         assert_eq!(r.next_u64(), 0xE220_A839_7B1D_CDAF);
         assert_eq!(r.next_u64(), 0x6E78_9E6A_A1B9_65F4);
         assert_eq!(r.next_u64(), 0x06C4_5D18_8009_454F);
@@ -108,7 +108,7 @@ mod tests {
 
     #[test]
     fn f64_in_unit_interval() {
-        let mut r = DetRng::new(7);
+        let mut r = RandomSplitMix64::new(7);
         for _ in 0..1000 {
             let x = r.next_f64();
             assert!((0.0..1.0).contains(&x));

@@ -84,8 +84,8 @@ impl<'a> StepCtx<'a> {
 
     /// This component's deterministic seed, stable for the whole run:
     /// derived from `(world_seed, component_path)`. Seed a stored
-    /// [`DetRng`](crate::DetRng) from it for a stream that persists across
-    /// steps.
+    /// [`RandomSplitMix64`](crate::RandomSplitMix64) from it for a stream
+    /// that persists across steps.
     pub fn component_seed(&self) -> u64 {
         self.component_seed
     }
@@ -94,10 +94,11 @@ impl<'a> StepCtx<'a> {
     /// zero-state-to-carry way to add noise. The stream depends only on the
     /// component seed and the current sim time, so replays reproduce it
     /// exactly; draws are independent between steps. For a stream that is
-    /// continuous *across* steps, store `DetRng::new(ctx.component_seed())`
-    /// in the component at first step instead.
-    pub fn rng(&self) -> crate::DetRng {
-        crate::DetRng::new(crate::rng::mix(
+    /// continuous *across* steps, store
+    /// `RandomSplitMix64::new(ctx.component_seed())` in the component at
+    /// first step instead.
+    pub fn rng(&self) -> crate::RandomSplitMix64 {
+        crate::RandomSplitMix64::new(crate::random::mix(
             self.component_seed,
             self.now.as_nanos() as u64,
         ))

@@ -5,14 +5,16 @@ use continuo_conductor::record::LogEvent;
 use continuo_conductor::{
     Conductor, ConductorConfig, EventLog, PlaybackComponent, Recorder, Verifier,
 };
-use continuo_core::{Component, ComponentId, DetRng, KeyExpr, SimDuration, SimTime, StepCtx};
+use continuo_core::{
+    Component, ComponentId, KeyExpr, RandomSplitMix64, SimDuration, SimTime, StepCtx,
+};
 use continuo_transport::{InProcTransport, MonitorTransport};
 
 /// Publishes one deterministic random value per step from a persistent
 /// per-component stream.
 struct NoiseSource {
     id: &'static str,
-    rng: Option<DetRng>,
+    random: Option<RandomSplitMix64>,
 }
 
 impl Component for NoiseSource {
@@ -25,10 +27,10 @@ impl Component for NoiseSource {
     }
 
     fn step(&mut self, ctx: &mut StepCtx) -> SimTime {
-        let rng = self
-            .rng
-            .get_or_insert_with(|| DetRng::new(ctx.component_seed()));
-        let value = rng.next_f64();
+        let random = self
+            .random
+            .get_or_insert_with(|| RandomSplitMix64::new(ctx.component_seed()));
+        let value = random.next_f64();
         ctx.publish(KeyExpr::new("test/noise").expect("valid key"), &value)
             .expect("f64 serializes");
 
@@ -85,7 +87,7 @@ fn run_noise_world(seed: u64) -> EventLog {
             "",
             Box::new(NoiseSource {
                 id: "noise",
-                rng: None,
+                random: None,
             }),
         )
         .expect("registration succeeds");
@@ -190,7 +192,7 @@ fn live_verification_stops_at_the_first_divergence() {
             "",
             Box::new(NoiseSource {
                 id: "noise",
-                rng: None,
+                random: None,
             }),
         )
         .expect("registration succeeds");

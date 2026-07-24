@@ -1,6 +1,6 @@
 use continuo_core::{
-    Component, ComponentPath, Fnv1a64, Message, SimTime, StepCtx, TickDone, TickStart, hash_bytes,
-    rng::mix,
+    Component, ComponentPath, HashFnv1a64, Message, SimTime, StepCtx, TickDone, TickStart,
+    hash_bytes, random::mix,
 };
 use continuo_transport::Transport;
 use tracing::trace;
@@ -143,7 +143,7 @@ impl<T: Transport> Conductor<T> {
         // Per-tick determinism fingerprint: covers, in declaration order,
         // every stepped component's path, next-due time, published bytes,
         // and (when provided via `state_bytes`) internal state.
-        let mut tick_hasher = Fnv1a64::new();
+        let mut tick_hasher = HashFnv1a64::new();
         tick_hasher.write_u64(self.tick);
         tick_hasher.write_i64(now.as_nanos());
 
@@ -254,7 +254,7 @@ impl<T: Transport> Conductor<T> {
         // Chain this tick into the running world hash and emit the
         // fingerprint.
         let tick_hash = tick_hasher.finish();
-        let mut chain = Fnv1a64::resume(self.world_hash);
+        let mut chain = HashFnv1a64::resume(self.world_hash);
         chain.write_u64(tick_hash);
         self.world_hash = chain.finish();
         if let Some(callback) = self.tick_callback.as_mut() {
