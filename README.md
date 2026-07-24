@@ -62,21 +62,19 @@ instant, and repeats.
   - *Inside a composite:* children step in declared order, and messages from
     an earlier child reach later children in the same step — the
     sensor → controller → physics pipeline.
-- **Deterministic by construction — and verified.** Inboxes are sorted by
+- **Deterministic by construction.** Inboxes are sorted by
   `(publisher, seq)`, never arrival order; execution order within an instant
-  is declaration order; no wall clock or OS entropy in sim logic. Randomness
-  derives from a world seed (per-component seeds from
-  `(seed, component_path)`, via an owned SplitMix64 RNG). Every tick the
-  conductor emits a **fingerprint**: an FNV-1a 64 hash over each stepped
-  component's outputs (and, for components implementing `state_bytes`, its
-  internal state), chained into a running world hash. Two runs of the same
-  seeded world produce identical hash streams (tested). Runs can be
-  recorded to a JSON-lines event log, then used two opposite ways:
-  **verification** (re-run everything live and check each event against the
-  log, stopping at the first divergence — divergence means broken
-  determinism) or **open-loop resimulation** (play selected recorded
-  publishers back into the sim as stimulus for changed components —
-  divergence from the recording is the result being studied).
+  is declaration order; no wall clock or OS entropy in sim logic. All
+  randomness derives from one world seed.
+- **Determinism verification.** Every tick the conductor emits a
+  **fingerprint** — a hash over what each stepped component published (plus
+  its internal state, if it implements `state_bytes`) — chained into a
+  running world hash, so one value fingerprints a whole run. Runs record to
+  a JSON-lines event log, which can then be read two opposite ways:
+  **verification** re-runs everything live and checks it against the log,
+  stopping at the first divergence (divergence = broken determinism);
+  **open-loop resimulation** plays recorded publishers back as stimulus for
+  changed components (divergence = the experiment's result).
 - **Human-readable messaging.** Every payload is canonical JSON. Time is
   decimal seconds; poses are named-field vectors and quaternions (never
   arrays); the wire format is directly inspectable and, later, hashable.
@@ -88,16 +86,24 @@ instant, and repeats.
 
 | Crate | Contents |
 | ----- | -------- |
-| [`continuo-core`](crates/continuo-core/) | `SimTime`/`SimDuration`, ids and paths, key expressions, `Vec3`/`Quat`/Euler (canonical Z-Y-X conversions), wire messages, the `Component` trait |
+| [`continuo-core`](crates/continuo-core/) | `SimTime`/`SimDuration`, ids and paths, key expressions, `Vec3`/`Quat`/Euler (canonical Z-Y-X conversions), wire messages, the `Component` trait, owned hash/random/seed derivation |
 | [`continuo-transport`](crates/continuo-transport/) | `Transport` trait, deterministic `InProcTransport`, `MonitorTransport` for out-of-band message recording |
-| [`continuo-conductor`](crates/continuo-conductor/) | Registry (component tree as data), event schedule, the conductor loop, tick fingerprints + event log recording |
+| [`continuo-conductor`](crates/continuo-conductor/) | Registry (component tree as data), event schedule, the conductor loop, tick fingerprints, and the event log: `record`, `verify`, `playback` |
 | [`continuo-actors`](crates/continuo-actors/) | Sample components: waypoint path, path-follow controller, unicycle physics, pose logger |
 | [`continuo-examples`](crates/continuo-examples/) | Runnable example worlds: `traffic` (base demo), `traffic_record`, `traffic_verify`, `traffic_resim` |
 
-Planned (see PLAN.md milestones): real-time pacing (M3), runtime join/leave
-(M4), Python visualization (M5), FMI 3.0 CS import (M6), Zenoh transport
-(M7). The determinism harness (M2 — seeding, tick fingerprints,
-record/replay) is implemented.
+### Milestones
+
+See PLAN.md for what each one covers.
+
+- [x] **M1** — skeleton: core types, transport, conductor loop, traffic demo
+- [x] **M2** — determinism harness: seeding, tick fingerprints, event-log
+      recording, verification, open-loop resimulation
+- [ ] **M3** — real-time pacing (1× wall time, overrun logging)
+- [ ] **M4** — runtime join/leave
+- [ ] **M5** — Python visualization package
+- [ ] **M6** — FMI 3.0 CS import (FMUs as components)
+- [ ] **M7** — Zenoh transport and distributed hosts
 
 Everywhere current code is a placeholder for later work, a comment marks the
 spot: `TODO(Mn)` for numbered milestones, `TODO(PLAN "section")` for design
