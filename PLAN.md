@@ -266,6 +266,31 @@ Either way the overrun/failure is logged with the component id and step time.
 Component panics in-process are caught at the host boundary and treated the
 same as a timeout.
 
+### Per-component timing: one declaration, two severities
+
+The timeout above is the *hard* end of a single per-component measurement —
+how long a component's `step` took in wall time. The soft end is a **step
+budget**:
+
+- **budget** (soft, diagnostic) — "this component's `step` should complete
+  within X wall time". Exceeding it is logged and counted; the run is
+  unaffected. This is what real-time scenarios need when some components
+  carry deadlines an operator wants flagged on every miss, while other sim
+  components have no real-time restriction at all — `None`, the default, and
+  the common case.
+- **timeout** (hard, policy) — `on_component_timeout` above: halt or drop.
+
+They measure the same quantity, so they are declared together as part of a
+component's registration metadata rather than built as two mechanisms. Both
+are diagnostics that only ever *observe*: wall-clock measurements are
+machine-dependent, so budget misses and timeouts never enter sim logic, the
+world hash, or the event log's compared content — a run that misses every
+deadline still produces the identical hash.
+
+Note this is a different measurement from the pacing overrun of milestone 3,
+which asks whether the *schedule as a whole* tracked the wall clock and is
+attributable to no component in particular.
+
 ## FMI 3.0 CS support
 
 - `continuo-fmi` crate providing `FmuComponent`: an adapter that on each step
@@ -374,6 +399,8 @@ owning an async runtime later.
    1× wall-time gating with anchor-slip on overrun, overrun logging.
 4. **Dynamic join/leave** — registration over transport, tick-boundary
    application, live traffic spawner, replay still deterministic via event log.
+   Registration metadata gains per-component timing — step budget and timeout
+   policy together (see "Per-component timing").
 5. **Visualization** — viz bridge + Python package; watch the traffic move.
 6. **FMI** — `continuo-fmi`, mapping config, FMI 3.0 reference FMU driving an
    actor.
@@ -514,7 +541,10 @@ the mix. They are independent and can swap if priorities shift.
     `overrun_count` measure schedule shape rather than health. Because the
     anchor does not move, lateness keeps accumulating against it, so a sim
     that genuinely cannot keep up still crosses the threshold and is
-    reported — aggregated instead of once per instant.
+    reported — aggregated instead of once per instant. The accessor is named
+    `overrun_reanchor_count` for the event it actually counts, and documents
+    that zero means "the schedule tracked the wall clock", *not* "every
+    component finished within its time".
   - The anchor/slip arithmetic is isolated behind a `WallClock` trait so it
     is unit-tested against a manual clock (no real sleeps); the conductor
     uses `SystemClock`.
@@ -535,6 +565,32 @@ the mix. They are independent and can swap if priorities shift.
   - Failure handling at the barrier (`on_component_timeout`, PLAN.md) is
     **not** part of M3 — it needs the join/leave machinery of M4 to drop a
     component mid-run, so it lands there.
+- **2026-07-24** — **Per-component step budgets are M4, not M3**, together
+  with the timeout policy they share a measurement with (see "Per-component
+  timing"). Considered for M3 since real-time scenarios want per-component
+  deadline flagging, and rejected there for three reasons: a budget is the
+  soft half of `on_component_timeout`, so building them apart risks two
+  overlapping per-component durations instead of one declaration with an
+  escalation level; the budget belongs in registration metadata, whose shape
+  M4 is already reworking for remote components; and M3 stays a clean single
+  concern — the conductor tracking the wall clock.
+  - Two shaping decisions were settled while scoping it, so M4 need not
+    re-derive them: the budget measures **the component's own `step`
+    duration** (not completion relative to the instant's start, which would
+    fold in queueing behind earlier components), and it is declared **at
+    registration** rather than on the `Component` trait — a deadline is a
+    deployment property (the same physics model has one on a HIL rig and
+    none in a batch run), and this keeps wall-clock types out of
+    `continuo-core` entirely.
+  - Rejected alternative: **per-component pacing strictness**, letting a
+    component declare that its own overruns don't matter. It cannot replace
+    the re-anchor threshold — that threshold's job is absorbing transient
+    jitter so it self-corrects, and strictness cannot express transient vs.
+    sustained, so jitter would re-anchor and accumulate as permanent drift.
+    It also mismatches the model: pacing is per-*instant*, and co-due
+    components would need an arbitrary combining rule. And the lateness it
+    would suppress is not the lax component's anyway — it is caused by the
+    previous instant's work, and belongs to the gap.
 
 ## Deferred (decided-not-now, revisit when they bite)
 

@@ -107,6 +107,10 @@ impl<T: Transport> Conductor<T> {
     /// re-anchor threshold is deliberately absorbed, and a component that
     /// runs long stays invisible here as long as the run recovers before
     /// the threshold.
+    // TODO(M4): per-component step budgets answer the question this metric
+    // cannot — "did *this* component finish within its time" — declared with
+    // the timeout policy they share a measurement with (PLAN.md,
+    // "Per-component timing").
     pub fn overrun_reanchor_count(&self) -> u64 {
         self.pacer.as_ref().map_or(0, Pacer::overrun_reanchor_count)
     }
