@@ -131,14 +131,29 @@ impl WallClock for SystemClock {
     }
 }
 
+/// Accumulated overrun at which the anchor gives up and slips.
+///
+/// Below it, lateness is absorbed exactly as an oversleep is: the anchor
+/// stays put, so the next instant's sleep swallows it. Because the anchor
+/// does not move, lateness keeps accumulating against it — a sim that
+/// genuinely cannot keep up crosses this eventually and is reported then,
+/// aggregated rather than once per instant.
+///
+/// Sized above OS timer granularity (~0.5 ms on modern Windows) so ordinary
+/// wake-up jitter never registers — nor do sim gaps too fine to be
+/// achievable in wall time at all, like an observer sampling 1 ns past a
+/// period boundary.
+const OVERRUN_REANCHOR_THRESHOLD: Duration = Duration::from_millis(1);
+
 /// Maps sim time onto wall time and blocks to keep a run at 1× real time.
 ///
 /// The anchor `(sim, wall)` fixes one point of that map; every instant's
 /// target wall time is `wall_anchor + (sim_now - sim_anchor)`. Sleeping to
 /// hit the target keeps the anchor fixed, so an oversleep on one step is
-/// absorbed by a shorter sleep on the next (no drift accumulation). An
-/// overrun re-anchors to the moment the late instant actually starts, which
-/// is exactly "the anchor slips by the overrun amount" — the run falls
+/// absorbed by a shorter sleep on the next (no drift accumulation). Once
+/// accumulated lateness passes [`OVERRUN_REANCHOR_THRESHOLD`], the anchor
+/// re-anchors to the moment the late instant actually starts, which is
+/// exactly "the anchor slips by the overrun amount" — the run falls
 /// permanently behind by that much rather than sprinting to catch up.
 pub(crate) struct Pacer<C: WallClock> {
     clock: C,
@@ -161,8 +176,10 @@ impl<C: WallClock> Pacer<C> {
     }
 
     /// Called at the top of every instant with its sim time. Blocks until
-    /// this instant's wall-clock target, or — if already past it — records
-    /// and logs the overrun and slips the anchor.
+    /// this instant's wall-clock target; if already past it, absorbs small
+    /// lateness silently and — once the accumulated overrun passes
+    /// [`OVERRUN_REANCHOR_THRESHOLD`] — records it, logs it, and slips the
+    /// anchor.
     pub(crate) fn pace(&mut self, sim_now: SimTime) {
         let sim = sim_now.as_nanos() as i128;
         let wall = self.clock.elapsed_nanos();
@@ -175,17 +192,23 @@ impl<C: WallClock> Pacer<C> {
         if wall < target {
             self.clock.sleep(target - wall);
         } else if wall > target {
-            let overrun = wall - target;
-            self.overruns += 1;
-            self.total_slip_nanos += overrun;
-            warn!(
-                target: "continuo::pacing",
-                sim_time = %sim_now,
-                overrun_ms = overrun as f64 / 1e6,
-                "real-time overrun: sim is behind wall time; anchor slips (no catch-up)"
-            );
-            // Re-anchor to the moment this late instant actually starts.
-            self.anchor = Some((sim, wall));
+            // Lateness measured against an anchor that has not moved, so it
+            // is cumulative: transient jitter stays small and is absorbed
+            // below, while a sim that cannot keep up grows it every instant
+            // until it crosses the threshold and is reported once.
+            let accumulated_overrun = wall - target;
+            if accumulated_overrun >= OVERRUN_REANCHOR_THRESHOLD.as_nanos() as i128 {
+                self.overruns += 1;
+                self.total_slip_nanos += accumulated_overrun;
+                warn!(
+                    target: "continuo::pacing",
+                    sim_time = %sim_now,
+                    overrun_ms = accumulated_overrun as f64 / 1e6,
+                    "real-time overrun: sim is behind wall time; anchor slips (no catch-up)"
+                );
+                // Re-anchor to the moment this late instant actually starts.
+                self.anchor = Some((sim, wall));
+            }
         }
     }
 
@@ -239,6 +262,18 @@ mod tests {
         SimTime::from_nanos(nanos)
     }
 
+    /// Sim time in milliseconds — the scale the re-anchor threshold lives
+    /// at, so tests about it are readable.
+    fn t_ms(millis: i64) -> SimTime {
+        SimTime::from_millis(millis)
+    }
+
+    /// Wall-clock nanoseconds from milliseconds, for `do_work` and sleep
+    /// assertions.
+    fn ms(millis: i64) -> i128 {
+        millis as i128 * 1_000_000
+    }
+
     #[test]
     fn first_instant_anchors_without_waiting() {
         let mut pacer = Pacer::new(ManualClock::new());
@@ -258,17 +293,55 @@ mod tests {
     }
 
     #[test]
-    fn an_overrun_slips_the_anchor_and_does_not_catch_up() {
+    fn an_overrun_past_the_threshold_slips_the_anchor_and_does_not_catch_up() {
         let mut pacer = Pacer::new(ManualClock::new());
-        pacer.pace(t(0)); // anchor at (0, 0)
-        pacer.pace(t(100)); // target 100, wall 0 -> sleep 100 (now 100)
-        pacer.clock.do_work(250); // this step runs long (now 350)
-        pacer.pace(t(200)); // target 200, wall 350 -> overrun 150, re-anchor (200, 350)
-        pacer.pace(t(300)); // target 350+100=450, wall 350 -> sleep 100
+        pacer.pace(t_ms(0)); // anchor at (0, 0)
+        pacer.pace(t_ms(100)); // target 100 ms, wall 0 -> sleep 100 ms
+        pacer.clock.do_work(ms(250)); // this step runs long (now 350 ms)
+        pacer.pace(t_ms(200)); // target 200 ms, wall 350 -> 150 ms late, re-anchor
+        pacer.pace(t_ms(300)); // target 350+100 = 450 ms, wall 350 -> sleep 100 ms
 
-        assert_eq!(pacer.clock.sleeps, vec![100, 100]);
+        assert_eq!(pacer.clock.sleeps, vec![ms(100), ms(100)]);
         assert_eq!(pacer.overrun_count(), 1);
-        assert_eq!(pacer.total_slip(), Duration::from_nanos(150));
+        assert_eq!(pacer.total_slip(), Duration::from_millis(150));
+    }
+
+    #[test]
+    fn lateness_under_the_threshold_is_absorbed_like_an_oversleep() {
+        // The traffic demo's pattern: an observer samples 1 ns past a
+        // boundary, a gap no amount of work can hit. Being ~0.1 ms late for
+        // it is not the sim failing to keep up.
+        let mut pacer = Pacer::new(ManualClock::new());
+        pacer.pace(t_ms(0)); // anchor at (0, 0)
+        pacer.clock.do_work(100_000); // 0.1 ms of work
+        pacer.pace(t(1)); // 1 ns target, 0.1 ms late -> absorbed
+        assert_eq!(pacer.overrun_count(), 0);
+
+        // The anchor never moved, so the next instant is still measured from
+        // the true origin and lands back on the original schedule.
+        pacer.pace(t_ms(10));
+        assert_eq!(pacer.clock.sleeps, vec![ms(10) - 100_000]);
+        assert_eq!(pacer.total_slip(), Duration::ZERO);
+    }
+
+    #[test]
+    fn chronic_small_lateness_is_reported_once_it_accumulates() {
+        // Every step runs 0.4 ms over its 1 ms sim gap: no single instant is
+        // late enough to report, but the sim genuinely cannot keep up. The
+        // fixed anchor accumulates the lateness until it crosses 1 ms.
+        let mut pacer = Pacer::new(ManualClock::new());
+        pacer.pace(t_ms(0));
+        for instant in 1..=3 {
+            pacer.clock.do_work(ms(1) + 400_000);
+            pacer.pace(t_ms(instant));
+        }
+
+        assert_eq!(
+            pacer.overrun_count(),
+            1,
+            "0.4 + 0.4 + 0.4 ms: silent, silent, then reported on crossing"
+        );
+        assert_eq!(pacer.total_slip(), Duration::from_micros(1200));
     }
 
     #[test]

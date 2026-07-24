@@ -505,6 +505,16 @@ the mix. They are independent and can swap if priorities shift.
     catch up (PLAN.md "Pacing"). Steps are never skipped.
   - Overruns are logged (`tracing::warn`, target `continuo::pacing`) and
     counted; `Conductor::overrun_count()` / `total_slip()` expose them.
+  - Lateness is only reported once it accumulates past
+    `OVERRUN_REANCHOR_THRESHOLD` (1 ms). Below it the anchor stays put, so
+    the next instant's sleep absorbs the lateness exactly as it absorbs an
+    oversleep. This matters because *any* sim gap finer than the wall time
+    its work costs is unachievable under pacing — the demo's 1 ns logger
+    offset most starkly — and counting those as failures made
+    `overrun_count` measure schedule shape rather than health. Because the
+    anchor does not move, lateness keeps accumulating against it, so a sim
+    that genuinely cannot keep up still crosses the threshold and is
+    reported — aggregated instead of once per instant.
   - The anchor/slip arithmetic is isolated behind a `WallClock` trait so it
     is unit-tested against a manual clock (no real sleeps); the conductor
     uses `SystemClock`.
