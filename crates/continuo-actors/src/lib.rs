@@ -17,13 +17,13 @@ pub use path::Waypoints;
 pub use physics::UnicyclePhysics;
 
 /// Key for an actor's pose in `world`.
-pub fn pose_key(world: &str, actor: &str) -> continuo_core::KeyExpr {
-    continuo_core::KeyExpr::new(format!("continuo/{world}/actor/{actor}/pose"))
+pub fn pose_key(world_name: &str, actor: &str) -> continuo_core::KeyExpr {
+    continuo_core::KeyExpr::new(format!("continuo/{world_name}/actor/{actor}/pose"))
         .expect("valid pose key")
 }
 
 /// Key for an actor's drive command in `world`.
-pub fn cmd_key(world: &str, actor: &str) -> continuo_core::KeyExpr {
-    continuo_core::KeyExpr::new(format!("continuo/{world}/actor/{actor}/cmd"))
+pub fn cmd_key(world_name: &str, actor: &str) -> continuo_core::KeyExpr {
+    continuo_core::KeyExpr::new(format!("continuo/{world_name}/actor/{actor}/cmd"))
         .expect("valid cmd key")
 }

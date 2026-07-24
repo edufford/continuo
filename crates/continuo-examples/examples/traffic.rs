@@ -27,7 +27,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!(
         "done: world '{}' reached sim time {} in {} ticks (free-run)",
-        conductor.world(),
+        conductor.world_name(),
         conductor.sim_time(),
         conductor.tick()
     );

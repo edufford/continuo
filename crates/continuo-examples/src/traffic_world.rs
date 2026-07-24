@@ -22,8 +22,8 @@ pub const SIM_SECONDS: i64 = 30;
 /// The demo world's conductor configuration (free-run).
 pub fn config() -> ConductorConfig {
     ConductorConfig {
-        world: WORLD_NAME.into(),
-        seed: WORLD_SEED,
+        world_name: WORLD_NAME.into(),
+        world_seed: WORLD_SEED,
         real_time_pacing: false,
     }
 }

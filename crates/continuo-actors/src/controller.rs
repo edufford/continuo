@@ -98,7 +98,7 @@ impl Component for PathFollowController {
             yaw_rate: (self.gain * heading_error).clamp(-self.max_yaw_rate, self.max_yaw_rate),
         };
 
-        let key = crate::cmd_key(ctx.world(), &self.actor);
+        let key = crate::cmd_key(ctx.world_name(), &self.actor);
         ctx.publish(key, &cmd).expect("cmd serializes");
 
         // Return the next due time, one control period from now.

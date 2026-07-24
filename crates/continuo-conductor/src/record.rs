@@ -76,8 +76,8 @@ pub enum LogEvent {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LogHeader {
     pub version: u32,
-    pub world: String,
-    pub seed: u64,
+    pub world_name: String,
+    pub world_seed: u64,
 }
 
 #[derive(Debug, Error)]
@@ -264,13 +264,13 @@ pub struct Recorder {
 }
 
 impl Recorder {
-    pub fn new(world: impl Into<String>, seed: u64) -> Self {
+    pub fn new(world_name: impl Into<String>, world_seed: u64) -> Self {
         Recorder {
             inner: Arc::new(Mutex::new(EventLog {
                 header: LogHeader {
                     version: 1,
-                    world: world.into(),
-                    seed,
+                    world_name: world_name.into(),
+                    world_seed,
                 },
                 events: Vec::new(),
             })),
@@ -355,12 +355,13 @@ impl Verifier {
     /// seed are verified against the log header immediately, so a checker
     /// for the wrong scenario is diverged before the first event.
     pub fn new(expected: EventLog, world: &str, seed: u64) -> Self {
-        let divergence =
-            (expected.header.world != world || expected.header.seed != seed).then(|| Divergence {
+        let divergence = (expected.header.world_name != world
+            || expected.header.world_seed != seed)
+            .then(|| Divergence {
                 event_index: None,
                 description: format!(
                     "log was recorded for world {:?} seed {}; replaying world {:?} seed {}",
-                    expected.header.world, expected.header.seed, world, seed
+                    expected.header.world_name, expected.header.world_seed, world, seed
                 ),
             });
 

@@ -62,7 +62,7 @@ impl Component for UnicyclePhysics {
             self.yaw = (self.yaw + self.cmd.yaw_rate * dt).rem_euclid(std::f64::consts::TAU);
         }
 
-        let key = crate::pose_key(ctx.world(), &self.actor);
+        let key = crate::pose_key(ctx.world_name(), &self.actor);
         ctx.publish(key, &self.pose()).expect("pose serializes");
 
         // Return the next due time, one physics period from now.

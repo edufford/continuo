@@ -71,8 +71,8 @@ fn at_ms(n: i64) -> SimTime {
 fn new_conductor() -> Conductor<InProcTransport> {
     Conductor::new(
         ConductorConfig {
-            world: "test".into(),
-            seed: 0,
+            world_name: "test".into(),
+            world_seed: 0,
             real_time_pacing: false,
         },
         InProcTransport::new(),
@@ -298,8 +298,8 @@ fn slow_consumer_receives_accumulated_messages_in_order() {
 fn real_time_pacing_is_rejected_until_m3() {
     let result = Conductor::new(
         ConductorConfig {
-            world: "test".into(),
-            seed: 0,
+            world_name: "test".into(),
+            world_seed: 0,
             real_time_pacing: true,
         },
         InProcTransport::new(),

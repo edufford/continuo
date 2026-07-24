@@ -41,7 +41,7 @@ impl<T: Transport> Conductor<T> {
         // Fold the seed and world name into the initial hash so runs with
         // different seeds have different fingerprints even before (or
         // without) any component using randomness.
-        let world_hash = mix_seeds(config.seed, hash_bytes(config.world.as_bytes()));
+        let world_hash = mix_seeds(config.world_seed, hash_bytes(config.world_name.as_bytes()));
 
         // Return a conductor at sim time zero with an empty schedule.
         Ok(Conductor {
@@ -70,8 +70,8 @@ impl<T: Transport> Conductor<T> {
         self.world_hash
     }
 
-    pub fn world(&self) -> &str {
-        &self.config.world
+    pub fn world_name(&self) -> &str {
+        &self.config.world_name
     }
 
     pub fn sim_time(&self) -> SimTime {
@@ -120,7 +120,9 @@ impl<T: Transport> Conductor<T> {
         // assignment work identically on both since they only use metadata.
         let parent = ComponentPath::parse(parent)?;
         let subscriptions = component.subscriptions();
-        let (index, path) = self.registry.add(&parent, component, self.config.seed)?;
+        let (index, path) = self
+            .registry
+            .add(&parent, component, self.config.world_seed)?;
         for key in subscriptions {
             self.transport.subscribe(path.clone(), key);
         }
@@ -175,7 +177,7 @@ impl<T: Transport> Conductor<T> {
             };
             let inbox = self.transport.drain(&path, &release_condition);
 
-            let mut ctx = StepCtx::new(now, dt, &self.config.world, component_seed, inbox);
+            let mut ctx = StepCtx::new(now, dt, &self.config.world_name, component_seed, inbox);
             let entry = &mut self.registry.entries[index];
             let next_due = entry.component.step(&mut ctx);
 

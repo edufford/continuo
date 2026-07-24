@@ -55,7 +55,7 @@ pub trait Component: Send {
 pub struct StepCtx<'a> {
     now: SimTime,
     dt: Option<SimDuration>,
-    world: &'a str,
+    world_name: &'a str,
     component_seed: u64,
     inbox: Vec<Message>,
     outbox: Vec<(KeyExpr, Vec<u8>)>,
@@ -68,14 +68,14 @@ impl<'a> StepCtx<'a> {
     pub fn new(
         now: SimTime,
         dt: Option<SimDuration>,
-        world: &'a str,
+        world_name: &'a str,
         component_seed: u64,
         inbox: Vec<Message>,
     ) -> Self {
         StepCtx {
             now,
             dt,
-            world,
+            world_name,
             component_seed,
             inbox,
             outbox: Vec::new(),
@@ -117,8 +117,8 @@ impl<'a> StepCtx<'a> {
     }
 
     /// The world name, for building key expressions.
-    pub fn world(&self) -> &str {
-        self.world
+    pub fn world_name(&self) -> &str {
+        self.world_name
     }
 
     /// Messages released to this component for this step, sorted by

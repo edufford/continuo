@@ -68,13 +68,13 @@ impl Component for HiddenCounter {
     }
 }
 
-fn run_noise_world(seed: u64) -> EventLog {
-    let recorder = Recorder::new("hashing-test", seed);
+fn run_noise_world(world_seed: u64) -> EventLog {
+    let recorder = Recorder::new("hashing-test", world_seed);
     let transport = MonitorTransport::new(InProcTransport::new(), recorder.message_callback());
     let mut conductor = Conductor::new(
         ConductorConfig {
-            world: "hashing-test".into(),
-            seed,
+            world_name: "hashing-test".into(),
+            world_seed,
             real_time_pacing: false,
         },
         transport,
@@ -124,8 +124,8 @@ fn different_seed_diverges_from_the_first_tick() {
 fn run_hidden_world(initial: u64, expose_state: bool) -> u64 {
     let mut conductor = Conductor::new(
         ConductorConfig {
-            world: "hidden-test".into(),
-            seed: 0,
+            world_name: "hidden-test".into(),
+            world_seed: 0,
             real_time_pacing: false,
         },
         InProcTransport::new(),
@@ -179,8 +179,8 @@ fn live_verification_stops_at_the_first_divergence() {
     let transport = MonitorTransport::new(InProcTransport::new(), checker.message_callback());
     let mut conductor = Conductor::new(
         ConductorConfig {
-            world: "hashing-test".into(),
-            seed: 42,
+            world_name: "hashing-test".into(),
+            world_seed: 42,
             real_time_pacing: false,
         },
         transport,
@@ -219,8 +219,8 @@ fn playback_double_reproduces_the_recorded_messages() {
     let transport = MonitorTransport::new(InProcTransport::new(), recorder.message_callback());
     let mut conductor = Conductor::new(
         ConductorConfig {
-            world: "hashing-test".into(),
-            seed: 42,
+            world_name: "hashing-test".into(),
+            world_seed: 42,
             real_time_pacing: false,
         },
         transport,

@@ -10,8 +10,8 @@ use continuo_conductor::{Conductor, ConductorConfig, EventLog, Recorder};
 use continuo_core::{Pose, Quat, SimDuration, SimTime};
 use continuo_transport::{InProcTransport, MonitorTransport};
 
-fn run_world(sim_seconds: i64, seed: u64) -> EventLog {
-    let recorder = Recorder::new("demo", seed);
+fn run_world(sim_seconds: i64, world_seed: u64) -> EventLog {
+    let recorder = Recorder::new("demo", world_seed);
     let transport = MonitorTransport::new(InProcTransport::new(), recorder.message_callback());
 
     // 72 samples = one point per 5 degrees of arc; on the 40 m semi-axis the
@@ -21,8 +21,8 @@ fn run_world(sim_seconds: i64, seed: u64) -> EventLog {
     let path = Arc::new(Waypoints::ellipse((0.0, 0.0), 40.0, 25.0, 72));
     let mut conductor = Conductor::new(
         ConductorConfig {
-            world: "demo".into(),
-            seed,
+            world_name: "demo".into(),
+            world_seed,
             real_time_pacing: false,
         },
         transport,
