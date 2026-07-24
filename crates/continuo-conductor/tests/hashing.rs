@@ -212,7 +212,7 @@ fn playback_double_reproduces_the_recorded_messages() {
     let original = run_noise_world(42);
 
     // Rebuild the world with the noise source replaced by its playback
-    // double, recording what the double publishes.
+    // double, recording what that playback double publishes.
     let config = hashing_world(42);
     let recorder = Recorder::new(&config);
     let transport = MonitorTransport::new(InProcTransport::new(), recorder.message_callback());
@@ -234,7 +234,7 @@ fn playback_double_reproduces_the_recorded_messages() {
         .expect("playback schedules strictly forward");
     let replayed = recorder.finish();
 
-    // The doubles' messages must be indistinguishable from the originals:
+    // The playback doubles' messages must be indistinguishable from the originals:
     // same times, keys, sequence numbers, and byte-identical payloads.
     let messages = |log: &EventLog| -> Vec<(String, String, u64, String)> {
         log.events
