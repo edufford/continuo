@@ -39,7 +39,7 @@ impl Transport for InProcTransport {
     fn drain(
         &mut self,
         subscriber: &ComponentPath,
-        release: &dyn Fn(&Message) -> bool,
+        release_condition: &dyn Fn(&Message) -> bool,
     ) -> Vec<Message> {
         let Some(queue) = self.queues.get_mut(subscriber) else {
             return Vec::new();
@@ -47,7 +47,7 @@ impl Transport for InProcTransport {
         let mut released = Vec::new();
         let mut kept = Vec::new();
         for message in queue.drain(..) {
-            if release(&message) {
+            if release_condition(&message) {
                 released.push(message);
             } else {
                 kept.push(message);
@@ -55,6 +55,8 @@ impl Transport for InProcTransport {
         }
         *queue = kept;
         released.sort_by(|a, b| (&a.publisher, a.seq).cmp(&(&b.publisher, b.seq)));
+
+        // Return the released messages in deterministic (publisher, seq) order.
         released
     }
 }

@@ -19,6 +19,8 @@ impl ComponentId {
         if id.is_empty() || id.contains(['/', '*', '$', '?', '#']) {
             return Err(CoreError::InvalidComponentId(id));
         }
+
+        // Return the validated id.
         Ok(ComponentId(id))
     }
 
@@ -63,6 +65,8 @@ impl ComponentPath {
             .split('/')
             .map(ComponentId::new)
             .collect::<Result<Vec<_>, _>>()?;
+
+        // Return the path with every segment validated.
         Ok(ComponentPath(segments))
     }
 
@@ -78,6 +82,8 @@ impl ComponentPath {
     pub fn join(&self, id: ComponentId) -> ComponentPath {
         let mut segments = self.0.clone();
         segments.push(id);
+
+        // Return the extended path: this path plus the appended id.
         ComponentPath(segments)
     }
 
@@ -115,6 +121,8 @@ impl fmt::Display for ComponentPath {
             f.write_str(segment.as_str())?;
             first = false;
         }
+
+        // Return success after writing all segments, '/'-separated.
         Ok(())
     }
 }

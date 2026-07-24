@@ -64,8 +64,17 @@ instant, and repeats.
     sensor → controller → physics pipeline.
 - **Deterministic by construction.** Inboxes are sorted by
   `(publisher, seq)`, never arrival order; execution order within an instant
-  is declaration order; no wall clock or OS entropy in sim logic. Two runs of
-  the same world produce byte-identical message streams (tested).
+  is declaration order; no wall clock or OS entropy in sim logic. All
+  randomness derives from one world seed.
+- **Determinism verification.** Every tick the conductor emits a
+  **fingerprint** — a hash over what each stepped component published (plus
+  its internal state, if it implements `state_bytes`) — chained into a
+  running world hash, so one value fingerprints a whole run. Runs record to
+  a JSON-lines event log, which can then be read two opposite ways:
+  **verification** re-runs everything live and checks it against the log,
+  stopping at the first divergence (divergence = broken determinism);
+  **open-loop resimulation** plays recorded publishers back as stimulus for
+  changed components (divergence = the experiment's result).
 - **Human-readable messaging.** Every payload is canonical JSON. Time is
   decimal seconds; poses are named-field vectors and quaternions (never
   arrays); the wire format is directly inspectable and, later, hashable.
@@ -77,15 +86,24 @@ instant, and repeats.
 
 | Crate | Contents |
 | ----- | -------- |
-| [`continuo-core`](crates/continuo-core/) | `SimTime`/`SimDuration`, ids and paths, key expressions, `Vec3`/`Quat`/Euler (canonical Z-Y-X conversions), wire messages, the `Component` trait |
+| [`continuo-core`](crates/continuo-core/) | `SimTime`/`SimDuration`, ids and paths, key expressions, `Vec3`/`Quat`/Euler (canonical Z-Y-X conversions), wire messages, the `Component` trait, owned hash/random/seed derivation |
 | [`continuo-transport`](crates/continuo-transport/) | `Transport` trait, deterministic `InProcTransport`, `MonitorTransport` for out-of-band message recording |
-| [`continuo-conductor`](crates/continuo-conductor/) | Registry (component tree as data), event schedule, the conductor loop |
+| [`continuo-conductor`](crates/continuo-conductor/) | Registry (component tree as data), event schedule, the conductor loop, tick fingerprints, and the event log: `record`, `verify`, `playback` |
 | [`continuo-actors`](crates/continuo-actors/) | Sample components: waypoint path, path-follow controller, unicycle physics, pose logger |
-| [`continuo-examples`](crates/continuo-examples/) | Runnable example worlds (`examples/traffic.rs`) |
+| [`continuo-examples`](crates/continuo-examples/) | Runnable example worlds: `traffic` (base demo), `traffic_record`, `traffic_verify`, `traffic_resim` |
 
-Planned (see PLAN.md milestones): state hashing + record/replay (M2),
-real-time pacing (M3), runtime join/leave (M4), Python visualization (M5),
-FMI 3.0 CS import (M6), Zenoh transport (M7).
+### Milestones
+
+See PLAN.md for what each one covers.
+
+- [x] **M1** — skeleton: core types, transport, conductor loop, traffic demo
+- [x] **M2** — determinism harness: seeding, tick fingerprints, event-log
+      recording, verification, open-loop resimulation
+- [ ] **M3** — real-time pacing (1× wall time, overrun logging)
+- [ ] **M4** — runtime join/leave
+- [ ] **M5** — Python visualization package
+- [ ] **M6** — FMI 3.0 CS import (FMUs as components)
+- [ ] **M7** — Zenoh transport and distributed hosts
 
 Everywhere current code is a placeholder for later work, a comment marks the
 spot: `TODO(Mn)` for numbered milestones, `TODO(PLAN "section")` for design
@@ -108,6 +126,18 @@ cargo fmt --all
 
 # Run the demo: three cars circulating an oval, free-run, 30 sim-seconds
 cargo run -p continuo-examples --example traffic
+
+# Record the run's event log (messages + tick fingerprints)
+cargo run -p continuo-examples --example traffic_record -- run.jsonl
+
+# Determinism verification: re-run everything live, checking each event
+# against the log as it happens; stops and exits non-zero at the first
+# divergence
+cargo run -p continuo-examples --example traffic_verify -- run.jsonl
+
+# Open-loop resimulation: car1 runs live while car2/car3 are played back
+# from the log — the harness for what-if experiments (nothing is compared)
+cargo run -p continuo-examples --example traffic_resim -- run.jsonl
 ```
 
 The demo logs each car's pose once per sim-second and finishes in a fraction
@@ -121,9 +151,12 @@ INFO initial pose sim_time=0.0 key="continuo/demo/actor/car3/pose" x=-17.02 y=-2
 INFO pose sim_time=1.0 key="continuo/demo/actor/car1/pose" x=38.36 y=7.79 yaw_deg=112.3
 INFO pose sim_time=1.0 key="continuo/demo/actor/car2/pose" x=-24.51 y=19.83 yaw_deg=-155.9
 ...
-done: world 'demo' reached sim time 30.0 in 3031 ticks (free-run), 9906 messages published
-actual time: 0.160 s (187x real-time)
+done: world 'demo' reached sim time 30.0 in 3031 ticks (free-run)
+actual time: 0.246 s (122x real-time), world hash 29b27762a793f916
 ```
+
+The world hash is the run's determinism fingerprint: identical for every
+run of the same seeded scenario, on every platform CI tests.
 
 Two observer details worth knowing: log lines carry the *message's* sim time
 (an observer is a world-level actor, so it receives time-T poses strictly
@@ -140,7 +173,7 @@ There are two distinct ways to watch a world, and the demo uses both:
   they subscribe, they step, and they see messages under the visibility rule
   like any participant. Use these when the observation is part of the world.
 - **Transport monitors** (`MonitorTransport`) wrap the transport and invoke
-  a sink for every published message — at publish time, independent of
+  a callback for every published message — at publish time, independent of
   subscriptions and visibility, including messages nobody subscribes to.
   Use these for logging, debugging, and recording; the milestone 2 event log
   and record/replay build on this. A monitor is not part of the simulation

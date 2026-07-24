@@ -30,6 +30,7 @@ impl Waypoints {
             total += ((b.0 - a.0).powi(2) + (b.1 - a.1).powi(2)).sqrt();
             cumulative.push(total);
         }
+        // Return the loop with its precomputed arc-length table.
         Waypoints {
             points,
             cumulative,
@@ -48,6 +49,8 @@ impl Waypoints {
                 )
             })
             .collect();
+
+        // Return the sampled ellipse as a closed loop.
         Self::closed(points)
     }
 
@@ -71,6 +74,8 @@ impl Waypoints {
         } else {
             0.0
         };
+
+        // Return the containing segment index and the fraction along it.
         (i, frac)
     }
 
@@ -79,6 +84,8 @@ impl Waypoints {
         let (i, frac) = self.locate(s);
         let a = self.points[i];
         let b = self.points[(i + 1) % self.points.len()];
+
+        // Return the interpolated point on that segment (z = 0).
         Vec3::new(a.0 + (b.0 - a.0) * frac, a.1 + (b.1 - a.1) * frac, 0.0)
     }
 
@@ -87,6 +94,8 @@ impl Waypoints {
         let (i, _) = self.locate(s);
         let a = self.points[i];
         let b = self.points[(i + 1) % self.points.len()];
+
+        // Return the segment's direction as a yaw angle.
         f64::atan2(b.1 - a.1, b.0 - a.0)
     }
 
@@ -129,6 +138,8 @@ impl Waypoints {
                 best_s = self.cumulative[i] + (self.cumulative[i + 1] - self.cumulative[i]) * t;
             }
         }
+
+        // Return the arc length of the closest point found.
         best_s
     }
 }

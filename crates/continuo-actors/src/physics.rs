@@ -62,9 +62,34 @@ impl Component for UnicyclePhysics {
             self.yaw = (self.yaw + self.cmd.yaw_rate * dt).rem_euclid(std::f64::consts::TAU);
         }
 
-        let key = crate::pose_key(ctx.world(), &self.actor);
+        let key = crate::pose_key(ctx.world_name(), &self.actor);
         ctx.publish(key, &self.pose()).expect("pose serializes");
 
+        // Return the next due time, one physics period from now.
         ctx.now() + self.period
+    }
+
+    /// Example of implementing `state_bytes` to hash internal state, even
+    /// though UnicyclePhysics has no meaningful state separate from its
+    /// published output.
+    fn state_bytes(&self) -> Option<Vec<u8>> {
+        #[derive(serde::Serialize)]
+        struct State<'a> {
+            x: f64,
+            y: f64,
+            yaw: f64,
+            cmd: &'a Cmd,
+        }
+
+        // Return the canonical state JSON for the tick fingerprint.
+        Some(
+            serde_json::to_vec(&State {
+                x: self.x,
+                y: self.y,
+                yaw: self.yaw,
+                cmd: &self.cmd,
+            })
+            .expect("state serializes"),
+        )
     }
 }

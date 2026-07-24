@@ -26,6 +26,8 @@ version = "0.1.0"
 dependencies = [
  "continuo-core",
  "continuo-transport",
+ "serde",
+ "serde_json",
  "thiserror",
  "tracing",
 ]

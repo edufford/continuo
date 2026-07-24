@@ -26,28 +26,83 @@ pub trait Component: Send {
     /// component should step — must be strictly greater than `ctx.now()`
     /// (the conductor enforces this to prevent zero-time livelock).
     fn step(&mut self, ctx: &mut StepCtx) -> SimTime;
+
+    /// Canonical serialized internal state for the per-tick determinism
+    /// check, or `None` (the default) if the component's state is opaque.
+    ///
+    /// Components returning `Some` join the per-tick hash in *state-hash*
+    /// mode: hidden internal state is fingerprinted directly, so divergence
+    /// is caught when it happens — even state that would only influence
+    /// outputs many steps later (integrators, counters, stored RNG
+    /// streams), or state in components that publish less often than they
+    /// step. Components returning `None` are covered in *output-hash* mode
+    /// — everything they publish is hashed anyway (the only option for
+    /// opaque black boxes like FMUs without `SerializeFMUState`; see
+    /// PLAN.md, Determinism rules). For a component that publishes its
+    /// whole state every step, the two modes catch divergence at
+    /// essentially the same tick.
+    ///
+    /// Implementations must follow the canonical JSON rules (serde_json,
+    /// declaration-order fields, no `HashMap`) — typically
+    /// `serde_json::to_vec` of a state struct. Called by the conductor after
+    /// `step`, at most once per step.
+    fn state_bytes(&self) -> Option<Vec<u8>> {
+        None
+    }
 }
 
 /// Everything a component may observe or do during one step.
 pub struct StepCtx<'a> {
     now: SimTime,
     dt: Option<SimDuration>,
-    world: &'a str,
+    world_name: &'a str,
+    component_seed: u64,
     inbox: Vec<Message>,
     outbox: Vec<(KeyExpr, Vec<u8>)>,
 }
 
 impl<'a> StepCtx<'a> {
     /// Constructed by the conductor (or by tests driving a component
-    /// directly).
-    pub fn new(now: SimTime, dt: Option<SimDuration>, world: &'a str, inbox: Vec<Message>) -> Self {
+    /// directly). `component_seed` derives from
+    /// `(world_seed, component_path)` — see [`crate::derive_component_seed`].
+    pub fn new(
+        now: SimTime,
+        dt: Option<SimDuration>,
+        world_name: &'a str,
+        component_seed: u64,
+        inbox: Vec<Message>,
+    ) -> Self {
         StepCtx {
             now,
             dt,
-            world,
+            world_name,
+            component_seed,
             inbox,
             outbox: Vec::new(),
         }
+    }
+
+    /// This component's deterministic seed, stable for the whole run:
+    /// derived from `(world_seed, component_path)`. Seed a stored
+    /// [`RandomSplitMix64`](crate::RandomSplitMix64) from it for a stream
+    /// that persists across steps.
+    pub fn component_seed(&self) -> u64 {
+        self.component_seed
+    }
+
+    /// A fresh deterministic random stream for this `(component, step)`
+    /// pair — the zero-state-to-carry way to add noise. The stream depends
+    /// only on the component seed and the current sim time, so replays
+    /// reproduce it exactly; draws are independent between steps. For a
+    /// stream that is continuous *across* steps, store
+    /// `RandomSplitMix64::new(ctx.component_seed())` in the component at
+    /// first step instead.
+    pub fn step_random(&self) -> crate::RandomSplitMix64 {
+        // Return a stream seeded by who is stepping and when.
+        crate::RandomSplitMix64::new(crate::seed::derive_step_seed(
+            self.component_seed,
+            self.now.as_nanos(),
+        ))
     }
 
     /// Current sim time.
@@ -62,8 +117,8 @@ impl<'a> StepCtx<'a> {
     }
 
     /// The world name, for building key expressions.
-    pub fn world(&self) -> &str {
-        self.world
+    pub fn world_name(&self) -> &str {
+        self.world_name
     }
 
     /// Messages released to this component for this step, sorted by
@@ -82,6 +137,8 @@ impl<'a> StepCtx<'a> {
             source,
         })?;
         self.outbox.push((key, payload));
+
+        // Return success; the conductor stamps and routes the queued message after the step.
         Ok(())
     }
 

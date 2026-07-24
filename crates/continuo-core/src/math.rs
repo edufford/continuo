@@ -86,6 +86,8 @@ impl Quat {
         if n == 0.0 {
             return Quat::IDENTITY;
         }
+
+        // Return the same rotation scaled to unit length.
         Quat {
             w: self.w / n,
             x: self.x / n,
@@ -116,6 +118,8 @@ impl Quat {
             2.0 * (q.w * q.z + q.x * q.y),
             1.0 - 2.0 * (q.y * q.y + q.z * q.z),
         );
+
+        // Return the intrinsic Z-Y-X decomposition of the rotation.
         EulerRad { roll, pitch, yaw }
     }
 
@@ -155,6 +159,8 @@ impl EulerRad {
         let (sr, cr) = (self.roll * 0.5).sin_cos();
         let (sp, cp) = (self.pitch * 0.5).sin_cos();
         let (sy, cy) = (self.yaw * 0.5).sin_cos();
+
+        // Return the composed rotation, unit length by construction.
         Quat {
             w: cr * cp * cy + sr * sp * sy,
             x: sr * cp * cy - cr * sp * sy,

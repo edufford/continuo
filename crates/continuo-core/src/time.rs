@@ -203,6 +203,8 @@ fn format_ns(ns: i64) -> String {
     while frac_str.len() > 1 && frac_str.ends_with('0') {
         frac_str.pop();
     }
+
+    // Return the canonical decimal-seconds text, e.g. "1.5" or "0.033333333".
     format!("{sign}{secs}.{frac_str}")
 }
 
@@ -255,6 +257,8 @@ fn parse_ns(s: &str) -> Result<i64, CoreError> {
 
     let magnitude = secs * NANOS_PER_SEC as i128 + frac;
     let signed = if negative { -magnitude } else { magnitude };
+
+    // Return the parsed time as integer nanoseconds, or an overflow error.
     i64::try_from(signed).map_err(|_| err("out of range for 64-bit nanoseconds"))
 }
 
@@ -265,12 +269,16 @@ fn serialize_ns<S: Serializer>(ns: i64, serializer: S) -> Result<S::Ok, S::Error
     let canonical = format_ns(ns);
     let number = serde_json::Number::from_str(&canonical)
         .map_err(|e| serde::ser::Error::custom(format!("canonical time not a JSON number: {e}")))?;
+
+    // Return the exact decimal-seconds token, serialized as a JSON number.
     number.serialize(serializer)
 }
 
 fn deserialize_ns<'de, D: Deserializer<'de>>(deserializer: D) -> Result<i64, D::Error> {
     let number = serde_json::Number::deserialize(deserializer)?;
-    // With arbitrary_precision, to_string() is the exact source token.
+
+    // Return integer nanoseconds parsed from the number's source text (with
+    // arbitrary_precision, to_string() is the exact token).
     parse_ns(&number.to_string()).map_err(de::Error::custom)
 }
 

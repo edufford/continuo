@@ -152,7 +152,7 @@ Baked in from the start — hard to retrofit:
 - Join/leave applied **only at tick boundaries** and recorded in an event log, so
   runs with dynamic actors are replayable.
 - Per-tick canonical **state hash** (e.g. xxhash over serialized state) as the
-  determinism oracle. Two runs with the same seed must produce identical hash
+  determinism check. Two runs with the same seed must produce identical hash
   streams; this becomes a CI test.
 - FMU caveat: FMUs are black-box native code. If an FMU supports
   `SerializeFMUState`, its state joins the hash; otherwise hash its outputs and
@@ -227,7 +227,7 @@ advances sim time to the earliest due time each iteration.
   components (reschedule sooner in response to an input) all use the same
   mechanism.
 - **Fixed-interval world services still work**: a constant period is just the
-  degenerate case of self-scheduling, and because the conductor advances to
+  simplest case of self-scheduling, and because the conductor advances to
   the earliest due time, sim time lands *exactly* on those grid points. E.g. a
   scene-graph publisher stepping every 1/60 s aggregates latest actor poses
   (sample-and-hold) and publishes a world state update for renderers. Such
@@ -433,6 +433,63 @@ the mix. They are independent and can swap if priorities shift.
   actor's namespace/lifecycle but use next-step visibility, freeing their
   host placement and pipelining with their actor instead of serializing the
   instant. Coupling flag joins registration metadata in milestone 4.
+- **2026-07-18** — Milestone 2 implementation choices: hash and RNG are
+  **owned implementations** (FNV-1a 64, SplitMix64) so fingerprints and
+  random streams are bit-stable across platforms and versions forever — no
+  external RNG/hash crates. Components are **output-hashed by default**;
+  the opt-in `Component::state_bytes` hook adds state-hash mode. The world
+  hash starts from `(seed, world name)` and chains per-tick hashes. Event
+  log is JSON lines (header + interleaved msg/tick events, hashes as hex
+  strings); milestone 2 replay is **re-execution + comparison** via
+  `EventLog::first_divergence`. `StepCtx::rng()` gives a fresh per-step
+  stream from `(component_seed, now)`; persistent streams seed a stored
+  `DetRng` from `ctx.component_seed()`.
+- **2026-07-21** — Replay verifies **live during the re-run** and stops at
+  the first divergence (message and fingerprint callbacks; both channels
+  are needed — a tampered log message leaves its neighboring fingerprints
+  intact, and state-only divergence never appears in messages). Post-hoc
+  `first_divergence` remains for comparing two recorded logs.
+- **2026-07-21** — A recorded log has two named consumers, split by how the
+  log's data flows relative to the sim: **verification** (`Verifier`,
+  `--verify`) treats it as an expected-output ledger — everything re-runs
+  live, nothing from the log enters the sim, divergence = broken
+  determinism, halt and fail; **open-loop resimulation**
+  (`PlaybackComponent`, `--resim`) treats it as input stimulus — selected
+  recorded publishers are replaced by playback doubles re-publishing their
+  recorded messages, changed components run live against them, nothing is
+  compared, and divergence from the recording is the engineering result
+  under study. Playback doubles are pure data, so hybrid runs stay fully
+  deterministic and recordable — resim experiments are themselves
+  verifiable. No general "divergence summary" mode: the sim cannot report
+  behavioral differences usefully; observe resim runs like any other run.
+- **2026-07-23** — Milestone 2 review outcomes (naming and module shape; no
+  behavior change — the demo's world hash is unchanged):
+  - Determinism primitives are named for what they are, algorithm
+    included: `HashFnv1a64` and `RandomSplitMix64` (spelled out, not an
+    acronym), with the module following the type: `core::random`.
+  - **Seed derivation is its own concern**, `continuo-core::seed`: it uses
+    the hash to fold names down to 64 bits and the generator's scrambler to
+    combine values, and belongs to neither. `mix` → `mix_seeds`;
+    `derive_component_seed` and the new `derive_step_seed` live there.
+    `StepCtx::rng()` → `step_random()`.
+  - The world's two identifying values are named for what they hold, and
+    named the same way everywhere — **`world_name` and `world_seed`** — in
+    `ConductorConfig`, the event-log header, `StepCtx`, and the derivation
+    functions. A bare `world: String` reads like it holds the world; it
+    holds the world's name.
+  - `Recorder::new` and `Verifier::new` take **`&ConductorConfig`** instead
+    of a restated world name and seed, so a log's header always names the
+    run that produced it, and verification always checks the log against
+    the run actually about to execute. Verification never takes the
+    expected world/seed *from* the log — that would make the header check
+    vacuous.
+  - The event log splits by what each part does with it: `record` (log +
+    `Recorder`), `verify` (`Divergence`, `EventLog::first_divergence`,
+    `Verifier`), `playback` (`PlaybackComponent`), with their tests in
+    `tests/event_log.rs` against one shared fixture log.
+    `PlaybackComponent` stays in `continuo-conductor` — it is harness
+    machinery built on `EventLog`, not a sample actor, and moving it to
+    `continuo-actors` would invert the crate layering.
 
 ## Deferred (decided-not-now, revisit when they bite)
 
