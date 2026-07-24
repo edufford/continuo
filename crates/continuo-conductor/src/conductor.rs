@@ -97,15 +97,25 @@ impl<T: Transport> Conductor<T> {
         self.tick
     }
 
-    /// How many instants ran late in 1× real-time mode — i.e. the sim
-    /// could not keep up and the wall-time anchor slipped. Always 0 in
-    /// free-run.
-    pub fn overrun_count(&self) -> u64 {
-        self.pacer.as_ref().map_or(0, Pacer::overrun_count)
+    /// How many times the run fell far enough behind real time that the
+    /// wall-clock anchor gave up and slipped, in 1× real-time mode; always
+    /// 0 in free-run.
+    ///
+    /// This measures **the schedule as a whole against the wall clock** —
+    /// not components. Zero does *not* mean every component finished
+    /// quickly, or that anything met a deadline: lateness under the
+    /// re-anchor threshold is deliberately absorbed, and a component that
+    /// runs long stays invisible here as long as the run recovers before
+    /// the threshold.
+    pub fn overrun_reanchor_count(&self) -> u64 {
+        self.pacer.as_ref().map_or(0, Pacer::overrun_reanchor_count)
     }
 
-    /// Total wall-clock time the run has fallen behind real time across all
-    /// overruns (0 in free-run, or when 1× pacing kept up).
+    /// Total wall-clock time the run has permanently fallen behind real
+    /// time, summed over the slips counted by
+    /// [`Self::overrun_reanchor_count`] (0 in free-run, or when 1× pacing
+    /// kept up). Lateness that was absorbed rather than slipped is not
+    /// included — by definition it was recovered.
     pub fn total_slip(&self) -> std::time::Duration {
         self.pacer
             .as_ref()

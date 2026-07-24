@@ -53,14 +53,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if spin { "spin" } else { "coarse" }
     );
     println!(
-        "actual time: {:.3} s for {} sim-seconds, {} overrun(s) totaling {:.3} s behind, \
-         world hash {:016x}",
+        "actual time: {:.3} s for {} sim-seconds, world hash {:016x}",
         elapsed.as_secs_f64(),
         seconds,
-        conductor.overrun_count(),
-        conductor.total_slip().as_secs_f64(),
         conductor.world_hash()
     );
+    // Spelled out in the output, not just in a comment: whoever reads this
+    // line is exactly who might misread it. The zero case says *why* the
+    // actual time can exceed the sim time while nothing was lost — the
+    // difference is in-flight lateness that stayed under the threshold.
+    match conductor.overrun_reanchor_count() {
+        0 => println!(
+            "pacing: the schedule kept up — lateness stayed under the reanchor \
+             threshold and was absorbed, never accumulating (whole-run measure, \
+             not per-component step timing)"
+        ),
+        reanchors => println!(
+            "pacing: the schedule fell behind and was reanchored {reanchors} time(s), \
+             leaving it {:.3} s permanently behind real time (whole-run measure, \
+             not per-component step timing)",
+            conductor.total_slip().as_secs_f64(),
+        ),
+    }
 
     // Return success for the completed paced run.
     Ok(())

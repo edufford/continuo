@@ -160,7 +160,7 @@ pub(crate) struct Pacer<C: WallClock> {
     /// `(sim_nanos, wall_nanos)`; `None` until the first paced instant,
     /// which establishes it and never waits.
     anchor: Option<(i128, i128)>,
-    overruns: u64,
+    overrun_reanchors: u64,
     total_slip_nanos: i128,
 }
 
@@ -170,7 +170,7 @@ impl<C: WallClock> Pacer<C> {
         Pacer {
             clock,
             anchor: None,
-            overruns: 0,
+            overrun_reanchors: 0,
             total_slip_nanos: 0,
         }
     }
@@ -198,7 +198,7 @@ impl<C: WallClock> Pacer<C> {
             // until it crosses the threshold and is reported once.
             let accumulated_overrun = wall - target;
             if accumulated_overrun >= OVERRUN_REANCHOR_THRESHOLD.as_nanos() as i128 {
-                self.overruns += 1;
+                self.overrun_reanchors += 1;
                 self.total_slip_nanos += accumulated_overrun;
                 warn!(
                     target: "continuo::pacing",
@@ -212,8 +212,8 @@ impl<C: WallClock> Pacer<C> {
         }
     }
 
-    pub(crate) fn overrun_count(&self) -> u64 {
-        self.overruns
+    pub(crate) fn overrun_reanchor_count(&self) -> u64 {
+        self.overrun_reanchors
     }
 
     pub(crate) fn total_slip(&self) -> Duration {
@@ -279,7 +279,7 @@ mod tests {
         let mut pacer = Pacer::new(ManualClock::new());
         pacer.pace(t(0));
         assert!(pacer.clock.sleeps.is_empty());
-        assert_eq!(pacer.overrun_count(), 0);
+        assert_eq!(pacer.overrun_reanchor_count(), 0);
     }
 
     #[test]
@@ -289,7 +289,7 @@ mod tests {
         pacer.pace(t(100)); // target 100, wall 0 -> sleep 100
         pacer.pace(t(250)); // target 250, wall 100 -> sleep 150
         assert_eq!(pacer.clock.sleeps, vec![100, 150]);
-        assert_eq!(pacer.overrun_count(), 0);
+        assert_eq!(pacer.overrun_reanchor_count(), 0);
     }
 
     #[test]
@@ -302,7 +302,7 @@ mod tests {
         pacer.pace(t_ms(300)); // target 350+100 = 450 ms, wall 350 -> sleep 100 ms
 
         assert_eq!(pacer.clock.sleeps, vec![ms(100), ms(100)]);
-        assert_eq!(pacer.overrun_count(), 1);
+        assert_eq!(pacer.overrun_reanchor_count(), 1);
         assert_eq!(pacer.total_slip(), Duration::from_millis(150));
     }
 
@@ -315,7 +315,7 @@ mod tests {
         pacer.pace(t_ms(0)); // anchor at (0, 0)
         pacer.clock.do_work(100_000); // 0.1 ms of work
         pacer.pace(t(1)); // 1 ns target, 0.1 ms late -> absorbed
-        assert_eq!(pacer.overrun_count(), 0);
+        assert_eq!(pacer.overrun_reanchor_count(), 0);
 
         // The anchor never moved, so the next instant is still measured from
         // the true origin and lands back on the original schedule.
@@ -337,7 +337,7 @@ mod tests {
         }
 
         assert_eq!(
-            pacer.overrun_count(),
+            pacer.overrun_reanchor_count(),
             1,
             "0.4 + 0.4 + 0.4 ms: silent, silent, then reported on crossing"
         );
@@ -371,6 +371,6 @@ mod tests {
         pacer.clock.do_work(100); // step took exactly the sim gap
         pacer.pace(t(100)); // target 100, wall 100 -> nothing
         assert!(pacer.clock.sleeps.is_empty());
-        assert_eq!(pacer.overrun_count(), 0);
+        assert_eq!(pacer.overrun_reanchor_count(), 0);
     }
 }

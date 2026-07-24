@@ -104,7 +104,7 @@ fn a_paced_run_spends_real_wall_time() {
 #[test]
 fn a_free_run_reports_no_overruns() -> Result<(), ConductorError> {
     let conductor = run(Pacing::FreeRun, SimTime::from_millis(50));
-    assert_eq!(conductor.overrun_count(), 0);
+    assert_eq!(conductor.overrun_reanchor_count(), 0);
     assert_eq!(conductor.total_slip(), std::time::Duration::ZERO);
 
     // Return success; free-run never paces, so nothing can slip.

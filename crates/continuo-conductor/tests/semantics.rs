@@ -307,5 +307,5 @@ fn real_time_pacing_is_accepted() {
         InProcTransport::new(),
     )
     .expect("real-time pacing is supported");
-    assert_eq!(conductor.overrun_count(), 0);
+    assert_eq!(conductor.overrun_reanchor_count(), 0);
 }
