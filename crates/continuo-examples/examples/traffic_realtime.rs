@@ -58,10 +58,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         seconds,
         conductor.world_hash()
     );
-    // Spelled out in the output, not just in a comment: whoever reads this
-    // line is exactly who might misread it. The zero case says *why* the
-    // actual time can exceed the sim time while nothing was lost — the
-    // difference is in-flight lateness that stayed under the threshold.
     match conductor.overrun_reanchor_count() {
         0 => println!(
             "pacing: the schedule kept up — lateness stayed under the reanchor \
