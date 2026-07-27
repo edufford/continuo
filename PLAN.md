@@ -444,7 +444,10 @@ the mix. They are independent and can swap if priorities shift.
   formats (OpenDRIVE or other, undecided) come later as importers.
 - **2026-07-17** — Pacing is a single boolean `RealTimePacing`: `false` =
   free-run, `true` = 1× real-time (no scale factor). If real-time can't keep
-  up, run slower and log overruns.
+  up, run slower and log overruns. *(Superseded 2026-07-24: still one
+  setting and still no scale factor, but a `Pacing` enum rather than a bool,
+  so the spin padding rides on the real-time variant — see the milestone 3
+  entry below.)*
 - **2026-07-17** — Component tree and wiring are **scenario-config-driven**
   (SSP-style concept, not the SSP format): scenario names component types,
   a host-side registry instantiates them.
