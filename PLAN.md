@@ -283,17 +283,27 @@ budget**:
 - **budget** (soft, diagnostic) — "this component's `step` should complete
   within X wall time". Exceeding it is logged and counted; the run is
   unaffected. This is what real-time scenarios need when some components
-  carry deadlines an operator wants flagged on every miss, while other sim
-  components have no real-time restriction at all — `None`, the default, and
-  the common case.
+  carry deadlines an operator wants flagged on every miss, while others have
+  no real-time restriction at all (`None`, the default).
 - **timeout** (hard, policy) — `on_component_timeout` above: halt or drop.
 
 They measure the same quantity, so they are declared together as part of a
-component's registration metadata rather than built as two mechanisms. Both
-are diagnostics that only ever *observe*: wall-clock measurements are
-machine-dependent, so budget misses and timeouts never enter sim logic, the
-world hash, or the event log's compared content — a run that misses every
-deadline still produces the identical hash.
+component's registration metadata rather than built as two mechanisms. What
+they do to a run differs sharply, though, and only the soft end is free:
+
+- A **budget miss only observes.** Nothing about the run changes, so the
+  world hash is untouched — a run that misses every budget produces the
+  identical hash to one that misses none.
+- **Halt** ends the run. Everything published before it is unchanged, so the
+  hash stream stays valid up to where it stops.
+- **Drop changes the scenario, and therefore the hash.** A deregistered
+  component stops publishing, so every tick after the drop differs from a run
+  where it survived — and the trigger is wall-clock-dependent, so a live
+  re-run on a faster machine may drop later, or not at all. The drop is
+  recorded in the event log like any other leave, which keeps the run
+  **replayable**, but it is no longer reproducible from `(seed, scenario)`
+  alone. That is precisely why halt is the default for
+  determinism-sensitive runs.
 
 Note this is a different measurement from the pacing overrun of milestone 3,
 which asks whether the *schedule as a whole* tracked the wall clock and is
