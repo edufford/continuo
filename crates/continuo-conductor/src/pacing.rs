@@ -147,8 +147,15 @@ impl WallClock for SystemClock {
         if coarse > 0 {
             std::thread::sleep(saturating_duration_from_nanos(coarse));
         }
-        // Busy-spin any remaining tail (none in coarse mode, since the full
-        // wait was slept and `sleep` never returns early).
+        // Busy-spin any remaining tail. This cannot hang, so it needs no
+        // escape hatch: `Instant` is monotonic, so `elapsed_nanos` rises
+        // without bound and must reach a `target` fixed before the loop
+        // began. The spin is also short by construction — the coarse sleep
+        // covers everything but `spin_padding`, and `thread::sleep` never
+        // returns early, so what is left is at most
+        // `min(spin_padding, nanos)` regardless of how far ahead the next
+        // instant is. In coarse mode (`spin_padding` zero) the whole wait
+        // was slept and the loop does not iterate at all.
         while self.elapsed_nanos() < target {
             std::hint::spin_loop();
         }
