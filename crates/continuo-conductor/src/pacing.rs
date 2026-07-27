@@ -116,6 +116,15 @@ impl SystemClock {
     }
 }
 
+/// Converts a nanosecond count to a [`Duration`], saturating instead of
+/// wrapping. Both ends need clamping: this module does its arithmetic in
+/// `i128` (so gaps and lateness can go negative mid-calculation), while
+/// `Duration::from_nanos` takes a `u64`.
+fn saturating_duration_from_nanos(nanos: i128) -> Duration {
+    // Return the duration, pinned to the representable range.
+    Duration::from_nanos(nanos.clamp(0, u64::MAX as i128) as u64)
+}
+
 /// The coarse-sleep portion of a wait: sleep all but the final `padding`,
 /// which is busy-spun. Zero when the whole wait fits inside the padding
 /// (spin the lot); the full wait when `padding` is zero (coarse mode, never
@@ -133,13 +142,10 @@ impl WallClock for SystemClock {
         if nanos <= 0 {
             return;
         }
-        // `Duration::from_nanos` takes u64; sleeps here are small positive
-        // gaps, but clamp defensively rather than wrap.
-        let clamp = |n: i128| Duration::from_nanos(n.min(u64::MAX as i128) as u64);
         let target = self.elapsed_nanos() + nanos;
         let coarse = coarse_sleep_nanos(nanos, self.spin_padding.as_nanos() as i128);
         if coarse > 0 {
-            std::thread::sleep(clamp(coarse));
+            std::thread::sleep(saturating_duration_from_nanos(coarse));
         }
         // Busy-spin any remaining tail (none in coarse mode, since the full
         // wait was slept and `sleep` never returns early).
@@ -251,7 +257,7 @@ impl<C: WallClock> Pacer<C> {
 
     pub(crate) fn total_slip(&self) -> Duration {
         // Return the accumulated lateness as a wall-clock duration.
-        Duration::from_nanos(self.total_slip_nanos.max(0).min(u64::MAX as i128) as u64)
+        saturating_duration_from_nanos(self.total_slip_nanos)
     }
 }
 
