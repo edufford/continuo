@@ -175,6 +175,15 @@ impl WallClock for SystemClock {
 /// Linux and macOS usually land within tens of microseconds. Nor do sim gaps
 /// too fine to be achievable in wall time at all, like an observer sampling
 /// 1 ns past a period boundary.
+///
+/// It is also a catch-up budget, which caps it from above. Absorbing
+/// lateness means the next instant still starts on its original target, so
+/// that one interval runs short by the absorbed amount — briefly faster
+/// than 1×, though never ahead of schedule. Keep it well under the shortest
+/// component period: once it exceeds a sim gap, recovery stops being one
+/// shortened wait and becomes a run of zero-sleep instants, which is the
+/// catch-up sprint the design rejects. 1 ms against the traffic demo's
+/// 10 ms physics leaves an order of magnitude.
 const OVERRUN_REANCHOR_THRESHOLD: Duration = Duration::from_millis(1);
 
 /// Maps sim time onto wall time and blocks to keep a run at 1× real time.
@@ -374,6 +383,28 @@ mod tests {
         pacer.pace(t_sim_ms(10));
         assert_eq!(pacer.clock.sleeps, vec![wall_ms(10) - wall_us(100)]);
         assert_eq!(pacer.total_slip(), Duration::ZERO);
+    }
+
+    #[test]
+    fn absorbed_lateness_is_recovered_by_a_shorter_wait_never_an_early_start() {
+        let mut pacer = Pacer::new(ManualClock::new());
+        pacer.pace(t_sim_ms(0)); // anchor at (0, 0)
+
+        // A step overruns its 1 ms gap by 0.6 ms — under the threshold, so
+        // the lateness is absorbed instead of slipping the anchor.
+        pacer.clock.do_work(wall_ms(1) + wall_us(600));
+        pacer.pace(t_sim_ms(1));
+        assert_eq!(pacer.overrun_reanchor_count(), 0);
+        assert!(pacer.clock.sleeps.is_empty(), "already late, so no wait");
+
+        // The next wait is short by exactly that 0.6 ms: 1 ms of sim in
+        // 0.4 ms of wall, so this interval runs faster than 1× to recover.
+        pacer.pace(t_sim_ms(2));
+        assert_eq!(pacer.clock.sleeps, vec![wall_ms(1) - wall_us(600)]);
+
+        // Recovery only reaches the original schedule, never passes it — so
+        // the run is never ahead of 1×, only ever catching back up to it.
+        assert_eq!(pacer.clock.now, wall_ms(2));
     }
 
     #[test]

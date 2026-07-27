@@ -249,7 +249,8 @@ A single config field, `pacing: Pacing`:
   sprinting to make up lost time), no scaling, and **never skip steps**
   (determinism). Lateness is only counted once it accumulates past a
   re-anchor threshold, so transient jitter is absorbed by the next wait
-  instead of reported. `spin_padding` chooses how a wait is *spent* — OS
+  instead of reported — a *bounded* catch-up, capped by the threshold. The
+  run never gets ahead of schedule, only back to it. `spin_padding` chooses how a wait is *spent* — OS
   timer alone, or sleep then busy-spin the tail for sub-millisecond accuracy
   — and never what the wait achieves.
 
@@ -567,6 +568,12 @@ the mix. They are independent and can swap if priorities shift.
     `overrun_reanchor_count` for the event it actually counts, and documents
     that zero means "the schedule tracked the wall clock", *not* "every
     component finished within its time".
+  - The threshold is therefore also a **catch-up budget**, which caps it
+    from above: absorbing lateness makes the next interval run short by that
+    much, briefly faster than 1× (though never ahead of schedule). It must
+    stay well under the shortest component period — above a sim gap, that
+    recovery becomes a run of zero-sleep instants, the sprint "no catch-up"
+    exists to prevent.
   - The anchor/slip arithmetic is isolated behind a `WallClock` trait so it
     is unit-tested against a manual clock (no real sleeps); the conductor
     uses `SystemClock`.
