@@ -78,11 +78,12 @@ instant, and repeats.
 - **Human-readable messaging.** Every payload is canonical JSON. Time is
   decimal seconds; poses are named-field vectors and quaternions (never
   arrays); the wire format is directly inspectable and, later, hashable.
-- **Pacing is a boolean.** `real_time_pacing = false` free-runs as fast as
-  possible; `true` sleeps to 1× wall time and logs overruns (when the sim
-  can't keep up, the wall anchor slips — no catch-up, no skipped steps). Sim
-  logic never sees which mode is active, and pacing never changes the world
-  hash.
+- **Pacing is one setting.** `Pacing::FreeRun` runs as fast as possible;
+  `Pacing::RealTime { .. }` waits for 1× wall time and logs overruns (when
+  the sim can't keep up the wall anchor slips — no catch-up, no skipped
+  steps; lateness under the re-anchor threshold is absorbed rather than
+  counted). Sim logic never sees which mode is active, and pacing never
+  changes the world hash.
 
 ### Crates
 

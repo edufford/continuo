@@ -239,16 +239,24 @@ advances sim time to the earliest due time each iteration.
 
 Lives entirely in the conductor:
 
-A single boolean, `RealTimePacing`:
+A single config field, `pacing: Pacing`:
 
-- `RealTimePacing = false` — free-run: advance immediately after the barrier.
-- `RealTimePacing = true` — 1× real-time: sleep until the wall time
-  corresponding to the next step's sim time. If the sim can't keep up, it
-  simply runs slower than real time and **logs the overruns** — no catch-up
-  (the wall-time anchor slips by the overrun amount rather than sprinting to
-  make up lost time), no scaling, and **never skip steps** (determinism).
+- `Pacing::FreeRun` — advance immediately after the barrier.
+- `Pacing::RealTime { spin_padding }` — 1× real-time: wait until the wall
+  time corresponding to the next step's sim time. If the sim can't keep up,
+  it simply runs slower than real time and **logs the overruns** — no
+  catch-up (the wall-time anchor slips by the overrun amount rather than
+  sprinting to make up lost time), no scaling, and **never skip steps**
+  (determinism). Lateness is only counted once it accumulates past a
+  re-anchor threshold, so transient jitter is absorbed by the next wait
+  instead of reported. `spin_padding` chooses how a wait is *spent* — OS
+  timer alone, or sleep then busy-spin the tail for sub-millisecond accuracy
+  — and never what the wait achieves.
 
-Sim logic never sees which mode is active.
+Sim logic never sees which mode is active. Message timestamps are sim time
+throughout, so an instant that starts late still stamps its outputs with the
+sim time it was scheduled for — which is why pacing cannot move the world
+hash.
 
 ## Failure handling at the barrier
 
@@ -395,8 +403,9 @@ owning an async runtime later.
 2. **Determinism harness** — seeding, per-tick state hash (state-hash vs.
    output-hash per component), record/replay, CI test asserting identical hash
    streams.
-3. **Pacing** — `real_time_pacing` config flag (default off = free-run),
-   1× wall-time gating with anchor-slip on overrun, overrun logging.
+3. **Pacing** — `pacing: Pacing` config (default `FreeRun`), 1× wall-time
+   gating with anchor-slip once lateness accumulates past the re-anchor
+   threshold, overrun logging.
 4. **Dynamic join/leave** — registration over transport, tick-boundary
    application, live traffic spawner, replay still deterministic via event log.
    Registration metadata gains per-component timing — step budget and timeout
