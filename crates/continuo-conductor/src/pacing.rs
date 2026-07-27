@@ -304,26 +304,32 @@ mod tests {
         }
     }
 
-    fn t(nanos: i64) -> SimTime {
+    /// A sim-time instant, in nanoseconds.
+    fn t_sim_ns(nanos: i64) -> SimTime {
         SimTime::from_nanos(nanos)
     }
 
-    /// Sim time in milliseconds — the scale the re-anchor threshold lives
-    /// at, so tests about it are readable.
-    fn t_ms(millis: i64) -> SimTime {
+    /// A sim-time instant, in milliseconds — the scale the re-anchor
+    /// threshold lives at, so tests about it are readable.
+    fn t_sim_ms(millis: i64) -> SimTime {
         SimTime::from_millis(millis)
     }
 
-    /// Wall-clock nanoseconds from milliseconds, for `do_work` and sleep
-    /// assertions.
-    fn ms(millis: i64) -> i128 {
-        millis as i128 * 1_000_000
+    /// Wall-clock nanoseconds, the unit [`WallClock`] speaks, from
+    /// milliseconds. For `do_work` and sleep assertions.
+    fn wall_ms(millis: u64) -> i128 {
+        Duration::from_millis(millis).as_nanos() as i128
+    }
+
+    /// Wall-clock nanoseconds from microseconds — the sub-threshold scale.
+    fn wall_us(micros: u64) -> i128 {
+        Duration::from_micros(micros).as_nanos() as i128
     }
 
     #[test]
     fn first_instant_anchors_without_waiting() {
         let mut pacer = Pacer::new(ManualClock::new());
-        pacer.pace(t(0));
+        pacer.pace(t_sim_ns(0));
         assert!(pacer.clock.sleeps.is_empty());
         assert_eq!(pacer.overrun_reanchor_count(), 0);
     }
@@ -331,9 +337,9 @@ mod tests {
     #[test]
     fn a_run_that_keeps_up_sleeps_the_full_gap_each_instant() {
         let mut pacer = Pacer::new(ManualClock::new());
-        pacer.pace(t(0)); // anchor at (0, 0)
-        pacer.pace(t(100)); // target 100, wall 0 -> sleep 100
-        pacer.pace(t(250)); // target 250, wall 100 -> sleep 150
+        pacer.pace(t_sim_ns(0)); // anchor at (0, 0)
+        pacer.pace(t_sim_ns(100)); // target 100, wall 0 -> sleep 100
+        pacer.pace(t_sim_ns(250)); // target 250, wall 100 -> sleep 150
         assert_eq!(pacer.clock.sleeps, vec![100, 150]);
         assert_eq!(pacer.overrun_reanchor_count(), 0);
     }
@@ -341,13 +347,13 @@ mod tests {
     #[test]
     fn an_overrun_past_the_threshold_slips_the_anchor_and_does_not_catch_up() {
         let mut pacer = Pacer::new(ManualClock::new());
-        pacer.pace(t_ms(0)); // anchor at (0, 0)
-        pacer.pace(t_ms(100)); // target 100 ms, wall 0 -> sleep 100 ms
-        pacer.clock.do_work(ms(250)); // this step runs long (now 350 ms)
-        pacer.pace(t_ms(200)); // target 200 ms, wall 350 -> 150 ms late, re-anchor
-        pacer.pace(t_ms(300)); // target 350+100 = 450 ms, wall 350 -> sleep 100 ms
+        pacer.pace(t_sim_ms(0)); // anchor at (0, 0)
+        pacer.pace(t_sim_ms(100)); // target 100 ms, wall 0 -> sleep 100 ms
+        pacer.clock.do_work(wall_ms(250)); // this step runs long (now 350 ms)
+        pacer.pace(t_sim_ms(200)); // target 200 ms, wall 350 -> 150 ms late, re-anchor
+        pacer.pace(t_sim_ms(300)); // target 350+100 = 450 ms, wall 350 -> sleep 100 ms
 
-        assert_eq!(pacer.clock.sleeps, vec![ms(100), ms(100)]);
+        assert_eq!(pacer.clock.sleeps, vec![wall_ms(100), wall_ms(100)]);
         assert_eq!(pacer.overrun_reanchor_count(), 1);
         assert_eq!(pacer.total_slip(), Duration::from_millis(150));
     }
@@ -358,15 +364,15 @@ mod tests {
         // boundary, a gap no amount of work can hit. Being ~0.1 ms late for
         // it is not the sim failing to keep up.
         let mut pacer = Pacer::new(ManualClock::new());
-        pacer.pace(t_ms(0)); // anchor at (0, 0)
-        pacer.clock.do_work(100_000); // 0.1 ms of work
-        pacer.pace(t(1)); // 1 ns target, 0.1 ms late -> absorbed
+        pacer.pace(t_sim_ms(0)); // anchor at (0, 0)
+        pacer.clock.do_work(wall_us(100));
+        pacer.pace(t_sim_ns(1)); // 1 ns target, 0.1 ms late -> absorbed
         assert_eq!(pacer.overrun_reanchor_count(), 0);
 
         // The anchor never moved, so the next instant is still measured from
         // the true origin and lands back on the original schedule.
-        pacer.pace(t_ms(10));
-        assert_eq!(pacer.clock.sleeps, vec![ms(10) - 100_000]);
+        pacer.pace(t_sim_ms(10));
+        assert_eq!(pacer.clock.sleeps, vec![wall_ms(10) - wall_us(100)]);
         assert_eq!(pacer.total_slip(), Duration::ZERO);
     }
 
@@ -376,10 +382,10 @@ mod tests {
         // late enough to report, but the sim genuinely cannot keep up. The
         // fixed anchor accumulates the lateness until it crosses 1 ms.
         let mut pacer = Pacer::new(ManualClock::new());
-        pacer.pace(t_ms(0));
+        pacer.pace(t_sim_ms(0));
         for instant in 1..=3 {
-            pacer.clock.do_work(ms(1) + 400_000);
-            pacer.pace(t_ms(instant));
+            pacer.clock.do_work(wall_ms(1) + wall_us(400));
+            pacer.pace(t_sim_ms(instant));
         }
 
         assert_eq!(
@@ -392,12 +398,12 @@ mod tests {
 
     #[test]
     fn spin_mode_sleeps_all_but_the_padding_then_spins_the_rest() {
-        let padding = 1_000_000; // 1 ms in ns
+        let padding = wall_ms(1);
         // A wait longer than the padding: coarse-sleep everything but the
         // last millisecond, spin that.
-        assert_eq!(coarse_sleep_nanos(5_000_000, padding), 4_000_000);
+        assert_eq!(coarse_sleep_nanos(wall_ms(5), padding), wall_ms(4));
         // A wait shorter than the padding: no coarse sleep, spin the lot.
-        assert_eq!(coarse_sleep_nanos(500_000, padding), 0);
+        assert_eq!(coarse_sleep_nanos(wall_us(500), padding), 0);
         // Exactly the padding: also all spin.
         assert_eq!(coarse_sleep_nanos(padding, padding), 0);
     }
@@ -406,16 +412,16 @@ mod tests {
     fn coarse_mode_is_zero_padding_and_sleeps_everything() {
         // Coarse mode is just spin mode with no tail: the whole wait is
         // slept, so the trailing spin never runs.
-        assert_eq!(coarse_sleep_nanos(5_000_000, 0), 5_000_000);
+        assert_eq!(coarse_sleep_nanos(wall_ms(5), 0), wall_ms(5));
         assert_eq!(coarse_sleep_nanos(1, 0), 1);
     }
 
     #[test]
     fn being_exactly_on_target_neither_sleeps_nor_overruns() {
         let mut pacer = Pacer::new(ManualClock::new());
-        pacer.pace(t(0)); // anchor at (0, 0)
+        pacer.pace(t_sim_ns(0)); // anchor at (0, 0)
         pacer.clock.do_work(100); // step took exactly the sim gap
-        pacer.pace(t(100)); // target 100, wall 100 -> nothing
+        pacer.pace(t_sim_ns(100)); // target 100, wall 100 -> nothing
         assert!(pacer.clock.sleeps.is_empty());
         assert_eq!(pacer.overrun_reanchor_count(), 0);
     }
