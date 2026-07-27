@@ -239,16 +239,25 @@ advances sim time to the earliest due time each iteration.
 
 Lives entirely in the conductor:
 
-A single boolean, `RealTimePacing`:
+A single config field, `pacing: Pacing`:
 
-- `RealTimePacing = false` — free-run: advance immediately after the barrier.
-- `RealTimePacing = true` — 1× real-time: sleep until the wall time
-  corresponding to the next step's sim time. If the sim can't keep up, it
-  simply runs slower than real time and **logs the overruns** — no catch-up
-  (the wall-time anchor slips by the overrun amount rather than sprinting to
-  make up lost time), no scaling, and **never skip steps** (determinism).
+- `Pacing::FreeRun` — advance immediately after the barrier.
+- `Pacing::RealTime { spin_padding }` — 1× real-time: wait until the wall
+  time corresponding to the next step's sim time. If the sim can't keep up,
+  it simply runs slower than real time and **logs the overruns** — no
+  catch-up (the wall-time anchor slips by the overrun amount rather than
+  sprinting to make up lost time), no scaling, and **never skip steps**
+  (determinism). Lateness is only counted once it accumulates past a
+  re-anchor threshold, so transient jitter is absorbed by the next wait
+  instead of reported — a *bounded* catch-up, capped by the threshold. The
+  run never gets ahead of schedule, only back to it. `spin_padding` chooses how a wait is *spent* — OS
+  timer alone, or sleep then busy-spin the tail for sub-millisecond accuracy
+  — and never what the wait achieves.
 
-Sim logic never sees which mode is active.
+Sim logic never sees which mode is active. Message timestamps are sim time
+throughout, so an instant that starts late still stamps its outputs with the
+sim time it was scheduled for — which is why pacing cannot move the world
+hash.
 
 ## Failure handling at the barrier
 
@@ -265,6 +274,41 @@ per-world configurable policy with a required timeout:
 Either way the overrun/failure is logged with the component id and step time.
 Component panics in-process are caught at the host boundary and treated the
 same as a timeout.
+
+### Per-component timing: one declaration, two severities
+
+The timeout above is the *hard* end of a single per-component measurement —
+how long a component's `step` took in wall time. The soft end is a **step
+budget**:
+
+- **budget** (soft, diagnostic) — "this component's `step` should complete
+  within X wall time". Exceeding it is logged and counted; the run is
+  unaffected. This is what real-time scenarios need when some components
+  carry deadlines an operator wants flagged on every miss, while others have
+  no real-time restriction at all (`None`, the default).
+- **timeout** (hard, policy) — `on_component_timeout` above: halt or drop.
+
+They measure the same quantity, so they are declared together as part of a
+component's registration metadata rather than built as two mechanisms. What
+they do to a run differs sharply, though, and only the soft end is free:
+
+- A **budget miss only observes.** Nothing about the run changes, so the
+  world hash is untouched — a run that misses every budget produces the
+  identical hash to one that misses none.
+- **Halt** ends the run. Everything published before it is unchanged, so the
+  hash stream stays valid up to where it stops.
+- **Drop changes the scenario, and therefore the hash.** A deregistered
+  component stops publishing, so every tick after the drop differs from a run
+  where it survived — and the trigger is wall-clock-dependent, so a live
+  re-run on a faster machine may drop later, or not at all. The drop is
+  recorded in the event log like any other leave, which keeps the run
+  **replayable**, but it is no longer reproducible from `(seed, scenario)`
+  alone. That is precisely why halt is the default for
+  determinism-sensitive runs.
+
+Note this is a different measurement from the pacing overrun of milestone 3,
+which asks whether the *schedule as a whole* tracked the wall clock and is
+attributable to no component in particular.
 
 ## FMI 3.0 CS support
 
@@ -370,10 +414,13 @@ owning an async runtime later.
 2. **Determinism harness** — seeding, per-tick state hash (state-hash vs.
    output-hash per component), record/replay, CI test asserting identical hash
    streams.
-3. **Pacing** — `--real-time-pacing` flag (default off = free-run), overrun
-   logging.
+3. **Pacing** — `pacing: Pacing` config (default `FreeRun`), 1× wall-time
+   gating with anchor-slip once lateness accumulates past the re-anchor
+   threshold, overrun logging.
 4. **Dynamic join/leave** — registration over transport, tick-boundary
    application, live traffic spawner, replay still deterministic via event log.
+   Registration metadata gains per-component timing — step budget and timeout
+   policy together (see "Per-component timing").
 5. **Visualization** — viz bridge + Python package; watch the traffic move.
 6. **FMI** — `continuo-fmi`, mapping config, FMI 3.0 reference FMU driving an
    actor.
@@ -408,7 +455,10 @@ the mix. They are independent and can swap if priorities shift.
   formats (OpenDRIVE or other, undecided) come later as importers.
 - **2026-07-17** — Pacing is a single boolean `RealTimePacing`: `false` =
   free-run, `true` = 1× real-time (no scale factor). If real-time can't keep
-  up, run slower and log overruns.
+  up, run slower and log overruns. *(Superseded 2026-07-24: still one
+  setting and still no scale factor, but a `Pacing` enum rather than a bool,
+  so the spin padding rides on the real-time variant — see the milestone 3
+  entry below.)*
 - **2026-07-17** — Component tree and wiring are **scenario-config-driven**
   (SSP-style concept, not the SSP format): scenario names component types,
   a host-side registry instantiates them.
@@ -490,6 +540,86 @@ the mix. They are independent and can swap if priorities shift.
     `PlaybackComponent` stays in `continuo-conductor` — it is harness
     machinery built on `EventLog`, not a sample actor, and moving it to
     `continuo-actors` would invert the crate layering.
+- **2026-07-23** — Milestone 3 (pacing) implementation choices:
+  - Pacing gates each instant at the **top of `step_once`**, before any
+    component runs, so every driver (`run_until` and the manual
+    `next_scheduled` loops alike) gets it for free and it delays entry to an
+    instant without ever touching its content. Consequence: a paced run and
+    a free run of the same seeded world produce the **identical world
+    hash** — the milestone's headline test.
+  - The map from sim time to wall time is one **anchor `(sim, wall)`**.
+    Keeping the anchor fixed while sleeping means an oversleep on one step
+    is absorbed by a shorter sleep on the next (no drift). An **overrun
+    re-anchors** to when the late instant actually starts — the anchor slips
+    by the overrun amount, so the run stays behind rather than sprinting to
+    catch up (PLAN.md "Pacing"). Steps are never skipped.
+  - Overruns are logged (`tracing::warn`, target `continuo::pacing`) and
+    counted; `Conductor::overrun_count()` / `total_slip()` expose them.
+  - Lateness is only reported once it accumulates past
+    `OVERRUN_REANCHOR_THRESHOLD` (1 ms). Below it the anchor stays put, so
+    the next instant's sleep absorbs the lateness exactly as it absorbs an
+    oversleep. This matters because *any* sim gap finer than the wall time
+    its work costs is unachievable under pacing — the demo's 1 ns logger
+    offset most starkly — and counting those as failures made
+    `overrun_count` measure schedule shape rather than health. Because the
+    anchor does not move, lateness keeps accumulating against it, so a sim
+    that genuinely cannot keep up still crosses the threshold and is
+    reported — aggregated instead of once per instant. The accessor is named
+    `overrun_reanchor_count` for the event it actually counts, and documents
+    that zero means "the schedule tracked the wall clock", *not* "every
+    component finished within its time".
+  - The threshold is therefore also a **catch-up budget**, which caps it
+    from above: absorbing lateness makes the next interval run short by that
+    much, briefly faster than 1× (though never ahead of schedule). It must
+    stay well under the shortest component period — above a sim gap, that
+    recovery becomes a run of zero-sleep instants, the sprint "no catch-up"
+    exists to prevent.
+  - The anchor/slip arithmetic is isolated behind a `WallClock` trait so it
+    is unit-tested against a manual clock (no real sleeps); the conductor
+    uses `SystemClock`.
+  - Pacing is **one config field**, `pacing: Pacing` — `FreeRun` or
+    `RealTime { spin_padding }` — replacing the earlier
+    `real_time_pacing: bool` + separate precision enum (which left precision
+    meaningless whenever the bool was false). `spin_padding` tunes only how
+    each wait is *spent*, never the result: `Duration::ZERO` sleeps on the
+    OS timer alone (Rust's std already uses a high-resolution waitable timer
+    on modern Windows, ~0.5 ms) and spends no CPU between instants; a small
+    positive value sleeps to within that padding of the target then
+    busy-spins the tail for sub-millisecond accuracy at the cost of a core.
+    Every mode produces the identical world hash. `Pacing::real_time()` /
+    `real_time_precise()` name the two common choices so callers never
+    spell the padding (or the `ZERO`-means-coarse convention) out. Coarse is
+    exactly zero-padding spin — one `SystemClock::sleep` path, its
+    sleep-vs-spin cutoff a pure function with its own unit test.
+  - Failure handling at the barrier (`on_component_timeout`, PLAN.md) is
+    **not** part of M3 — it needs the join/leave machinery of M4 to drop a
+    component mid-run, so it lands there.
+- **2026-07-24** — **Per-component step budgets are M4, not M3**, together
+  with the timeout policy they share a measurement with (see "Per-component
+  timing"). Considered for M3 since real-time scenarios want per-component
+  deadline flagging, and rejected there for three reasons: a budget is the
+  soft half of `on_component_timeout`, so building them apart risks two
+  overlapping per-component durations instead of one declaration with an
+  escalation level; the budget belongs in registration metadata, whose shape
+  M4 is already reworking for remote components; and M3 stays a clean single
+  concern — the conductor tracking the wall clock.
+  - Two shaping decisions were settled while scoping it, so M4 need not
+    re-derive them: the budget measures **the component's own `step`
+    duration** (not completion relative to the instant's start, which would
+    fold in queueing behind earlier components), and it is declared **at
+    registration** rather than on the `Component` trait — a deadline is a
+    deployment property (the same physics model has one on a HIL rig and
+    none in a batch run), and this keeps wall-clock types out of
+    `continuo-core` entirely.
+  - Rejected alternative: **per-component pacing strictness**, letting a
+    component declare that its own overruns don't matter. It cannot replace
+    the re-anchor threshold — that threshold's job is absorbing transient
+    jitter so it self-corrects, and strictness cannot express transient vs.
+    sustained, so jitter would re-anchor and accumulate as permanent drift.
+    It also mismatches the model: pacing is per-*instant*, and co-due
+    components would need an arbitrary combining rule. And the lateness it
+    would suppress is not the lax component's anyway — it is caused by the
+    previous instant's work, and belongs to the gap.
 
 ## Deferred (decided-not-now, revisit when they bite)
 

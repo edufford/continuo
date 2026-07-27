@@ -1,3 +1,5 @@
+use crate::pacing::Pacing;
+
 /// Conductor configuration.
 #[derive(Debug, Clone)]
 pub struct ConductorConfig {
@@ -9,10 +11,8 @@ pub struct ConductorConfig {
     /// the starting point of the running world hash. Same seed + same
     /// scenario => identical runs.
     pub world_seed: u64,
-    /// `false` = free-run (as fast as possible); `true` = 1× real-time.
-    /// Real-time pacing arrives in milestone 3 — until then `true` is
-    /// rejected at construction.
-    pub real_time_pacing: bool,
+    /// Free-run (default) or 1× real time — see [`Pacing`].
+    pub pacing: Pacing,
 }
 
 impl Default for ConductorConfig {
@@ -20,7 +20,7 @@ impl Default for ConductorConfig {
         ConductorConfig {
             world_name: "world".to_string(),
             world_seed: 0,
-            real_time_pacing: false,
+            pacing: Pacing::FreeRun,
         }
     }
 }

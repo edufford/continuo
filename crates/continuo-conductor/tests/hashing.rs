@@ -3,7 +3,7 @@
 
 use continuo_conductor::record::LogEvent;
 use continuo_conductor::{
-    Conductor, ConductorConfig, EventLog, PlaybackComponent, Recorder, Verifier,
+    Conductor, ConductorConfig, EventLog, Pacing, PlaybackComponent, Recorder, Verifier,
 };
 use continuo_core::{
     Component, ComponentId, KeyExpr, RandomSplitMix64, SimDuration, SimTime, StepCtx,
@@ -74,7 +74,7 @@ fn hashing_world(world_seed: u64) -> ConductorConfig {
     ConductorConfig {
         world_name: "hashing-test".into(),
         world_seed,
-        real_time_pacing: false,
+        pacing: Pacing::FreeRun,
     }
 }
 
@@ -130,7 +130,7 @@ fn run_hidden_world(initial: u64, expose_state: bool) -> u64 {
         ConductorConfig {
             world_name: "hidden-test".into(),
             world_seed: 0,
-            real_time_pacing: false,
+            pacing: Pacing::FreeRun,
         },
         InProcTransport::new(),
     )
