@@ -6,6 +6,12 @@
 //! it, so a paced run and a free run of the same seeded world produce the
 //! identical world hash (tested). Nothing here touches the fingerprint.
 //!
+//! In particular, **sim time stays authoritative for content**: an instant
+//! that starts late still runs at the sim time it was scheduled for, and
+//! everything published in it is stamped with that sim time, not with when
+//! the wall clock happened to get there. Lateness moves *when* a step
+//! happens in the room, never *what* it computes or how it is labelled.
+//!
 //! The rule (PLAN.md, "Pacing"): sleep until the wall time corresponding to
 //! the next instant's sim time. If the sim cannot keep up, it runs slower
 //! than real time and **logs the overruns** — the wall-time anchor slips by
@@ -13,10 +19,19 @@
 //! catch-up, no scaling, and steps are never skipped (that would change the
 //! run).
 //!
-//! Testability: the anchor-and-slip arithmetic is the part worth checking,
-//! and it must not depend on the real clock. [`Pacer`] is generic over a
-//! [`WallClock`]; the conductor uses [`SystemClock`], and the unit tests
-//! drive a manual one.
+//! # Pieces
+//!
+//! - [`Pacing`] is the public mode on `ConductorConfig`: free-run, or 1×
+//!   real time with a spin padding.
+//! - [`Pacer`] holds the anchor and does the arithmetic — target, wait,
+//!   absorb-or-slip. This is the part worth testing, and it must not depend
+//!   on the real clock, so it is generic over the clock it uses.
+//! - [`WallClock`] is that seam: read elapsed nanoseconds, and wait.
+//! - [`SystemClock`] is the production implementation, and the only piece
+//!   that touches the real clock or blocks a thread.
+//! - `ManualClock` (in this module's tests) is the other implementation: a
+//!   clock the test advances by hand, so the anchor-and-slip behavior is
+//!   checked exactly and instantly, with no real sleeping.
 
 use std::time::{Duration, Instant};
 
@@ -38,12 +53,15 @@ pub enum Pacing {
     /// are never skipped (see PLAN.md "Pacing").
     ///
     /// `spin_padding` is how much of each wait's tail to busy-spin instead
-    /// of sleep: [`Duration::ZERO`] sleeps the whole wait (OS-timer
-    /// accuracy — a high-resolution waitable timer on modern Windows,
-    /// ~0.5 ms — and no CPU spent between instants); a small positive value
-    /// busy-spins that final stretch for sub-millisecond accuracy at the
-    /// cost of a core. Use [`Pacing::real_time`] / [`Pacing::real_time_precise`]
-    /// rather than spelling the padding out.
+    /// of sleep. [`Duration::ZERO`] sleeps the whole wait, spending no CPU
+    /// between instants and landing within whatever the OS timer gives:
+    /// modern Windows uses a high-resolution waitable timer (~0.5 ms), while
+    /// Linux and macOS `nanosleep` on hrtimers usually overshoot by only
+    /// tens of microseconds — so Windows is the case worth sizing for. A
+    /// small positive padding busy-spins that final stretch for
+    /// sub-millisecond accuracy anywhere, at the cost of a core. Use
+    /// [`Pacing::real_time`] / [`Pacing::real_time_precise`] rather than
+    /// spelling the padding out.
     RealTime { spin_padding: Duration },
 }
 
@@ -139,10 +157,11 @@ impl WallClock for SystemClock {
 /// genuinely cannot keep up crosses this eventually and is reported then,
 /// aggregated rather than once per instant.
 ///
-/// Sized above OS timer granularity (~0.5 ms on modern Windows) so ordinary
-/// wake-up jitter never registers — nor do sim gaps too fine to be
-/// achievable in wall time at all, like an observer sampling 1 ns past a
-/// period boundary.
+/// Sized above OS timer granularity so ordinary wake-up jitter never
+/// registers — the coarsest common case is modern Windows at ~0.5 ms, while
+/// Linux and macOS usually land within tens of microseconds. Nor do sim gaps
+/// too fine to be achievable in wall time at all, like an observer sampling
+/// 1 ns past a period boundary.
 const OVERRUN_REANCHOR_THRESHOLD: Duration = Duration::from_millis(1);
 
 /// Maps sim time onto wall time and blocks to keep a run at 1× real time.
