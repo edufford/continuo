@@ -171,13 +171,27 @@ const OVERRUN_REANCHOR_THRESHOLD: Duration = Duration::from_millis(1);
 /// hit the target keeps the anchor fixed, so an oversleep on one step is
 /// absorbed by a shorter sleep on the next (no drift accumulation). Once
 /// accumulated lateness passes [`OVERRUN_REANCHOR_THRESHOLD`], the anchor
-/// re-anchors to the moment the late instant actually starts, which is
-/// exactly "the anchor slips by the overrun amount" — the run falls
-/// permanently behind by that much rather than sprinting to catch up.
+/// moves to the moment the late instant actually starts — "the anchor slips
+/// by the overrun amount" — and the run stays permanently behind by that
+/// much rather than sprinting to catch up.
+///
+/// That move is not bookkeeping: it is what *resumes* 1× pacing after the
+/// lost time is written off. Leaving the anchor fixed instead would leave
+/// every later target in the past, so nothing would wait and the run would
+/// free-run until sim time caught back up with wall time — precisely the
+/// catch-up sprint PLAN.md rules out.
 pub(crate) struct Pacer<C: WallClock> {
     clock: C,
-    /// `(sim_nanos, wall_nanos)`; `None` until the first paced instant,
-    /// which establishes it and never waits.
+    /// `(sim_nanos, wall_nanos)` pinning one point of the sim-to-wall map.
+    /// `None` until the first paced instant, which establishes it and never
+    /// waits.
+    ///
+    /// Not a fixed origin for the run: it is re-established on every slip,
+    /// and its initial value is just whichever sim time the first paced
+    /// instant carries. That is zero for a world whose components all
+    /// register before the run starts (they are first due at
+    /// `SimTime::ZERO`), but nothing here depends on it — only differences
+    /// against the anchor are ever used.
     anchor: Option<(i128, i128)>,
     overrun_reanchors: u64,
     total_slip_nanos: i128,
