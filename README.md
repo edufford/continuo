@@ -131,7 +131,8 @@ cargo fmt --all
 # Run the demo: three cars circulating an oval, free-run, 30 sim-seconds
 cargo run -p continuo-examples --example traffic
 
-# The same world paced to 1x real time (argument = sim-seconds to run)
+# The same world paced to 1x real time (argument = sim-seconds to run;
+# add `precise` for sleep-then-spin sub-millisecond pacing)
 cargo run -p continuo-examples --example traffic_realtime -- 3
 
 # Record the run's event log (messages + tick fingerprints)

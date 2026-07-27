@@ -6,11 +6,12 @@
 //!
 //! Run with (a short duration, since it runs in real time):
 //!   cargo run -p continuo-examples --example traffic_realtime -- 3
-//!   cargo run -p continuo-examples --example traffic_realtime -- 3 spin
+//!   cargo run -p continuo-examples --example traffic_realtime -- 3 precise
 //!
 //! First optional argument is sim-seconds to run (default 5); a second
-//! argument `spin` selects sub-millisecond sleep-then-spin pacing instead
-//! of the default OS-timer pacing (watch the overrun count drop).
+//! argument `precise` selects `Pacing::real_time_precise` — sleep-then-spin
+//! for sub-millisecond accuracy — instead of the default OS-timer
+//! `Pacing::real_time`.
 
 use continuo_conductor::{Conductor, Pacing};
 use continuo_core::SimTime;
@@ -28,9 +29,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map(|a| a.parse())
         .transpose()?
         .unwrap_or(5);
-    let spin = std::env::args().nth(2).as_deref() == Some("spin");
+    let precise = std::env::args().nth(2).as_deref() == Some("precise");
 
-    let pacing = if spin {
+    let pacing = if precise {
         Pacing::real_time_precise()
     } else {
         Pacing::real_time()
@@ -50,7 +51,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         conductor.world_name(),
         conductor.sim_time(),
         conductor.tick(),
-        if spin { "spin" } else { "coarse" }
+        if precise { "precise" } else { "coarse" }
     );
     println!(
         "actual time: {:.3} s for {} sim-seconds, world hash {:016x}",
