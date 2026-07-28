@@ -61,14 +61,85 @@ pub struct RecordedMessage {
     pub payload: Box<RawValue>,
 }
 
+/// A component admitted to the world, as recorded.
+///
+/// Deliberately *not* recorded: the sim time the join was applied at. It is
+/// already implied by where this event sits between tick fingerprints, and
+/// it is the part that may legitimately vary — once joins arrive over the
+/// transport (milestone 7) the boundary that admits one depends on
+/// delivery. What shapes the run is `first_due`, which the joiner declares,
+/// so a run stays deterministically reproducible as long as that is
+/// processed the same, whichever boundary the request landed on.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecordedJoin {
+    pub path: String,
+    /// The instant the newcomer first steps.
+    pub first_due: SimTime,
+}
+
+/// A component removed from the world, as recorded.
+///
+/// Carries the declared instant for the same reason a join carries
+/// `first_due`: it is chosen by whoever asked, so it is stable however
+/// early or late the request was made, and it is what decides where this
+/// component's output stops. What is *not* recorded — here as on a join —
+/// is the moment the request was applied, which says nothing extra and is
+/// the part that varies with delivery.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecordedLeave {
+    pub path: String,
+    /// The first instant the component did not step.
+    pub leaves_at: SimTime,
+}
+
+/// A membership change, as handed to observers while it happens.
+///
+/// The log records *that* a component joined or left, not how to rebuild it
+/// — a component cannot be reconstructed from bytes. Replaying a dynamic
+/// run means re-running the scenario that issues the same joins and leaves,
+/// and checking the resulting stream against the log.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MembershipChange {
+    Joined(RecordedJoin),
+    Left(RecordedLeave),
+}
+
 /// One line of the log body, in emission order (messages of a tick precede
-/// its fingerprint, since publishes happen during the steps).
+/// its fingerprint, since publishes happen during the steps; membership
+/// changes sit between ticks, where they are applied).
 #[derive(Debug, Serialize, Deserialize)]
 pub enum LogEvent {
     #[serde(rename = "msg")]
     Msg(RecordedMessage),
     #[serde(rename = "tick")]
     Tick(TickFingerprint),
+    #[serde(rename = "join")]
+    Join(RecordedJoin),
+    #[serde(rename = "leave")]
+    Leave(RecordedLeave),
+}
+
+impl LogEvent {
+    /// The event's kind, for reporting a mismatch between two different
+    /// kinds of event.
+    pub(crate) fn kind(&self) -> &'static str {
+        match self {
+            LogEvent::Msg(_) => "msg",
+            LogEvent::Tick(_) => "tick",
+            LogEvent::Join(_) => "join",
+            LogEvent::Leave(_) => "leave",
+        }
+    }
+}
+
+impl From<MembershipChange> for LogEvent {
+    fn from(change: MembershipChange) -> Self {
+        // Return the change as the log line that records it.
+        match change {
+            MembershipChange::Joined(join) => LogEvent::Join(join),
+            MembershipChange::Left(leave) => LogEvent::Leave(leave),
+        }
+    }
 }
 
 /// First line of the log: enough to re-create the run.
@@ -223,6 +294,20 @@ impl Recorder {
                 .expect("recorder mutex is never poisoned")
                 .events
                 .push(LogEvent::Tick(*d));
+        }
+    }
+
+    pub fn membership_callback(&self) -> impl FnMut(&MembershipChange) + Send + 'static {
+        let inner = self.inner.clone();
+
+        // Return the recording callback, holding its own handle to the
+        // shared log.
+        move |change: &MembershipChange| {
+            inner
+                .lock()
+                .expect("recorder mutex is never poisoned")
+                .events
+                .push(change.clone().into());
         }
     }
 

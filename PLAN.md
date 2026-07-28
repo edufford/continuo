@@ -149,8 +149,12 @@ Baked in from the start — hard to retrofit:
 - Inboxes delivered sorted by `(publisher_id, sequence)`, never arrival order.
 - Per-component RNG seeded from `(world_seed, component_id)`. No OS entropy or
   wall clock in sim logic; wall clock exists only in the conductor's pacing.
-- Join/leave applied **only at tick boundaries** and recorded in an event log, so
-  runs with dynamic actors are replayable.
+- Join/leave applied **only at tick boundaries**, and every request **names the
+  sim time it takes effect** — a join its first step, a leave its first
+  *non*-step — rather than taking effect on arrival. A dynamic run then
+  reproduces however early or late the request was made, which is what keeps
+  it replayable once requests travel over a transport and delivery timing
+  stops being fixed. Both are recorded in the event log.
 - Per-tick canonical **state hash** (e.g. xxhash over serialized state) as the
   determinism check. Two runs with the same seed must produce identical hash
   streams; this becomes a CI test.
@@ -620,6 +624,51 @@ the mix. They are independent and can swap if priorities shift.
     components would need an arbitrary combining rule. And the lateness it
     would suppress is not the lax component's anyway — it is caused by the
     previous instant's work, and belongs to the gap.
+- **2026-07-28** — Milestone 4 membership design (joining and leaving a
+  running world):
+  - **Requests name the instant they take effect, and it is half-open.** A
+    join declares `first_due` (its first step), a leave declares `leaves_at`
+    (its first *non*-step), so a component present for `[0, 10ms)` joins at 0
+    and leaves at 10 ms, and one component's `leaves_at` is the next one's
+    `first_due` with no off-by-one reasoning about periods. Declared rather
+    than inferred because only the requester knows the phase it wants — and
+    because it is what makes a dynamic run reproducible when a request's
+    *arrival* varies, which it will as soon as requests cross a transport.
+  - **A departure vacates a registry slot rather than removing it.** An index
+    *is* the execution order within an instant, so compacting the vector
+    would silently reorder components that had nothing to do with the
+    departure, and with them the visibility rule's "earlier sibling"
+    relations. Reoccupying a freed path is a *new arrival* — fresh slot at
+    the end, end of the parent's child list — so arrival order drives both
+    the execution order (index) and the visibility rule (tree position), and
+    the two cannot disagree about who is earlier. A disagreement would not
+    fail loudly; it would just stop a same-instant hand-off arriving.
+  - **The log records the declared instant, never the applied one.** The
+    applied instant is redundant — the event's position between tick
+    fingerprints already says which instants it fell between — and it is
+    exactly the part that varies with delivery, so comparing it would report
+    divergences for runs that behave identically.
+  - **A request naming an already-stepped instant is an error**, not a
+    silent no-op, and validation precedes mutation so a rejected request
+    leaves no half-registered entry or stray subscription. Quietly resolving
+    a late request to the next open instant would put it a nanosecond after
+    the last one: an arbitrary phase, and the too-fine-gap pathology pacing
+    already has to absorb.
+  - **Scheduled leaves apply at the tick boundary before the instant is
+    entered**, found by *peeking* the schedule rather than popping it.
+    Popping first hands the due loop a set that still lists the departing
+    component, and leaves an instant holding only that component unprunable —
+    so it becomes a tick with nobody in it, numbered and fingerprinted and
+    chained into the world hash. That pending-leave queue is the
+    tick-boundary queue the timeout policy's drop will reuse.
+  - Vocabulary: the conductor **adds and removes**; a component **joins and
+    leaves**. `add_component`/`remove_component` against
+    `JoinMetadata`/`LeaveMetadata` and `LogEvent::Join`/`Leave` — no third
+    verb for the same event.
+  - Deferred within the milestone: removing a composite should take its whole
+    subtree (**one leave per leaf**, since every join names a leaf), left to
+    section 5 whose spawner needs it; and requests arriving over the
+    transport rather than as direct calls.
 
 ## Deferred (decided-not-now, revisit when they bite)
 

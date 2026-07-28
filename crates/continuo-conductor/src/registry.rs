@@ -122,6 +122,12 @@ impl Registry {
         self.entries.get_mut(index).and_then(Option::as_mut)
     }
 
+    /// The declaration index of the component registered at `path`, if one
+    /// is — for checking membership without removing anything.
+    pub(crate) fn index_of(&self, path: &ComponentPath) -> Option<usize> {
+        self.by_path.get(path).copied()
+    }
+
     /// Removes a leaf: vacates its slot, frees its path for reuse, and drops
     /// it from its parent's declared children. Returns the vacated index so
     /// the caller can unschedule it, or `None` if no such component is

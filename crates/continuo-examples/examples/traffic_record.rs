@@ -31,6 +31,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let transport = MonitorTransport::new(InProcTransport::new(), recorder.message_callback());
     let mut conductor = Conductor::new(config, transport)?;
     conductor.set_tick_callback(recorder.tick_callback());
+    conductor.set_membership_callback(recorder.membership_callback());
     traffic_world::populate(&mut conductor)?;
 
     conductor.run_until(SimTime::from_secs(traffic_world::SIM_SECONDS))?;

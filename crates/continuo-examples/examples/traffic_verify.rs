@@ -34,6 +34,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let transport = MonitorTransport::new(InProcTransport::new(), verifier.message_callback());
     let mut conductor = Conductor::new(config, transport)?;
     conductor.set_tick_callback(verifier.tick_callback());
+    conductor.set_membership_callback(verifier.membership_callback());
     traffic_world::populate(&mut conductor)?;
 
     let end = SimTime::from_secs(traffic_world::SIM_SECONDS);

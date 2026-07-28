@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use continuo_core::{
     Component, ComponentPath, HashFnv1a64, Message, SimDuration, SimTime, StepCtx, TickDone,
     TickStart, hash_bytes, mix_seeds,
@@ -7,13 +9,14 @@ use tracing::trace;
 
 use crate::config::ConductorConfig;
 use crate::error::ConductorError;
-use crate::join::JoinMetadata;
+use crate::membership::{JoinMetadata, LeaveMetadata};
 use crate::pacing::{Pacer, Pacing, SystemClock};
-use crate::record::TickFingerprint;
+use crate::record::{MembershipChange, RecordedJoin, RecordedLeave, TickFingerprint};
 use crate::registry::Registry;
 use crate::schedule::Schedule;
 
 type TickCallback = Box<dyn FnMut(&TickFingerprint) + Send>;
+type MembershipCallback = Box<dyn FnMut(&MembershipChange) + Send>;
 
 /// Owns simulation time and drives the discrete-event loop over a
 /// [`Transport`].
@@ -22,6 +25,13 @@ pub struct Conductor<T: Transport> {
     transport: T,
     registry: Registry,
     schedule: Schedule,
+    /// `Some` in 1× real-time mode, gating each instant to wall time;
+    /// `None` in free-run. Pacing never affects `world_hash`.
+    pacer: Option<Pacer<SystemClock>>,
+    /// Leaves declared for a future instant, applied at the tick
+    /// boundary before that instant is stepped. Sorted by `leaves_at`, so
+    /// draining the front is enough to find the ones that have come due.
+    pending_leaves: BTreeMap<SimTime, Vec<ComponentPath>>,
     sim_time: SimTime,
     tick: u64,
     /// Running determinism fingerprint: seeded from the world config, then
@@ -29,9 +39,7 @@ pub struct Conductor<T: Transport> {
     /// values at every tick.
     world_hash: u64,
     tick_callback: Option<TickCallback>,
-    /// `Some` in 1× real-time mode, gating each instant to wall time;
-    /// `None` in free-run. Pacing never affects `world_hash`.
-    pacer: Option<Pacer<SystemClock>>,
+    membership_callback: Option<MembershipCallback>,
 }
 
 impl<T: Transport> Conductor<T> {
@@ -55,11 +63,13 @@ impl<T: Transport> Conductor<T> {
             transport,
             registry: Registry::default(),
             schedule: Schedule::default(),
+            pacer,
+            pending_leaves: BTreeMap::new(),
             sim_time: SimTime::ZERO,
             tick: 0,
             world_hash,
             tick_callback: None,
-            pacer,
+            membership_callback: None,
         })
     }
 
@@ -68,6 +78,24 @@ impl<T: Transport> Conductor<T> {
     /// divergence checking.
     pub fn set_tick_callback(&mut self, callback: impl FnMut(&TickFingerprint) + Send + 'static) {
         self.tick_callback = Some(Box::new(callback));
+    }
+
+    /// Installs a callback invoked whenever a component joins or leaves —
+    /// the third observation point, alongside published messages and tick
+    /// fingerprints, and the one that makes a dynamic run recordable
+    /// (see [`crate::Recorder::membership_callback`]).
+    pub fn set_membership_callback(
+        &mut self,
+        callback: impl FnMut(&MembershipChange) + Send + 'static,
+    ) {
+        self.membership_callback = Some(Box::new(callback));
+    }
+
+    /// Reports an applied membership change to the observer, if any.
+    fn emit_membership(&mut self, change: MembershipChange) {
+        if let Some(callback) = self.membership_callback.as_mut() {
+            callback(&change);
+        }
     }
 
     /// The current running determinism fingerprint (see PLAN.md,
@@ -191,14 +219,64 @@ impl<T: Transport> Conductor<T> {
             self.transport.subscribe(path.clone(), key);
         }
         self.schedule.insert(join.first_due, index);
+        self.emit_membership(MembershipChange::Joined(RecordedJoin {
+            path: path.to_string(),
+            first_due: join.first_due,
+        }));
 
         // Return the registered component's full path.
         Ok(path)
     }
 
-    /// Removes a component from the world: it stops being scheduled, stops
-    /// receiving messages, and is dropped. Everything it published stays
-    /// published — departing is not a rollback.
+    /// Applies every leave due at or before `instant`, in declared
+    /// order. Called at the tick boundary, before anything steps, so a
+    /// component that has left takes no part in the instant it left at.
+    fn apply_due_leaves(&mut self, instant: SimTime) {
+        while let Some(entry) = self.pending_leaves.first_entry() {
+            if *entry.key() > instant {
+                break;
+            }
+            let leaves_at = *entry.key();
+            for path in entry.remove() {
+                // A path may have been removed directly in the meantime;
+                // a leave that finds nothing to remove is already satisfied.
+                if self.registry.index_of(&path).is_some() {
+                    self.apply_leave(&path, leaves_at);
+                }
+            }
+        }
+    }
+
+    /// Deregisters a component and tells observers. The one place a
+    /// leave is applied, whichever route asked for it.
+    ///
+    /// `leaves_at` is the instant recorded as the component's last — the
+    /// declared one for a scheduled leave, or the earliest still-open
+    /// instant for an immediate removal, which is when it stops either way.
+    fn apply_leave(&mut self, path: &ComponentPath, leaves_at: SimTime) {
+        let Some(index) = self.registry.remove(path) else {
+            return;
+        };
+        self.schedule.remove_index(index);
+        self.transport.unsubscribe(path);
+        self.emit_membership(MembershipChange::Left(RecordedLeave {
+            path: path.to_string(),
+            leaves_at,
+        }));
+    }
+
+    /// Removes a component. Pass a [`LeaveMetadata`] to name the instant it
+    /// stops at, or just its path to stop it immediately — at this tick
+    /// boundary, since membership never changes mid-tick.
+    ///
+    /// Prefer naming the instant for anything a run must reproduce: the
+    /// bare-path form stops the component wherever the caller happens to
+    /// be, which is deterministic only because the caller is. A named
+    /// instant gives the same run whenever the request was made.
+    ///
+    /// The component stops being scheduled, stops receiving messages, and
+    /// is dropped. Everything it published stays published — departing is
+    /// not a rollback.
     ///
     /// Survivors are untouched. Their declaration indexes do not shift, so
     /// execution order within an instant and every "earlier sibling"
@@ -206,26 +284,74 @@ impl<T: Transport> Conductor<T> {
     ///
     /// The path becomes free again; a later component may take it and
     /// arrives as a new sibling, ordered by its arrival like any other.
-    // TODO(M4): this is the direct in-process call. Departure over the
-    // transport (`continuo/{world}/conductor/leave`), queuing at step
-    // boundaries, and recording the departure in the event log for replay
-    // land in the later sections of this milestone.
-    pub fn remove_component(&mut self, path: &str) -> Result<(), ConductorError> {
-        let path = ComponentPath::parse(path)?;
-        let index = self
-            .registry
-            .remove(&path)
-            .ok_or_else(|| ConductorError::UnknownPath(path.clone()))?;
-        self.schedule.remove_index(index);
-        self.transport.unsubscribe(&path);
+    ///
+    /// Takes a single component's path. A composite's path — `"car1"` for
+    /// an actor built from `car1/controller` and `car1/physics` — is not a
+    /// registered component and is rejected as unknown; see the TODO below.
+    // TODO(M4): removing a composite should take its whole subtree with it,
+    // since an actor leaving a world leaves whole: today you must remove
+    // each leaf, and removing only some of them leaves a controller
+    // publishing to a physics model that is gone. Decided while building
+    // section 3 and left for section 5, whose traffic spawner needs it:
+    // the registry scans for every registered leaf under the path, vacates
+    // them in declaration order, and the log records **one leave per leaf**
+    // rather than one for the composite — every join names a leaf, because
+    // that is what joins, so departures stay symmetrical and a verifier
+    // needs no knowledge of the tree to read them.
+    //
+    // TODO(M4): this is the direct in-process call; departure over the
+    // transport (`continuo/{world}/conductor/leave`) is still to come.
+    pub fn remove_component(
+        &mut self,
+        leave: impl Into<LeaveMetadata>,
+    ) -> Result<(), ConductorError> {
+        let leave = leave.into();
+        let path = ComponentPath::parse(&leave.path)?;
+        if self.registry.index_of(&path).is_none() {
+            return Err(ConductorError::UnknownPath(path));
+        }
+        let earliest_open = self.earliest_open_instant();
 
-        // Return success; the slot is vacated and nothing references it.
+        let Some(leaves_at) = leave.leaves_at else {
+            // Unnamed: stop it at the earliest instant still open, which is
+            // now, so there is nothing to defer.
+            self.apply_leave(&path, earliest_open);
+            return Ok(());
+        };
+        if leaves_at < earliest_open {
+            // The instant it would stop at has already been stepped, so the
+            // component has already done work this leave claims it did
+            // not. Refuse rather than silently apply it late.
+            return Err(ConductorError::LeaveInThePast {
+                path,
+                leaves_at,
+                earliest_open,
+            });
+        }
+        self.pending_leaves.entry(leaves_at).or_default().push(path);
+
+        // Return success; the leave applies at the boundary before that
+        // instant is stepped.
         Ok(())
     }
 
     /// Advances to the earliest due instant and steps every component due at
     /// it, in declaration order. Returns `false` when nothing is scheduled.
     pub fn step_once(&mut self) -> Result<bool, ConductorError> {
+        // Remove anyone whose declared leave has come due before the
+        // instant is entered, so a component that leaves at T takes no part
+        // in T. This is the tick boundary: membership settles here, and is
+        // frozen for the rest of the tick.
+        //
+        // Peek rather than pop, because popping takes the due set *and*
+        // the instant with it, leaving the leave nothing to affect: the due
+        // set would already list the departing component, and an instant
+        // holding only that component could no longer be pruned, so it
+        // would still become a tick — numbered, fingerprinted, and chained
+        // into the world hash for an instant where nobody stepped.
+        if let Some(next) = self.schedule.earliest() {
+            self.apply_due_leaves(next);
+        }
         let Some((now, due)) = self.schedule.pop_earliest() else {
             return Ok(false);
         };

@@ -21,6 +21,17 @@ pub enum ConductorError {
     },
 
     #[error(
+        "component {path} was asked to stop at {leaves_at}, but the earliest \
+         instant still open is {earliest_open}: it has already stepped at \
+         instants this leave claims it did not"
+    )]
+    LeaveInThePast {
+        path: ComponentPath,
+        leaves_at: SimTime,
+        earliest_open: SimTime,
+    },
+
+    #[error(
         "path {new} conflicts with existing {existing}: a leaf component cannot also be a composite"
     )]
     PathConflict {

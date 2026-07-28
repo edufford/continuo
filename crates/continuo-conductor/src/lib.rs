@@ -8,7 +8,7 @@
 mod conductor;
 mod config;
 mod error;
-mod join;
+mod membership;
 mod pacing;
 mod playback;
 pub mod record;
@@ -19,8 +19,10 @@ mod verify;
 pub use conductor::Conductor;
 pub use config::ConductorConfig;
 pub use error::ConductorError;
-pub use join::JoinMetadata;
+pub use membership::{JoinMetadata, LeaveMetadata};
 pub use pacing::Pacing;
 pub use playback::PlaybackComponent;
-pub use record::{EventLog, Recorder, TickFingerprint};
+pub use record::{
+    EventLog, MembershipChange, RecordedJoin, RecordedLeave, Recorder, TickFingerprint,
+};
 pub use verify::{Divergence, Verifier};

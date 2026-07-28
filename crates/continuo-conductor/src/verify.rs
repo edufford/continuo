@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use continuo_core::Message;
 
 use crate::config::ConductorConfig;
-use crate::record::{EventLog, LogEvent, TickFingerprint, recorded_message};
+use crate::record::{EventLog, LogEvent, MembershipChange, TickFingerprint, recorded_message};
 
 /// The earliest point at which two logs disagree.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,9 +58,17 @@ fn event_mismatch(a: &LogEvent, b: &LogEvent) -> Option<String> {
                 )
             })
         }
-        (LogEvent::Tick(_), LogEvent::Msg(_)) | (LogEvent::Msg(_), LogEvent::Tick(_)) => {
-            Some("event kinds differ (tick vs msg)".to_string())
+        (LogEvent::Join(x), LogEvent::Join(y)) => {
+            (x != y).then(|| format!("joins differ: {x:?} vs {y:?}"))
         }
+        (LogEvent::Leave(x), LogEvent::Leave(y)) => {
+            (x != y).then(|| format!("leaves differ: {x:?} vs {y:?}"))
+        }
+        (expected, actual) => Some(format!(
+            "event kinds differ: {} vs {}",
+            expected.kind(),
+            actual.kind()
+        )),
     }
 }
 
@@ -204,6 +212,17 @@ impl Verifier {
         move |fingerprint: &TickFingerprint| {
             let mut inner = inner.lock().expect("verifier mutex is never poisoned");
             Self::check(&mut inner, &LogEvent::Tick(*fingerprint));
+        }
+    }
+
+    pub fn membership_callback(&self) -> impl FnMut(&MembershipChange) + Send + 'static {
+        let inner = self.inner.clone();
+
+        // Return the checking callback, holding its own handle to the
+        // shared cursor state.
+        move |change: &MembershipChange| {
+            let mut inner = inner.lock().expect("verifier mutex is never poisoned");
+            Self::check(&mut inner, &change.clone().into());
         }
     }
 
