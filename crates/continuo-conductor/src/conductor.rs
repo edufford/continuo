@@ -167,6 +167,33 @@ impl<T: Transport> Conductor<T> {
         Ok(path)
     }
 
+    /// Removes a component from the world: it stops being scheduled, stops
+    /// receiving messages, and is dropped. Everything it published stays
+    /// published — departing is not a rollback.
+    ///
+    /// Survivors are untouched. Their declaration indexes do not shift, so
+    /// execution order within an instant and every "earlier sibling"
+    /// relationship the visibility rule depends on are exactly as they were.
+    ///
+    /// The path becomes free again; a later component may take it and
+    /// arrives as a new sibling, ordered by its arrival like any other.
+    // TODO(M4): this is the direct in-process call. Departure over the
+    // transport (`continuo/{world}/conductor/leave`), queuing at step
+    // boundaries, and recording the departure in the event log for replay
+    // land in the later sections of this milestone.
+    pub fn remove_component(&mut self, path: &str) -> Result<(), ConductorError> {
+        let path = ComponentPath::parse(path)?;
+        let index = self
+            .registry
+            .remove(&path)
+            .ok_or_else(|| ConductorError::UnknownPath(path.clone()))?;
+        self.schedule.remove_index(index);
+        self.transport.unsubscribe(&path);
+
+        // Return success; the slot is vacated and nothing references it.
+        Ok(())
+    }
+
     /// Advances to the earliest due instant and steps every component due at
     /// it, in declaration order. Returns `false` when nothing is scheduled.
     pub fn step_once(&mut self) -> Result<bool, ConductorError> {
@@ -205,11 +232,17 @@ impl<T: Transport> Conductor<T> {
         trace!(target: "continuo::conductor", tick = tick_start.tick, sim_time = %now, "tick start");
 
         for index in due {
-            let path = self.registry.entries[index].path.clone();
-            let dt = self.registry.entries[index]
-                .last_step
-                .map(|prev| now - prev);
-            let component_seed = self.registry.entries[index].component_seed;
+            // Membership only changes at tick boundaries, so every due slot
+            // is live. Assert that, then skip rather than panic if it ever
+            // stops holding: not stepping is the right outcome for a
+            // component that has left.
+            let Some(entry) = self.registry.entry(index) else {
+                debug_assert!(false, "slot {index} vacated mid-tick");
+                continue;
+            };
+            let path = entry.path.clone();
+            let dt = entry.last_step.map(|prev| now - prev);
+            let component_seed = entry.component_seed;
 
             // The visibility rule (PLAN.md): everything published before this
             // instant is released; same-instant messages only from an
@@ -221,7 +254,10 @@ impl<T: Transport> Conductor<T> {
             let inbox = self.transport.drain(&path, &release_condition);
 
             let mut ctx = StepCtx::new(now, dt, &self.config.world_name, component_seed, inbox);
-            let entry = &mut self.registry.entries[index];
+            let entry = self
+                .registry
+                .entry_mut(index)
+                .expect("checked live above, and membership is frozen mid-tick");
             let next_due = entry.component.step(&mut ctx);
 
             // TODO(PLAN "Failure handling"): apply the per-world policy
@@ -260,7 +296,6 @@ impl<T: Transport> Conductor<T> {
                 });
             }
 
-            let entry = &mut self.registry.entries[index];
             // Components exposing internal state join the hash in
             // state-hash mode; the rest are covered by their output bytes
             // above (output-hash mode). The b"|state|" marker below

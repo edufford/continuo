@@ -29,6 +29,24 @@ impl Tree {
         self.children.contains_key(path)
     }
 
+    /// Forgets a departed leaf, so its id no longer counts as a declared
+    /// sibling. Survivors keep their relative order — the only thing the
+    /// visibility rule reads — and a later component may reuse the id,
+    /// arriving at the end like any new sibling.
+    fn forget_child(&mut self, parent: &ComponentPath, child: &ComponentId) {
+        let Some(children) = self.children.get_mut(parent) else {
+            return;
+        };
+        children.retain(|c| c != child);
+        if children.is_empty() {
+            // A composite with no children left is no longer an internal
+            // node, so the path is free for a leaf to take. Its own mention
+            // in *its* parent's list stays, keeping that branch's position
+            // if another child arrives under it later.
+            self.children.remove(parent);
+        }
+    }
+
     /// The visibility rule's same-instant clause: may `subscriber`, stepping
     /// now, receive a message `publisher` published at this same instant?
     ///
@@ -79,17 +97,53 @@ pub(crate) struct Entry {
 
 /// All registered leaves (indexed by declaration order — the deterministic
 /// execution order within an instant) plus the tree.
+///
+/// A slot is `None` once its component has left. Vacating rather than
+/// removing is what keeps every surviving index stable: indexes are the
+/// execution order within an instant, so shifting them would silently
+/// reorder components that had nothing to do with the departure.
 #[derive(Default)]
 pub(crate) struct Registry {
-    pub(crate) entries: Vec<Entry>,
+    pub(crate) entries: Vec<Option<Entry>>,
     by_path: BTreeMap<ComponentPath, usize>,
     pub(crate) tree: Tree,
 }
 
 impl Registry {
-    // TODO(M4): support removal (leave, or a failure-policy drop) —
-    // deregister the leaf, drop its schedule entry and subscriptions, and
-    // keep sibling order stable so replayed runs see identical ordering.
+    /// The live component at `index`, or `None` if that slot has been
+    /// vacated by a departure.
+    pub(crate) fn entry(&self, index: usize) -> Option<&Entry> {
+        self.entries.get(index).and_then(Option::as_ref)
+    }
+
+    /// Mutable access to the live component at `index`; `None` for a vacated
+    /// slot.
+    pub(crate) fn entry_mut(&mut self, index: usize) -> Option<&mut Entry> {
+        self.entries.get_mut(index).and_then(Option::as_mut)
+    }
+
+    /// Removes a leaf: vacates its slot, frees its path for reuse, and drops
+    /// it from its parent's declared children. Returns the vacated index so
+    /// the caller can unschedule it, or `None` if no such component is
+    /// registered.
+    ///
+    /// Rejoining under the same path is allowed and arrives like any new
+    /// sibling — a fresh slot at the end, and the end of the parent's child
+    /// list. Arrival order therefore stays the single source of truth for
+    /// both execution order and the visibility rule, so the two can never
+    /// disagree about which sibling is "earlier".
+    pub(crate) fn remove(&mut self, path: &ComponentPath) -> Option<usize> {
+        let index = self.by_path.remove(path)?;
+        self.entries[index] = None;
+        // Registered paths are always leaves, so both of these hold; the
+        // pattern just avoids asserting it.
+        if let (Some(parent), Some(id)) = (path.parent(), path.segments().last()) {
+            self.tree.forget_child(&parent, id);
+        }
+
+        // Return the vacated index; its schedule entries are now stale.
+        Some(index)
+    }
 
     /// Registers a leaf under `parent`, creating intermediate tree nodes as
     /// needed. Returns the declaration index and full path.
@@ -136,13 +190,13 @@ impl Registry {
         let index = self.entries.len();
         self.by_path.insert(path.clone(), index);
         let component_seed = continuo_core::derive_component_seed(world_seed, &path);
-        self.entries.push(Entry {
+        self.entries.push(Some(Entry {
             path: path.clone(),
             component,
             last_step: None,
             next_seq: 0,
             component_seed,
-        });
+        }));
 
         // Return the new entry's declaration index and full path.
         Ok((index, path))
@@ -196,6 +250,77 @@ mod tests {
         assert!(!t.releases_same_instant(&path("car1/physics"), &path("car2/controller")));
         // Self: never.
         assert!(!t.releases_same_instant(&path("car1/physics"), &path("car1/physics")));
+    }
+
+    #[test]
+    fn removing_a_leaf_vacates_its_slot_without_shifting_others() {
+        let mut reg = Registry::default();
+        let car1 = path("car1");
+        let (controller, controller_path) = reg
+            .add(&car1, Box::new(Dummy("controller")), TEST_WORLD_SEED)
+            .unwrap();
+        let (physics, _) = reg
+            .add(&car1, Box::new(Dummy("physics")), TEST_WORLD_SEED)
+            .unwrap();
+
+        assert_eq!(reg.remove(&controller_path), Some(controller));
+
+        // The slot is empty, and the survivor keeps the index that fixes its
+        // execution order within an instant.
+        assert!(reg.entry(controller).is_none());
+        assert_eq!(
+            reg.entry(physics).expect("physics survives").path,
+            path("car1/physics")
+        );
+        // A departed component is no longer a declared sibling, so nothing
+        // waits on it for same-instant delivery.
+        assert!(
+            !reg.tree
+                .releases_same_instant(&controller_path, &path("car1/physics"))
+        );
+    }
+
+    #[test]
+    fn a_departed_path_can_be_reused_and_arrives_as_the_newest_sibling() {
+        let mut reg = Registry::default();
+        let car1 = path("car1");
+        let (_, controller_path) = reg
+            .add(&car1, Box::new(Dummy("controller")), TEST_WORLD_SEED)
+            .unwrap();
+        reg.add(&car1, Box::new(Dummy("physics")), TEST_WORLD_SEED)
+            .unwrap();
+        // Declared first, so its same-instant output reaches the physics.
+        assert!(
+            reg.tree
+                .releases_same_instant(&controller_path, &path("car1/physics"))
+        );
+
+        reg.remove(&controller_path);
+        let (rejoined, _) = reg
+            .add(&car1, Box::new(Dummy("controller")), TEST_WORLD_SEED)
+            .unwrap();
+
+        // Rejoining is a new arrival, not a restoration: a fresh slot at the
+        // end, and the end of the parent's child list. The physics is now the
+        // earlier sibling — and note the two orders agree, which is the point.
+        // The visibility rule reads the tree while execution reads the index,
+        // so if arrival did not drive both they could disagree about who is
+        // "earlier" and a same-instant hand-off would silently stop working.
+        assert_eq!(rejoined, 2);
+        assert!(
+            !reg.tree
+                .releases_same_instant(&controller_path, &path("car1/physics"))
+        );
+        assert!(
+            reg.tree
+                .releases_same_instant(&path("car1/physics"), &controller_path)
+        );
+    }
+
+    #[test]
+    fn removing_something_unregistered_reports_it() {
+        let mut reg = Registry::default();
+        assert_eq!(reg.remove(&path("nobody")), None);
     }
 
     #[test]

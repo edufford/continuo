@@ -6,6 +6,9 @@ pub enum ConductorError {
     #[error("a component is already registered at path {0}")]
     DuplicatePath(ComponentPath),
 
+    #[error("no component is registered at path {0}")]
+    UnknownPath(ComponentPath),
+
     #[error(
         "path {new} conflicts with existing {existing}: a leaf component cannot also be a composite"
     )]
