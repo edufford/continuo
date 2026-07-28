@@ -1,12 +1,13 @@
 use continuo_core::{
-    Component, ComponentPath, HashFnv1a64, Message, SimTime, StepCtx, TickDone, TickStart,
-    hash_bytes, mix_seeds,
+    Component, ComponentPath, HashFnv1a64, Message, SimDuration, SimTime, StepCtx, TickDone,
+    TickStart, hash_bytes, mix_seeds,
 };
 use continuo_transport::Transport;
 use tracing::trace;
 
 use crate::config::ConductorConfig;
 use crate::error::ConductorError;
+use crate::join::JoinMetadata;
 use crate::pacing::{Pacer, Pacing, SystemClock};
 use crate::record::TickFingerprint;
 use crate::registry::Registry;
@@ -126,34 +127,62 @@ impl<T: Transport> Conductor<T> {
             .map_or(std::time::Duration::ZERO, Pacer::total_slip)
     }
 
-    /// Registers a component under `parent` (`""` for a world-level actor;
-    /// `"car1"` makes it a child of the `car1` composite). Sibling order is
-    /// registration order — it defines both execution order within an
-    /// instant and the "earlier sibling" of the visibility rule.
+    /// The earliest instant a component can still be admitted for. Nothing
+    /// has stepped before the first tick, so the world's opening instant is
+    /// open; afterwards the instant at `sim_time` has been executed and
+    /// scheduling into it would step it a second time.
+    fn earliest_open_instant(&self) -> SimTime {
+        // Return the first instant that has not already happened.
+        if self.tick == 0 {
+            self.sim_time
+        } else {
+            self.sim_time + SimDuration::from_nanos(1)
+        }
+    }
+
+    /// Admits a component. Pass a [`JoinMetadata`] to say when a newcomer to
+    /// a running world first steps, or — before the run starts — just the
+    /// parent path (`""` for a world-level actor, `"car1"` to join that
+    /// composite), which is shorthand for first stepping at sim time zero.
     ///
-    /// Milestone 1 supports registration before running only; the component
-    /// is first due at sim time zero. Runtime join/leave is milestone 4.
+    /// Sibling order is arrival order, which fixes both the execution order
+    /// within an instant and the "earlier sibling" of the visibility rule.
+    /// A component admitted mid-run is therefore the newest sibling of
+    /// whatever it joins.
+    ///
+    /// The first step is scheduled here, as the component is admitted,
+    /// rather than discovered when the instant arrives — so the barrier at
+    /// `first_due` already counts the newcomer among the components it
+    /// waits for.
+    // TODO(M4): joins currently arrive as this direct call. Requesting one
+    // over the transport (continuo/{world}/conductor/join), and recording
+    // admissions in the event log so dynamic runs replay, land in the later
+    // sections of this milestone.
+    //
+    // TODO(M7): for a remote component the conductor never holds the Box —
+    // it lives in its host process — so the registry entry becomes
+    // Local(Box<dyn Component>) vs. Remote(metadata). Scheduling, the
+    // visibility rule, and seq assignment already work off metadata alone,
+    // which is why `JoinMetadata` is a separate type from the component.
     pub fn add_component(
         &mut self,
-        parent: &str,
+        join: impl Into<JoinMetadata>,
         component: Box<dyn Component>,
     ) -> Result<ComponentPath, ConductorError> {
-        // TODO(M4): runtime join/leave — accept join requests over the
-        // transport (continuo/{world}/conductor/join), apply them at step
-        // boundaries, schedule the first step at the join time instead of
-        // ZERO, and record admissions in the event log for replay.
-        //
-        // For remote components the conductor never holds the Box — the
-        // component lives in its host process. Registration then needs only
-        // the component's *metadata*, carried in the join request:
-        //   { parent path, id (=> declared sibling order from arrival order),
-        //     subscriptions, first_due, coupled/decoupled flag (PLAN.md
-        //     decision 2026-07-18: decoupled children use next-step
-        //     visibility, freeing their host placement) }.
-        // The registry entry becomes Local(Box<dyn Component>) vs.
-        // Remote(metadata); scheduling, the visibility rule, and seq
-        // assignment work identically on both since they only use metadata.
-        let parent = ComponentPath::parse(parent)?;
+        let join = join.into();
+        let parent = ComponentPath::parse(&join.parent)?;
+
+        // Validate before touching anything, so a rejected join leaves no
+        // trace: no half-registered entry, no stray subscriptions.
+        let earliest_open = self.earliest_open_instant();
+        if join.first_due < earliest_open {
+            return Err(ConductorError::JoinInThePast {
+                path: parent.join(component.id()),
+                first_due: join.first_due,
+                earliest_open,
+            });
+        }
+
         let subscriptions = component.subscriptions();
         let (index, path) = self
             .registry
@@ -161,7 +190,7 @@ impl<T: Transport> Conductor<T> {
         for key in subscriptions {
             self.transport.subscribe(path.clone(), key);
         }
-        self.schedule.insert(SimTime::ZERO, index);
+        self.schedule.insert(join.first_due, index);
 
         // Return the registered component's full path.
         Ok(path)

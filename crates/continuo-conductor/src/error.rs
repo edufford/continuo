@@ -10,6 +10,17 @@ pub enum ConductorError {
     UnknownPath(ComponentPath),
 
     #[error(
+        "component {path} asked to first step at {first_due}, but the earliest \
+         instant still open is {earliest_open}: a joining component must be \
+         scheduled for a step that has not happened yet"
+    )]
+    JoinInThePast {
+        path: ComponentPath,
+        first_due: SimTime,
+        earliest_open: SimTime,
+    },
+
+    #[error(
         "path {new} conflicts with existing {existing}: a leaf component cannot also be a composite"
     )]
     PathConflict {

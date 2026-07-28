@@ -1,12 +1,12 @@
-//! Runtime membership (milestone 4): components leaving a running world.
+//! Runtime membership (milestone 4): components joining and leaving a
+//! running world.
 //!
-//! Joining mid-run, recording membership changes in the event log, and the
-//! timeout policy that drops a component arrive in the later sections of
-//! this milestone.
+//! Recording membership changes in the event log, and the timeout policy
+//! that drops a component, arrive in the later sections of this milestone.
 
 use std::sync::{Arc, Mutex};
 
-use continuo_conductor::{Conductor, ConductorConfig, ConductorError, Pacing};
+use continuo_conductor::{Conductor, ConductorConfig, ConductorError, JoinMetadata, Pacing};
 use continuo_core::{Component, ComponentId, KeyExpr, SimDuration, SimTime, StepCtx};
 use continuo_transport::InProcTransport;
 
@@ -129,4 +129,153 @@ fn removing_a_path_nobody_is_registered_at_is_an_error() {
         conductor.remove_component("nobody"),
         Err(ConductorError::UnknownPath(_))
     ));
+}
+
+/// A ticker of the given id and period, logging into `steps`.
+fn ticker(id: &'static str, steps: &StepLog) -> Box<Ticker> {
+    Box::new(Ticker {
+        id,
+        period: dur_ms(10),
+        steps: steps.clone(),
+    })
+}
+
+#[test]
+fn a_component_admitted_mid_run_first_steps_at_its_declared_time() {
+    let steps: StepLog = Default::default();
+    let mut conductor = new_conductor();
+    conductor
+        .add_component("", ticker("a", &steps))
+        .expect("registration succeeds");
+    conductor.run_until(t_sim_ms(10)).expect("steps succeed");
+
+    conductor
+        .add_component(JoinMetadata::at("", t_sim_ms(25)), ticker("b", &steps))
+        .expect("25 ms is still ahead");
+    conductor.run_until(t_sim_ms(40)).expect("steps succeed");
+
+    assert_eq!(
+        steps_of(&steps, "b"),
+        vec![t_sim_ms(25), t_sim_ms(35)],
+        "the newcomer starts at the instant it asked for, not at zero and \
+         not at the next instant that happened to come along"
+    );
+    assert_eq!(
+        steps_of(&steps, "a"),
+        vec![
+            t_sim_ms(0),
+            t_sim_ms(10),
+            t_sim_ms(20),
+            t_sim_ms(30),
+            t_sim_ms(40)
+        ],
+        "the incumbent's own cadence is undisturbed"
+    );
+}
+
+#[test]
+fn a_joining_component_is_scheduled_before_its_instant_arrives() {
+    // The point of declaring `first_due` up front: the conductor knows the
+    // newcomer is due at that instant while the instant is still in the
+    // future, so the barrier there waits for it instead of discovering it
+    // late.
+    let steps: StepLog = Default::default();
+    let mut conductor = new_conductor();
+    conductor
+        .add_component("", ticker("a", &steps))
+        .expect("registration succeeds");
+    conductor.run_until(t_sim_ms(10)).expect("steps succeed");
+    assert_eq!(
+        conductor.next_scheduled(),
+        Some(t_sim_ms(20)),
+        "only `a` is due, at its next period"
+    );
+
+    conductor
+        .add_component(JoinMetadata::at("", t_sim_ms(15)), ticker("b", &steps))
+        .expect("15 ms is still ahead");
+
+    assert_eq!(
+        conductor.next_scheduled(),
+        Some(t_sim_ms(15)),
+        "admitting the newcomer scheduled it immediately, making it the \
+         earliest thing due"
+    );
+}
+
+#[test]
+fn joining_an_instant_that_has_already_happened_is_an_error() {
+    let steps: StepLog = Default::default();
+    let mut conductor = new_conductor();
+    conductor
+        .add_component("", ticker("a", &steps))
+        .expect("registration succeeds");
+    conductor.run_until(t_sim_ms(10)).expect("steps succeed");
+
+    // Well behind the run.
+    assert!(matches!(
+        conductor.add_component(JoinMetadata::at("", t_sim_ms(5)), ticker("late", &steps)),
+        Err(ConductorError::JoinInThePast { .. })
+    ));
+    // And the instant just stepped is closed too: joining it would step
+    // t=10 ms a second time.
+    assert!(matches!(
+        conductor.add_component(JoinMetadata::at("", t_sim_ms(10)), ticker("late", &steps)),
+        Err(ConductorError::JoinInThePast { .. })
+    ));
+    // One nanosecond later is open.
+    conductor
+        .add_component(
+            JoinMetadata::at("", t_sim_ms(10) + SimDuration::from_nanos(1)),
+            ticker("just_in_time", &steps),
+        )
+        .expect("the next instant has not happened yet");
+
+    // A rejected join leaves nothing behind: `late` was never registered.
+    assert!(matches!(
+        conductor.remove_component("late"),
+        Err(ConductorError::UnknownPath(_))
+    ));
+}
+
+#[test]
+fn the_parent_path_shorthand_only_works_before_the_run_starts() {
+    let steps: StepLog = Default::default();
+    let mut conductor = new_conductor();
+
+    // Passing just the parent path means `JoinMetadata::at_start`, so before
+    // anything has stepped it lands on the world's opening instant.
+    conductor
+        .add_component("", ticker("a", &steps))
+        .expect("nothing has stepped yet");
+    conductor.run_until(t_sim_ms(10)).expect("steps succeed");
+
+    // It still means sim time zero once the run is under way — now long
+    // closed — so the shorthand is rejected rather than quietly resolving to
+    // an instant the caller never chose. Joining a running world is
+    // something you have to say the time for.
+    assert!(matches!(
+        conductor.add_component("", ticker("b", &steps)),
+        Err(ConductorError::JoinInThePast { .. })
+    ));
+}
+
+#[test]
+fn the_same_mid_run_join_reproduces_the_same_world_hash() {
+    let run = || {
+        let steps: StepLog = Default::default();
+        let mut conductor = new_conductor();
+        conductor
+            .add_component("", ticker("a", &steps))
+            .expect("registration succeeds");
+        conductor.run_until(t_sim_ms(10)).expect("steps succeed");
+        conductor
+            .add_component(JoinMetadata::at("", t_sim_ms(25)), ticker("b", &steps))
+            .expect("25 ms is still ahead");
+        conductor.run_until(t_sim_ms(40)).expect("steps succeed");
+
+        // Return the run's fingerprint.
+        conductor.world_hash()
+    };
+    assert_eq!(run(), run());
 }
