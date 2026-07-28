@@ -26,28 +26,40 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Format check
+      - name: "Lint: format"
         run: cargo fmt --all --check
 
-      - name: Clippy
+      - name: "Lint: clippy"
         run: cargo clippy --workspace --all-targets -- -D warnings
 
-      - name: Tests (includes the determinism smoke test)
-        run: cargo test --workspace
+      # `--lib` and `--test '*'` partition the suite: the first runs the unit
+      # tests inside each lib, the second the integration targets in tests/.
+      # Note `--tests` would *not* work as the second half — it includes lib
+      # unit tests too, so the two steps would re-run them.
+      - name: "Test: unit"
+        run: cargo test --workspace --lib
 
-      - name: Determinism smoke test (explicit)
-        run: cargo test -p continuo-actors --test determinism -- --nocapture
+      - name: "Test: integration"
+        run: cargo test --workspace --test '*'
 
-      - name: Run the traffic demo
+      # Smoke steps run the shipped examples end to end, covering what the
+      # test suites cannot: that the examples themselves build and run, and
+      # that the artefacts one produces are what the next consumes. They are
+      # ordered and share state — the log recorded below is read by both
+      # steps after it — and a failure aborts the rest of the job, since
+      # steps only run when every earlier one succeeded.
+      #
+      # New end-to-end checks belong here, with the same "Smoke:" prefix.
+      - name: "Smoke: traffic demo"
         run: cargo run -p continuo-examples --example traffic
 
-      - name: Record a run and verify the unmodified log
+      - name: "Smoke: record a run and verify the unmodified log"
         shell: bash
         run: |
           cargo run -q -p continuo-examples --example traffic_record -- ci-run.jsonl
           cargo run -q -p continuo-examples --example traffic_verify -- ci-run.jsonl
 
-      - name: Verify divergence is detected when the log is modified
+      - name: "Smoke: verification detects a modified log"
         shell: bash
         run: |
           # Corrupt one pose x-coordinate mid-run — the first match at or
@@ -67,6 +79,6 @@ jobs:
           fi
           echo "OK: verification failed with nonzero exit - divergence detected as expected"
 
-      - name: Run open-loop resimulation from the recorded log
+      - name: "Smoke: open-loop resimulation from the recorded log"
         shell: bash
         run: cargo run -q -p continuo-examples --example traffic_resim -- ci-run.jsonl
