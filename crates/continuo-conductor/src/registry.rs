@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use continuo_core::{Component, ComponentId, ComponentPath, SimTime};
 
 use crate::error::ConductorError;
+use crate::timing::StepTiming;
 
 /// The component tree as data: node path → declared order of its children.
 /// Declared order = registration order, and it is what "earlier sibling"
@@ -93,6 +94,12 @@ pub(crate) struct Entry {
     pub(crate) next_seq: u64,
     /// Derived from `(world_seed, path)`; handed to every `StepCtx`.
     pub(crate) component_seed: u64,
+    /// What this component's steps may cost in wall time, as declared when
+    /// it joined.
+    pub(crate) timing: StepTiming,
+    /// How many of its steps have exceeded the soft half of that. Purely
+    /// diagnostic — nothing in the run reads it.
+    pub(crate) budget_misses: u64,
 }
 
 /// All registered leaves (indexed by declaration order — the deterministic
@@ -158,6 +165,7 @@ impl Registry {
         parent: &ComponentPath,
         component: Box<dyn Component>,
         world_seed: u64,
+        timing: StepTiming,
     ) -> Result<(usize, ComponentPath), ConductorError> {
         let path = parent.join(component.id());
 
@@ -202,6 +210,8 @@ impl Registry {
             last_step: None,
             next_seq: 0,
             component_seed,
+            timing,
+            budget_misses: 0,
         }));
 
         // Return the new entry's declaration index and full path.
@@ -235,17 +245,36 @@ mod tests {
     /// some fixed value, since no component here draws random numbers.
     const TEST_WORLD_SEED: u64 = 0;
 
+    /// Nor does any of them declare a step limit — the registry only stores
+    /// what it is handed.
+    const NO_LIMITS: StepTiming = StepTiming::unlimited();
+
     #[test]
     fn same_instant_rule() {
         let mut reg = Registry::default();
         let car1 = path("car1");
         let car2 = path("car2");
-        reg.add(&car1, Box::new(Dummy("controller")), TEST_WORLD_SEED)
-            .unwrap();
-        reg.add(&car1, Box::new(Dummy("physics")), TEST_WORLD_SEED)
-            .unwrap();
-        reg.add(&car2, Box::new(Dummy("controller")), TEST_WORLD_SEED)
-            .unwrap();
+        reg.add(
+            &car1,
+            Box::new(Dummy("controller")),
+            TEST_WORLD_SEED,
+            NO_LIMITS,
+        )
+        .unwrap();
+        reg.add(
+            &car1,
+            Box::new(Dummy("physics")),
+            TEST_WORLD_SEED,
+            NO_LIMITS,
+        )
+        .unwrap();
+        reg.add(
+            &car2,
+            Box::new(Dummy("controller")),
+            TEST_WORLD_SEED,
+            NO_LIMITS,
+        )
+        .unwrap();
 
         let t = &reg.tree;
         // Earlier sibling → later sibling: released.
@@ -263,10 +292,20 @@ mod tests {
         let mut reg = Registry::default();
         let car1 = path("car1");
         let (controller, controller_path) = reg
-            .add(&car1, Box::new(Dummy("controller")), TEST_WORLD_SEED)
+            .add(
+                &car1,
+                Box::new(Dummy("controller")),
+                TEST_WORLD_SEED,
+                NO_LIMITS,
+            )
             .unwrap();
         let (physics, _) = reg
-            .add(&car1, Box::new(Dummy("physics")), TEST_WORLD_SEED)
+            .add(
+                &car1,
+                Box::new(Dummy("physics")),
+                TEST_WORLD_SEED,
+                NO_LIMITS,
+            )
             .unwrap();
 
         assert_eq!(reg.remove(&controller_path), Some(controller));
@@ -291,10 +330,20 @@ mod tests {
         let mut reg = Registry::default();
         let car1 = path("car1");
         let (_, controller_path) = reg
-            .add(&car1, Box::new(Dummy("controller")), TEST_WORLD_SEED)
+            .add(
+                &car1,
+                Box::new(Dummy("controller")),
+                TEST_WORLD_SEED,
+                NO_LIMITS,
+            )
             .unwrap();
-        reg.add(&car1, Box::new(Dummy("physics")), TEST_WORLD_SEED)
-            .unwrap();
+        reg.add(
+            &car1,
+            Box::new(Dummy("physics")),
+            TEST_WORLD_SEED,
+            NO_LIMITS,
+        )
+        .unwrap();
         // Declared first, so its same-instant output reaches the physics.
         assert!(
             reg.tree
@@ -303,7 +352,12 @@ mod tests {
 
         reg.remove(&controller_path);
         let (rejoined, _) = reg
-            .add(&car1, Box::new(Dummy("controller")), TEST_WORLD_SEED)
+            .add(
+                &car1,
+                Box::new(Dummy("controller")),
+                TEST_WORLD_SEED,
+                NO_LIMITS,
+            )
             .unwrap();
 
         // Rejoining is a new arrival, not a restoration: a fresh slot at the
@@ -333,23 +387,23 @@ mod tests {
     fn path_conflicts_rejected() {
         let mut reg = Registry::default();
         let root = ComponentPath::root();
-        reg.add(&root, Box::new(Dummy("a")), TEST_WORLD_SEED)
+        reg.add(&root, Box::new(Dummy("a")), TEST_WORLD_SEED, NO_LIMITS)
             .unwrap();
         // Duplicate leaf.
         assert!(matches!(
-            reg.add(&root, Box::new(Dummy("a")), TEST_WORLD_SEED),
+            reg.add(&root, Box::new(Dummy("a")), TEST_WORLD_SEED, NO_LIMITS),
             Err(ConductorError::DuplicatePath(_))
         ));
         // Leaf "a" cannot become a composite.
         assert!(matches!(
-            reg.add(&path("a"), Box::new(Dummy("b")), TEST_WORLD_SEED),
+            reg.add(&path("a"), Box::new(Dummy("b")), TEST_WORLD_SEED, NO_LIMITS),
             Err(ConductorError::PathConflict { .. })
         ));
         // Composite "c" (via c/x) cannot become a leaf.
-        reg.add(&path("c"), Box::new(Dummy("x")), TEST_WORLD_SEED)
+        reg.add(&path("c"), Box::new(Dummy("x")), TEST_WORLD_SEED, NO_LIMITS)
             .unwrap();
         assert!(matches!(
-            reg.add(&root, Box::new(Dummy("c")), TEST_WORLD_SEED),
+            reg.add(&root, Box::new(Dummy("c")), TEST_WORLD_SEED, NO_LIMITS),
             Err(ConductorError::PathConflict { .. })
         ));
     }

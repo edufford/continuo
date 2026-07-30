@@ -1,22 +1,28 @@
 use std::collections::BTreeMap;
+use std::time::Instant;
 
 use continuo_core::{
     Component, ComponentPath, HashFnv1a64, Message, SimDuration, SimTime, StepCtx, TickDone,
     TickStart, hash_bytes, mix_seeds,
 };
 use continuo_transport::Transport;
-use tracing::trace;
+use tracing::{trace, warn};
 
 use crate::config::ConductorConfig;
 use crate::error::ConductorError;
 use crate::membership::{JoinMetadata, LeaveMetadata};
 use crate::pacing::{Pacer, Pacing, SystemClock};
-use crate::record::{MembershipChange, RecordedJoin, RecordedLeave, TickFingerprint};
+use crate::record::{
+    MembershipChange, RecordedBudgetMiss, RecordedJoin, RecordedLeave, RecordedObservation,
+    RecordedTimeout, TickFingerprint,
+};
 use crate::registry::Registry;
 use crate::schedule::Schedule;
+use crate::timing::{OnTimeout, diagnostic_millis};
 
 type TickCallback = Box<dyn FnMut(&TickFingerprint) + Send>;
 type MembershipCallback = Box<dyn FnMut(&MembershipChange) + Send>;
+type ObservationCallback = Box<dyn FnMut(&RecordedObservation) + Send>;
 
 /// Owns simulation time and drives the discrete-event loop over a
 /// [`Transport`].
@@ -40,6 +46,7 @@ pub struct Conductor<T: Transport> {
     world_hash: u64,
     tick_callback: Option<TickCallback>,
     membership_callback: Option<MembershipCallback>,
+    observation_callback: Option<ObservationCallback>,
 }
 
 impl<T: Transport> Conductor<T> {
@@ -70,6 +77,7 @@ impl<T: Transport> Conductor<T> {
             world_hash,
             tick_callback: None,
             membership_callback: None,
+            observation_callback: None,
         })
     }
 
@@ -91,10 +99,31 @@ impl<T: Transport> Conductor<T> {
         self.membership_callback = Some(Box::new(callback));
     }
 
+    /// Installs a callback invoked for everything the *machine* did rather
+    /// than the run: steps over their budget, and the timeouts that say why
+    /// a component left or a run stopped (see
+    /// [`crate::Recorder::observation_callback`]).
+    ///
+    /// The fourth observation point, and the one whose reports a re-run is
+    /// free to differ on — see [`RecordedObservation`].
+    pub fn set_observation_callback(
+        &mut self,
+        callback: impl FnMut(&RecordedObservation) + Send + 'static,
+    ) {
+        self.observation_callback = Some(Box::new(callback));
+    }
+
     /// Reports an applied membership change to the observer, if any.
     fn emit_membership(&mut self, change: MembershipChange) {
         if let Some(callback) = self.membership_callback.as_mut() {
             callback(&change);
+        }
+    }
+
+    /// Reports a wall-clock observation to the observer, if any.
+    fn emit_observation(&mut self, observation: RecordedObservation) {
+        if let Some(callback) = self.observation_callback.as_mut() {
+            callback(&observation);
         }
     }
 
@@ -135,13 +164,29 @@ impl<T: Transport> Conductor<T> {
     /// quickly, or that anything met a deadline: lateness under the
     /// re-anchor threshold is deliberately absorbed, and a component that
     /// runs long stays invisible here as long as the run recovers before
-    /// the threshold.
-    // TODO(M4): per-component step budgets answer the question this metric
-    // cannot — "did *this* component finish within its time" — declared with
-    // the timeout policy they share a measurement with (PLAN.md,
-    // "Per-component timing").
+    /// the threshold. [`Self::budget_misses`] answers the question this
+    /// metric cannot — did *this* component finish within its time.
     pub fn overrun_reanchor_count(&self) -> u64 {
         self.pacer.as_ref().map_or(0, Pacer::overrun_reanchor_count)
+    }
+
+    /// How many of this component's steps have run over the wall-clock
+    /// budget it declared when it joined; `None` if nothing is registered at
+    /// `path`, and always 0 for a component that declared no budget.
+    ///
+    /// Attributable by construction, which is the point of it — it counts
+    /// one component's own `step` calls, not lateness the schedule
+    /// accumulated around it (see [`Self::overrun_reanchor_count`]). Purely
+    /// diagnostic: missing a budget changes nothing about the run, so this
+    /// can differ between two runs with the identical world hash.
+    ///
+    /// Counted against the live component, so it resets if a path is
+    /// vacated and reoccupied — the newcomer is a different component that
+    /// happens to share a name.
+    pub fn budget_misses(&self, path: &ComponentPath) -> Option<u64> {
+        // Return the live component's miss count, if one is registered here.
+        let index = self.registry.index_of(path)?;
+        self.registry.entry(index).map(|entry| entry.budget_misses)
     }
 
     /// Total wall-clock time the run has permanently fallen behind real
@@ -182,10 +227,12 @@ impl<T: Transport> Conductor<T> {
     /// rather than discovered when the instant arrives — so the barrier at
     /// `first_due` already counts the newcomer among the components it
     /// waits for.
-    // TODO(M4): joins currently arrive as this direct call. Requesting one
-    // over the transport (continuo/{world}/conductor/join), and recording
-    // admissions in the event log so dynamic runs replay, land in the later
-    // sections of this milestone.
+    ///
+    /// Joining is also where a component says what its steps may cost in
+    /// wall time, if anything: see [`JoinMetadata::with_timing`] and
+    /// [`StepTiming`](crate::StepTiming).
+    // TODO(M4): joins currently arrive as this direct call; requesting one
+    // over the transport (continuo/{world}/conductor/join) is still to come.
     //
     // TODO(M7): for a remote component the conductor never holds the Box —
     // it lives in its host process — so the registry entry becomes
@@ -210,11 +257,18 @@ impl<T: Transport> Conductor<T> {
                 earliest_open,
             });
         }
+        if let Some((budget, timeout)) = join.timing.unreachable_budget() {
+            return Err(ConductorError::UnreachableStepBudget {
+                path: parent.join(component.id()),
+                budget,
+                timeout,
+            });
+        }
 
         let subscriptions = component.subscriptions();
-        let (index, path) = self
-            .registry
-            .add(&parent, component, self.config.world_seed)?;
+        let (index, path) =
+            self.registry
+                .add(&parent, component, self.config.world_seed, join.timing)?;
         for key in subscriptions {
             self.transport.subscribe(path.clone(), key);
         }
@@ -398,6 +452,7 @@ impl<T: Transport> Conductor<T> {
             let path = entry.path.clone();
             let dt = entry.last_step.map(|prev| now - prev);
             let component_seed = entry.component_seed;
+            let timing = entry.timing;
 
             // The visibility rule (PLAN.md): everything published before this
             // instant is released; same-instant messages only from an
@@ -413,12 +468,26 @@ impl<T: Transport> Conductor<T> {
                 .registry
                 .entry_mut(index)
                 .expect("checked live above, and membership is frozen mid-tick");
+            // Time the component's own step. In-process this one duration
+            // answers both declared levels, because the conductor's wait for
+            // a synchronous call is the call — they part company only when a
+            // transport gets between them (see `timing`). The verdict waits
+            // until the step's effects below have been applied — see the end
+            // of this loop body.
+            let started = Instant::now();
             let next_due = entry.component.step(&mut ctx);
+            let step_wall = started.elapsed();
 
-            // TODO(PLAN "Failure handling"): apply the per-world policy
-            // (halt vs. timeout-and-drop, with drops event-logged for
-            // replay) instead of always halting; extend beyond schedule
-            // violations to component panics and step timeouts.
+            // A schedule violation always halts, whatever the timeout policy
+            // says. Unlike a timeout it does not depend on the wall clock —
+            // it is a pure function of the component's logic and the sim
+            // state, so it reproduces exactly — and removing the component
+            // would trade a loud, reproducible bug for a silent scenario
+            // change. There is no next due time to carry on from either.
+            // TODO(M7): a component panicking is the third failure at the
+            // barrier, and PLAN.md treats it like a timeout. Catching one
+            // needs the host boundary an out-of-process component has, so it
+            // lands with distribution.
             if next_due <= now {
                 return Err(ConductorError::ScheduleViolation {
                     path: entry.path.clone(),
@@ -489,6 +558,89 @@ impl<T: Transport> Conductor<T> {
                 next_due = %tick_done.next_due,
                 "tick done"
             );
+
+            // Per-component timing (PLAN.md, "Per-component timing"). The
+            // step has already happened and everything above stands: a
+            // verdict on how long it took never edits the tick it was
+            // measured in, so this tick is exactly the tick it would have
+            // been. What a verdict can do is end the run, or take the
+            // component out of the next one.
+            //
+            // Both levels are judged, not just the worse one. They read
+            // different quantities — the step itself, and how long the
+            // conductor waited to hear about it — which happen to be one
+            // number in-process, and are two the moment a transport gets
+            // between them. The soft one goes first so a run that is about
+            // to halt still records what it observed.
+            if timing.over_budget(step_wall) {
+                // Soft: observe and carry on. The run is untouched, so this
+                // cannot move the world hash.
+                let budget = timing.budget.expect("over a budget, so one was set");
+                let entry = self
+                    .registry
+                    .entry_mut(index)
+                    .expect("stepped above, and membership is frozen mid-tick");
+                entry.budget_misses += 1;
+                warn!(
+                    target: "continuo::timing",
+                    component = %path,
+                    sim_time = %now,
+                    step_ms = diagnostic_millis(step_wall),
+                    budget_ms = diagnostic_millis(budget),
+                    misses = entry.budget_misses,
+                    "step over its budget (diagnostic only; the run is unaffected)"
+                );
+                self.emit_observation(RecordedObservation::BudgetMissed(RecordedBudgetMiss {
+                    path: path.to_string(),
+                    sim_time: now,
+                    step_ms: diagnostic_millis(step_wall),
+                    budget_ms: diagnostic_millis(budget),
+                }));
+            }
+            if timing.over_timeout(step_wall) {
+                let timeout = timing.timeout.expect("over a timeout, so one was set");
+                warn!(
+                    target: "continuo::timing",
+                    component = %path,
+                    sim_time = %now,
+                    waited_ms = diagnostic_millis(step_wall),
+                    timeout_ms = diagnostic_millis(timeout),
+                    policy = ?timing.on_timeout,
+                    "timed out waiting for its step"
+                );
+                // Record *why*, before the policy is applied. The leave a
+                // removal produces is deliberately indistinguishable from a
+                // scripted one, so that a replay which asks for the same
+                // leave matches; this observation is what carries the
+                // reason, and for a halt it is the only trace the log gets.
+                self.emit_observation(RecordedObservation::TimedOut(RecordedTimeout {
+                    path: path.to_string(),
+                    sim_time: now,
+                    waited_ms: diagnostic_millis(step_wall),
+                    timeout_ms: diagnostic_millis(timeout),
+                    policy: timing.on_timeout,
+                }));
+                match timing.on_timeout {
+                    OnTimeout::Halt => {
+                        return Err(ConductorError::StepTimeout {
+                            path,
+                            now,
+                            elapsed: step_wall,
+                            timeout,
+                        });
+                    }
+                    OnTimeout::Remove => {
+                        // Queue it exactly as a leave declared for the next
+                        // open instant, so it goes out through the one path
+                        // that removes a component: applied at the coming
+                        // tick boundary, and recorded like any other leave.
+                        // It keeps the tick it timed out in, because
+                        // membership is frozen for the whole of a tick.
+                        let leaves_at = self.earliest_open_instant();
+                        self.pending_leaves.entry(leaves_at).or_default().push(path);
+                    }
+                }
+            }
         }
 
         // Chain this tick into the running world hash and emit the

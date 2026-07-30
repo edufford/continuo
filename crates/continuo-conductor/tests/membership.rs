@@ -1,8 +1,10 @@
 //! Runtime membership (milestone 4): components joining and leaving a
-//! running world.
+//! running world, and the event log that records them doing so.
 //!
-//! Recording membership changes in the event log, and the timeout policy
-//! that drops a component, arrive in the later sections of this milestone.
+//! Every membership change here is one somebody asked for. The other kind —
+//! a component the conductor removes itself after a timeout — goes out
+//! through this same path, but what triggers it is a wall-clock measurement,
+//! so it is tested in `timing.rs`.
 
 use std::sync::{Arc, Mutex};
 

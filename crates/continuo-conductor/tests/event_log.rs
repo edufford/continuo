@@ -5,8 +5,8 @@
 
 use continuo_conductor::record::{LogEvent, LogHeader};
 use continuo_conductor::{
-    Conductor, ConductorConfig, EventLog, Pacing, PlaybackComponent, Recorder, TickFingerprint,
-    Verifier,
+    Conductor, ConductorConfig, EventLog, Pacing, PlaybackComponent, RecordedBudgetMiss,
+    RecordedObservation, Recorder, TickFingerprint, Verifier,
 };
 use continuo_core::{Component, ComponentId, ComponentPath, KeyExpr, Message, SimTime, StepCtx};
 use continuo_transport::InProcTransport;
@@ -140,12 +140,61 @@ fn the_verifier_flags_the_first_mismatching_event() {
 
 #[test]
 fn the_verifier_flags_a_truncated_rerun() {
+    // A re-run that stops early cannot be caught as it happens: `check`
+    // only runs when the re-run produces something, and producing nothing
+    // is not an event. `finish` is what catches it, which is why calling
+    // it is not optional.
     let verifier = Verifier::new(sample_log(), &sample_config());
     verifier.message_callback()(&sample_message());
-    // The re-run ends here; the recorded tick is never matched.
+    assert!(!verifier.diverged(), "nothing has gone wrong *yet*");
+
     let divergence = verifier.finish().expect_err("must diverge");
     assert_eq!(divergence.event_index, Some(1));
-    assert!(divergence.description.contains("more event(s)"));
+    assert!(
+        divergence
+            .description
+            .contains("1 more expected event(s) than the re-run produced"),
+        "the count is of expected events, not log lines: {}",
+        divergence.description
+    );
+}
+
+#[test]
+fn a_truncated_rerun_is_reported_at_the_expectation_it_stopped_short_of() {
+    // The log carries an observation between the last matched event and
+    // the first unmatched one. Only `check` steps the cursor over
+    // observations, so a re-run that stops early leaves it resting on one
+    // — and the reported index must still point at the expectation, which
+    // is the line a reader has to go and look at.
+    let mut log = sample_log();
+    let tick = log.events.pop().expect("fixture ends with its fingerprint");
+    log.events
+        .push(LogEvent::Observed(RecordedObservation::BudgetMissed(
+            RecordedBudgetMiss {
+                path: PUBLISHER.to_string(),
+                sim_time: SimTime::ZERO,
+                step_ms: 9.0,
+                budget_ms: 1.0,
+            },
+        )));
+    log.events.push(tick);
+
+    let verifier = Verifier::new(log, &sample_config());
+    verifier.message_callback()(&sample_message());
+    let divergence = verifier.finish().expect_err("the tick is never matched");
+
+    assert_eq!(
+        divergence.event_index,
+        Some(2),
+        "the unmatched tick, not the observation at index 1"
+    );
+    assert!(
+        divergence
+            .description
+            .contains("1 more expected event(s) than the re-run produced"),
+        "and the observation is not counted: {}",
+        divergence.description
+    );
 }
 
 #[test]

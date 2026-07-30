@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use continuo_core::{ComponentPath, CoreError, SimTime};
 use thiserror::Error;
 
@@ -40,6 +42,16 @@ pub enum ConductorError {
     },
 
     #[error(
+        "component {path} declares a step budget of {budget:?} at or above its {timeout:?} \
+         timeout: the timeout always fires first, so the budget could never report a miss"
+    )]
+    UnreachableStepBudget {
+        path: ComponentPath,
+        budget: Duration,
+        timeout: Duration,
+    },
+
+    #[error(
         "schedule violation by {path}: returned next_due {next_due} at sim time {now}; \
          next_due must be strictly in the future (>= 1 ns ahead) to prevent zero-time livelock"
     )]
@@ -47,6 +59,17 @@ pub enum ConductorError {
         path: ComponentPath,
         now: SimTime,
         next_due: SimTime,
+    },
+
+    #[error(
+        "component {path} timed out at sim time {now}: the conductor waited {elapsed:?} for its \
+         step, over the {timeout:?} it declared, and its timeout policy is to halt the world"
+    )]
+    StepTimeout {
+        path: ComponentPath,
+        now: SimTime,
+        elapsed: Duration,
+        timeout: Duration,
     },
 
     #[error(transparent)]

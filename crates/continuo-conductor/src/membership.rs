@@ -16,12 +16,12 @@
 
 use continuo_core::SimTime;
 
+use crate::timing::StepTiming;
+
 /// Everything the conductor needs to admit a component.
-// TODO(M4): the step budget and its timeout policy join this struct in the
-// per-component timing section.
-// TODO(M7): so does the coupled/decoupled flag (PLAN.md decision
-// 2026-07-18) — decoupled children take next-step visibility, which frees
-// their host placement.
+// TODO(M7): the coupled/decoupled flag (PLAN.md decision 2026-07-18) joins
+// this struct too — decoupled children take next-step visibility, which
+// frees their host placement.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JoinMetadata {
     /// `""` for a world-level actor, or a composite's path to join it. The
@@ -39,6 +39,13 @@ pub struct JoinMetadata {
     /// into an instant that already happened is an error, not a silent
     /// no-op.
     pub first_due: SimTime,
+    /// What this component's `step` may cost in wall time, and what happens
+    /// when it costs more. Declares no limits by default.
+    ///
+    /// Registration is where a deadline belongs, because a deadline is a
+    /// property of the deployment rather than of the model — see
+    /// [`StepTiming`].
+    pub timing: StepTiming,
 }
 
 impl JoinMetadata {
@@ -53,6 +60,7 @@ impl JoinMetadata {
         JoinMetadata {
             parent: parent.into(),
             first_due: SimTime::ZERO,
+            timing: StepTiming::unlimited(),
         }
     }
 
@@ -62,7 +70,15 @@ impl JoinMetadata {
         JoinMetadata {
             parent: parent.into(),
             first_due,
+            timing: StepTiming::unlimited(),
         }
+    }
+
+    /// Declares what this component's `step` may cost in wall time:
+    /// `add_component(JoinMetadata::at_start("car1").with_timing(timing), c)`.
+    pub fn with_timing(self, timing: StepTiming) -> Self {
+        // Return the join carrying its step limits.
+        JoinMetadata { timing, ..self }
     }
 }
 

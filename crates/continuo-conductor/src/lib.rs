@@ -14,6 +14,7 @@ mod playback;
 pub mod record;
 mod registry;
 mod schedule;
+mod timing;
 mod verify;
 
 pub use conductor::Conductor;
@@ -23,6 +24,8 @@ pub use membership::{JoinMetadata, LeaveMetadata};
 pub use pacing::Pacing;
 pub use playback::PlaybackComponent;
 pub use record::{
-    EventLog, MembershipChange, RecordedJoin, RecordedLeave, Recorder, TickFingerprint,
+    EventLog, MembershipChange, RecordedBudgetMiss, RecordedJoin, RecordedLeave,
+    RecordedObservation, RecordedTimeout, Recorder, TickFingerprint,
 };
+pub use timing::{OnTimeout, StepTiming};
 pub use verify::{Divergence, Verifier};
