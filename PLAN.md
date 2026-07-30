@@ -411,6 +411,65 @@ component in particular.
   rule is simply `msg.time < now` — sibling-order knowledge never leaves
   the conductor.
 
+### What `step_once` becomes
+
+Worked out while building milestone 4's timing, and written down so it is
+not re-derived: **the conductor does not grow a second step loop, and does
+not grow per-component `Local`/`Remote` branches inside the one it has.**
+
+Almost nothing in `step_once` depends on where a component runs. The tick
+boundary, pacing, hash chaining, fingerprint emission, rescheduling, the
+strict-advance guard, the timing verdict — all of it reads the same either
+way. What changes is three consecutive lines in the middle (drain the
+inbox, call `step`, publish the outbox), and those collapse into one idea:
+*obtain this component's contribution to this instant*.
+
+- **The seam is a value, not a branch.** Roughly
+  `{ next_due, contribution, step_wall }`, where `contribution` is this
+  component's fold into the tick hash. Local: call `step`, publish, hash.
+  Remote: the host does all three and `TickDone` carries the outcome back.
+  The conductor's own code is identical.
+- **The tick hash must become a fold of per-component sub-hashes**, in
+  declaration order, because the conductor never sees a remote component's
+  published bytes — the host publishes them. This is the load-bearing
+  prerequisite, it is a pure refactor with no distribution in sight, and it
+  has an exact acceptance test: the traffic demo's world hash must not
+  move. Worth landing early rather than inside the M7 pile.
+- **Acks are collected unordered.** Waiting in declaration order would
+  serialize the barrier at the *sum* of the hosts rather than the maximum,
+  discarding the parallelism distribution is for. Determinism comes from
+  folding in declaration order once the set is in, not from waiting in it —
+  the same principle as sorting inboxes by `(publisher, seq)` rather than
+  by arrival. This is safe precisely because same-instant delivery never
+  crosses a host boundary: components the conductor can dispatch
+  concurrently are exactly the components with no same-instant
+  relationship, and a coupled composite's internal ordering is its host's
+  problem.
+- **A remote component must always carry a timeout.** `StepTiming::timeout`
+  is optional today, which is safe only because an in-process `step` is a
+  synchronous call that always returns. A remote component without one is
+  an unbounded barrier wait — the hang this document opens by forbidding.
+  Either require it at admission for remote components or default it from
+  the world.
+- **Skip the budget check when no measurement arrived.** The step duration
+  becomes `Option`: the host measures it and reports it in `TickDone`, so a
+  host that never answers reports nothing. Never substitute the conductor's
+  wait for it. That would attribute transport delay to the component, and
+  would make every timeout also a budget miss, destroying the one signal
+  that tells them apart.
+- **A timeout then has three diagnoses, and whatever is recorded should say
+  which**: the measurement arrived and was within budget (the network or
+  the host was slow), it arrived and was over budget (the component was
+  slow), or nothing arrived at all (the host is silent, and nothing is
+  known about the component). Only the third is new; the first two are the
+  in-process pair.
+
+The rule that covers both modes at the barrier: **a tick is the fold of the
+contributions that arrived by its deadline, and a verdict never retracts one
+that did.** In-process a synchronous call always arrives, which is why
+milestone 4 could state that as "the verdict never edits the tick it was
+measured in".
+
 ## Workspace layout
 
 ```

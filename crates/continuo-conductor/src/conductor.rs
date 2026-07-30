@@ -439,8 +439,17 @@ impl<T: Transport> Conductor<T> {
         // the transport; every component (host) subscribes, and steps itself
         // when TickStart.sim_time reaches its own next_due. The conductor
         // barriers on TickDone acks from exactly the components it knows are
-        // due (their next_due values arrived in prior TickDones). In-proc,
-        // activation is a direct call and the messages exist as trace events.
+        // due (their next_due values arrived in prior TickDones), collected
+        // in whatever order they land. In-proc, activation is a direct call
+        // and the messages exist as trace events.
+        //
+        // What that does to this function is worked out in PLAN.md,
+        // "What `step_once` becomes": no second loop and no per-component
+        // Local/Remote branch, but the three lines below that drain, step,
+        // and publish become one value the host can supply instead — which
+        // needs this tick hash to be a fold of per-component sub-hashes
+        // first, since the conductor never sees a remote component's
+        // published bytes.
         let tick_start = TickStart {
             tick: self.tick,
             sim_time: now,
