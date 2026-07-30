@@ -231,14 +231,17 @@ impl<T: Transport> Conductor<T> {
     /// Joining is also where a component says what its steps may cost in
     /// wall time, if anything: see [`JoinMetadata::with_timing`] and
     /// [`StepTiming`](crate::StepTiming).
-    // TODO(M4): joins currently arrive as this direct call; requesting one
-    // over the transport (continuo/{world}/conductor/join) is still to come.
-    //
-    // TODO(M7): for a remote component the conductor never holds the Box —
-    // it lives in its host process — so the registry entry becomes
-    // Local(Box<dyn Component>) vs. Remote(metadata). Scheduling, the
-    // visibility rule, and seq assignment already work off metadata alone,
-    // which is why `JoinMetadata` is a separate type from the component.
+    // TODO(M7): joins arrive as this direct call, and cannot do otherwise
+    // until there is somewhere else to run a component. A join hands over a
+    // `Box<dyn Component>`, which no transport can carry, so a request on
+    // continuo/{world}/conductor/join only means something once a remote
+    // host owns and steps the component it admits. That is the same change:
+    // the registry entry becomes Local(Box<dyn Component>) vs.
+    // Remote(metadata), the conductor never holding a remote component's
+    // box. Scheduling, the visibility rule, and seq assignment already work
+    // off metadata alone, which is why `JoinMetadata` is a separate type
+    // from the component — the half that *can* cross a transport already
+    // does not depend on the half that cannot.
     pub fn add_component(
         &mut self,
         join: impl Into<JoinMetadata>,
@@ -353,8 +356,12 @@ impl<T: Transport> Conductor<T> {
     // that is what joins, so departures stay symmetrical and a verifier
     // needs no knowledge of the tree to read them.
     //
-    // TODO(M4): this is the direct in-process call; departure over the
-    // transport (`continuo/{world}/conductor/leave`) is still to come.
+    // TODO(M7): departure over the transport
+    // (`continuo/{world}/conductor/leave`) waits on distribution too, though
+    // for a weaker reason than the join above: `LeaveMetadata` is a path and
+    // an instant, so it could cross a transport today. There is simply
+    // nobody to send it. Everything in this process holds `&mut Conductor`
+    // and calls this.
     pub fn remove_component(
         &mut self,
         leave: impl Into<LeaveMetadata>,

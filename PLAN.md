@@ -444,10 +444,13 @@ owning an async runtime later.
 3. **Pacing** — `pacing: Pacing` config (default `FreeRun`), 1× wall-time
    gating with anchor-slip once lateness accumulates past the re-anchor
    threshold, overrun logging.
-4. **Dynamic join/leave** — registration over transport, tick-boundary
-   application, live traffic spawner, replay still deterministic via event log.
-   Registration metadata gains per-component timing — step budget and timeout
-   policy together (see "Per-component timing").
+4. **Dynamic join/leave** — registration metadata shaped for the transport,
+   tick-boundary application, live traffic spawner, replay still deterministic
+   via event log. Registration metadata gains per-component timing — step
+   budget and timeout policy together (see "Per-component timing"). Requests
+   still arrive as direct calls: a join hands over a `Box<dyn Component>`,
+   which no transport can carry, so sending one only means something once a
+   remote host can run what it admits (milestone 7).
 5. **Visualization** — viz bridge + Python package; watch the traffic move.
 6. **FMI** — `continuo-fmi`, mapping config, FMI 3.0 reference FMU driving an
    actor.
@@ -693,8 +696,15 @@ the mix. They are independent and can swap if priorities shift.
     verb for the same event.
   - Deferred within the milestone: removing a composite should take its whole
     subtree (**one leave per leaf**, since every join names a leaf), left to
-    section 5 whose spawner needs it; and requests arriving over the
-    transport rather than as direct calls.
+    section 5 whose spawner needs it.
+  - Deferred to **M7**: requests arriving over the transport rather than as
+    direct calls. Not a scheduling matter after all — a join carries a
+    `Box<dyn Component>`, which no transport can carry, so the request only
+    means something once a remote host owns and steps the component it
+    admits. What M4 can and does deliver is the half that survives the
+    crossing: metadata split from the component, and declared instants
+    (`first_due`, `leaves_at`) chosen precisely so a run reproduces when a
+    request's *arrival* varies.
 - **2026-07-28** — Milestone 4 per-component timing, as built (see
   "Per-component timing"):
   - **The timeout policy is declared per component, not per world**,

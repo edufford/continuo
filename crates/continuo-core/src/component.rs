@@ -13,9 +13,9 @@ use crate::time::{SimDuration, SimTime};
 /// when `step` runs and what the inbox contains (see PLAN.md's visibility
 /// rule); components only see `StepCtx`.
 // TODO(M4): a component cannot yet ask to leave. The conductor can remove
-// one (`Conductor::remove_component`), but voluntary departure — and the
-// failure policy's drop, which uses the same path — arrive with the rest of
-// runtime join/leave.
+// one (`Conductor::remove_component`), and removes one itself when the
+// timeout policy says to, but neither route starts with the component:
+// nothing here can say "I am done".
 pub trait Component: Send {
     /// This component's name within its parent (one path segment).
     fn id(&self) -> ComponentId;
