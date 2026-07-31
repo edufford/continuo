@@ -16,6 +16,13 @@ use crate::time::{SimDuration, SimTime};
 // one (`Conductor::remove_component`), and removes one itself when the
 // timeout policy says to, but neither route starts with the component:
 // nothing here can say "I am done".
+//
+// Section 5's traffic spawner is what wants it — a car that has driven out
+// of the scene should retire itself rather than have the spawner watch
+// every car's pose to notice. The missing piece is a way back from
+// `StepCtx`; what such a request would then do already exists, since the
+// conductor's `pending_leaves` applies a leave at the next tick boundary,
+// which is exactly where a mid-tick request has to take effect.
 pub trait Component: Send {
     /// This component's name within its parent (one path segment).
     fn id(&self) -> ComponentId;

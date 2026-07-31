@@ -753,9 +753,15 @@ the mix. They are independent and can swap if priorities shift.
     leaves**. `add_component`/`remove_component` against
     `JoinMetadata`/`LeaveMetadata` and `LogEvent::Join`/`Leave` — no third
     verb for the same event.
-  - Deferred within the milestone: removing a composite should take its whole
-    subtree (**one leave per leaf**, since every join names a leaf), left to
-    section 5 whose spawner needs it.
+  - Deferred within the milestone, both to section 5 because its traffic
+    spawner is what needs them: removing a composite should take its whole
+    subtree (**one leave per leaf**, since every join names a leaf), and a
+    component should be able to ask to leave. A car that has driven out of
+    the scene should retire itself rather than have the spawner watch every
+    pose to notice. Only the way back from `StepCtx` is missing — what the
+    request does when it arrives is the `pending_leaves` queue built in
+    section 3, which applies a leave at the next tick boundary, exactly
+    where a mid-tick request has to take effect.
   - Deferred to **M7**: requests arriving over the transport rather than as
     direct calls. Not a scheduling matter after all — a join carries a
     `Box<dyn Component>`, which no transport can carry, so the request only
