@@ -99,7 +99,7 @@ pub struct RecordedLeave {
     pub leaves_at: SimTime,
 }
 
-/// A membership change, as handed to observers while it happens.
+/// A component joining the world, or leaving it.
 ///
 /// The log records *that* a component joined or left, not how to rebuild it
 /// — a component cannot be reconstructed from bytes. Replaying a dynamic
