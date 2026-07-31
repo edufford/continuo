@@ -81,6 +81,25 @@ impl<T: Transport> Conductor<T> {
         })
     }
 
+    // TODO(M7): these three setters, plus the `MonitorTransport` wrap that
+    // catches published messages, are four hookups a caller has to remember
+    // — and forgetting one does not fail, it writes a log that quietly
+    // omits a channel. Every observation point added so far has needed
+    // every caller updated by hand.
+    //
+    // Wanted: an `Observer` trait with default no-op methods and a single
+    // `set_observer`, implemented by `Recorder` and `Verifier`, so a new
+    // observation point cannot be silently skipped by an existing caller.
+    //
+    // Tagged M7 because it is not a rename. Messages are observed at the
+    // *transport*, wrapped before the conductor exists, so construction
+    // order rules out one call today — and where that seam belongs is the
+    // same question as the hash fold (PLAN.md, "What `step_once`
+    // becomes"), since a distributed conductor no longer publishes remote
+    // components' messages at all. Better to settle both together than to
+    // move the seam twice. The three conductor-side callbacks could be
+    // folded sooner if the churn is worth it on its own.
+
     /// Installs a callback invoked with every tick's [`TickFingerprint`] — the hook
     /// for recording (see [`crate::Recorder::tick_callback`]) or live
     /// divergence checking.
