@@ -10,8 +10,8 @@ use std::sync::{Arc, Mutex};
 
 use continuo_conductor::record::LogEvent;
 use continuo_conductor::{
-    Conductor, ConductorConfig, ConductorError, JoinMetadata, LeaveMetadata, Pacing, RecordedJoin,
-    RecordedLeave, Recorder, Verifier,
+    Conductor, ConductorConfig, ConductorError, JoinMetadata, LeaveMetadata, MembershipChange,
+    Pacing, RecordedJoin, RecordedLeave, Recorder, Verifier,
 };
 use continuo_core::{Component, ComponentId, KeyExpr, SimDuration, SimTime, StepCtx};
 use continuo_transport::{InProcTransport, MonitorTransport};
@@ -601,4 +601,141 @@ fn the_same_mid_run_join_reproduces_the_same_world_hash() {
         conductor.world_hash()
     };
     assert_eq!(run(), run());
+}
+
+#[test]
+fn removing_a_composite_takes_every_leaf_under_it() {
+    // An actor leaving a world leaves whole. Removing only some of its
+    // parts would leave a controller publishing at a physics model that is
+    // gone, so naming the composite takes the subtree.
+    let steps: StepLog = Default::default();
+    let changes: Arc<Mutex<Vec<MembershipChange>>> = Default::default();
+    let mut conductor = new_conductor();
+    let observed = changes.clone();
+    conductor.set_membership_callback(move |change| {
+        observed
+            .lock()
+            .expect("membership log mutex is never poisoned")
+            .push(change.clone());
+    });
+
+    for id in ["controller", "physics"] {
+        conductor
+            .add_component("car1", ticker(id, &steps))
+            .expect("registration succeeds");
+    }
+    conductor
+        .add_component("", ticker("bystander", &steps))
+        .expect("registration succeeds");
+    conductor.run_until(t_sim_ms(10)).expect("steps succeed");
+
+    conductor
+        .remove_component("car1")
+        .expect("`car1` names a composite");
+    conductor.run_until(t_sim_ms(30)).expect("steps succeed");
+
+    assert_eq!(
+        steps_of(&steps, "controller"),
+        vec![t_sim_ms(0), t_sim_ms(10)]
+    );
+    assert_eq!(steps_of(&steps, "physics"), vec![t_sim_ms(0), t_sim_ms(10)]);
+    assert_eq!(
+        steps_of(&steps, "bystander"),
+        vec![t_sim_ms(0), t_sim_ms(10), t_sim_ms(20), t_sim_ms(30)],
+        "another actor is untouched by car1 leaving"
+    );
+
+    // One leave per leaf, never one for the composite, and in the order the
+    // components would have stepped.
+    let changes = changes
+        .lock()
+        .expect("membership log mutex is never poisoned");
+    let left: Vec<&str> = changes
+        .iter()
+        .filter_map(|change| match change {
+            MembershipChange::Left(leave) => Some(leave.path.as_str()),
+            MembershipChange::Joined(_) => None,
+        })
+        .collect();
+    assert_eq!(left, vec!["car1/controller", "car1/physics"]);
+}
+
+#[test]
+fn a_composite_leave_can_be_scheduled_like_any_other() {
+    let steps: StepLog = Default::default();
+    let mut conductor = new_conductor();
+    for id in ["controller", "physics"] {
+        conductor
+            .add_component("car1", ticker(id, &steps))
+            .expect("registration succeeds");
+    }
+    conductor
+        .add_component("", ticker("bystander", &steps))
+        .expect("registration succeeds");
+
+    conductor
+        .remove_component(LeaveMetadata::at("car1", t_sim_ms(20)))
+        .expect("20 ms is still ahead");
+    conductor.run_until(t_sim_ms(30)).expect("steps succeed");
+
+    for id in ["controller", "physics"] {
+        assert_eq!(
+            steps_of(&steps, id),
+            vec![t_sim_ms(0), t_sim_ms(10)],
+            "half-open at 20 ms, for every leaf of the composite"
+        );
+    }
+}
+
+#[test]
+fn a_path_naming_neither_a_leaf_nor_a_composite_is_an_error() {
+    let steps: StepLog = Default::default();
+    let mut conductor = new_conductor();
+    conductor
+        .add_component("car1", ticker("physics", &steps))
+        .expect("registration succeeds");
+
+    assert!(matches!(
+        conductor.remove_component("car2"),
+        Err(ConductorError::UnknownPath(_))
+    ));
+    // And an emptied composite stops naming anything, rather than becoming
+    // a path that silently removes nothing.
+    conductor.remove_component("car1").expect("car1 has a leaf");
+    assert!(matches!(
+        conductor.remove_component("car1"),
+        Err(ConductorError::UnknownPath(_))
+    ));
+}
+
+#[test]
+fn an_emptied_composite_rejoins_as_the_newest_sibling() {
+    // The arrival rule reaches branches too, not just leaves. A composite
+    // whose last leaf left is forgotten by its parent, so rebuilding it
+    // later puts it at the end of the child list — where its fresh
+    // declaration indexes say it belongs. Leaving it in place would restore
+    // its old position and let tree order and index order disagree.
+    let steps: StepLog = Default::default();
+    let mut conductor = new_conductor();
+    conductor
+        .add_component("car1", ticker("physics", &steps))
+        .expect("registration succeeds");
+    conductor
+        .add_component("car2", ticker("physics", &steps))
+        .expect("registration succeeds");
+
+    conductor.remove_component("car1").expect("car1 is live");
+    conductor
+        .add_component("car1", ticker("physics", &steps))
+        .expect("the path is free again");
+
+    // Nothing observable changes at the world level, where actors never see
+    // each other same-instant — but the tree is what a nested composite
+    // would read, so it has to be right before anything nests.
+    conductor.run_until(t_sim_ms(10)).expect("steps succeed");
+    assert_eq!(
+        steps_of(&steps, "physics").len(),
+        4,
+        "two live cars, two instants each"
+    );
 }

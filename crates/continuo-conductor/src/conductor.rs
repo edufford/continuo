@@ -361,20 +361,17 @@ impl<T: Transport> Conductor<T> {
     /// The path becomes free again; a later component may take it and
     /// arrives as a new sibling, ordered by its arrival like any other.
     ///
-    /// Takes a single component's path. A composite's path — `"car1"` for
-    /// an actor built from `car1/controller` and `car1/physics` — is not a
-    /// registered component and is rejected as unknown; see the TODO below.
-    // TODO(M4): removing a composite should take its whole subtree with it,
-    // since an actor leaving a world leaves whole: today you must remove
-    // each leaf, and removing only some of them leaves a controller
-    // publishing to a physics model that is gone. Decided while building
-    // section 3 and left for section 5, whose traffic spawner needs it:
-    // the registry scans for every registered leaf under the path, vacates
-    // them in declaration order, and the log records **one leave per leaf**
-    // rather than one for the composite — every join names a leaf, because
-    // that is what joins, so departures stay symmetrical and a verifier
-    // needs no knowledge of the tree to read them.
-    //
+    /// **A composite's path takes its whole subtree.** `"car1"` removes
+    /// every leaf under it — `car1/controller`, `car1/physics`, and anything
+    /// nested below — because an actor leaving a world leaves whole, and
+    /// removing only some of its parts would leave a controller publishing
+    /// at a physics model that is gone.
+    ///
+    /// The log records **one leave per leaf**, never one for the composite.
+    /// Every join names a leaf, because a leaf is what joins, so departures
+    /// stay symmetrical with arrivals and nothing reading the log needs to
+    /// know the shape of the tree. They go out in declaration order, which
+    /// is the order those components step in.
     // TODO(M7): departure over the transport
     // (`continuo/{world}/conductor/leave`) waits on distribution too, though
     // for a weaker reason than the join above: `LeaveMetadata` is a path and
@@ -387,30 +384,49 @@ impl<T: Transport> Conductor<T> {
     ) -> Result<(), ConductorError> {
         let leave = leave.into();
         let path = ComponentPath::parse(&leave.path)?;
-        if self.registry.index_of(&path).is_none() {
-            return Err(ConductorError::UnknownPath(path));
-        }
+        // One leaf, or every leaf of a composite. Checking for a registered
+        // leaf first means a leaf always wins: a path cannot be both, since
+        // `Registry::add` refuses to make a leaf into a composite or the
+        // reverse.
+        let departing = if self.registry.index_of(&path).is_some() {
+            vec![path]
+        } else {
+            let subtree = self.registry.leaves_under(&path);
+            if subtree.is_empty() {
+                return Err(ConductorError::UnknownPath(path));
+            }
+            subtree
+        };
         let earliest_open = self.earliest_open_instant();
 
         let Some(leaves_at) = leave.leaves_at else {
-            // Unnamed: stop it at the earliest instant still open, which is
-            // now, so there is nothing to defer.
-            self.apply_leave(&path, earliest_open);
+            // Unnamed: stop them at the earliest instant still open, which
+            // is now, so there is nothing to defer.
+            for path in &departing {
+                self.apply_leave(path, earliest_open);
+            }
             return Ok(());
         };
         if leaves_at < earliest_open {
             // The instant it would stop at has already been stepped, so the
             // component has already done work this leave claims it did
             // not. Refuse rather than silently apply it late.
+            let path = departing.into_iter().next().expect("non-empty above");
             return Err(ConductorError::LeaveInThePast {
                 path,
                 leaves_at,
                 earliest_open,
             });
         }
-        self.pending_leaves.entry(leaves_at).or_default().push(path);
+        // Queued in declaration order, and `apply_due_leaves` drains the
+        // vector in order, so the log's leaves come out in the order the
+        // components would have stepped.
+        self.pending_leaves
+            .entry(leaves_at)
+            .or_default()
+            .extend(departing);
 
-        // Return success; the leave applies at the boundary before that
+        // Return success; the leaves apply at the boundary before that
         // instant is stepped.
         Ok(())
     }

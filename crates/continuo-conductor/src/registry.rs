@@ -30,21 +30,47 @@ impl Tree {
         self.children.contains_key(path)
     }
 
-    /// Forgets a departed leaf, so its id no longer counts as a declared
+    /// Forgets a departed child, so its id no longer counts as a declared
     /// sibling. Survivors keep their relative order — the only thing the
     /// visibility rule reads — and a later component may reuse the id,
     /// arriving at the end like any new sibling.
+    ///
+    /// **Recursive, upwards.** Forgetting the last child leaves its parent
+    /// empty, and an empty node is not a node: it has to be forgotten from
+    /// *its* parent in turn, on up until a node still has survivors or the
+    /// world root is reached. So removing one leaf can retire a whole spine
+    /// of composites that existed only to hold it, and `child` is not
+    /// always a leaf — above the first step it is whatever branch just
+    /// emptied.
     fn forget_child(&mut self, parent: &ComponentPath, child: &ComponentId) {
         let Some(children) = self.children.get_mut(parent) else {
             return;
         };
+        // The forgetting itself. `retain` is a keep-filter, so the condition
+        // is the survivors rather than the departure: everything that is
+        // *not* `child` stays, in the order it was already in.
         children.retain(|c| c != child);
-        if children.is_empty() {
-            // A composite with no children left is no longer an internal
-            // node, so the path is free for a leaf to take. Its own mention
-            // in *its* parent's list stays, keeping that branch's position
-            // if another child arrives under it later.
-            self.children.remove(parent);
+        // Survivors keep this node internal, and keep it a declared sibling
+        // of its own siblings, so nothing above it changes. This is where
+        // the walk up stops — and for the ordinary case, one leaf leaving a
+        // composite that still has others, it stops right here.
+        if !children.is_empty() {
+            return;
+        }
+        // Emptied. The node stops being internal, so its path is free for a
+        // leaf to take — and it stops being a declared sibling of its own
+        // siblings, so a composite rebuilt here later arrives at the end of
+        // that list like any new branch. Leaving it in place would restore
+        // its old position instead, which is the disagreement between
+        // arrival order and tree order that vacating slots exists to
+        // prevent.
+        self.children.remove(parent);
+        // The pattern doubles as the other stopping condition: the world
+        // root has no parent and no last segment, so the walk ends there
+        // rather than trying to forget the root from something above it.
+        if let (Some(grandparent), Some(id)) = (parent.parent(), parent.segments().last()) {
+            let id = id.clone();
+            self.forget_child(&grandparent, &id);
         }
     }
 
@@ -133,6 +159,31 @@ impl Registry {
     /// is — for checking membership without removing anything.
     pub(crate) fn index_of(&self, path: &ComponentPath) -> Option<usize> {
         self.by_path.get(path).copied()
+    }
+
+    /// Every registered leaf strictly beneath `path`, in declaration order —
+    /// what a composite means, given only leaves are ever registered.
+    ///
+    /// Empty when `path` is itself a leaf, or names nothing at all; the
+    /// caller distinguishes those with [`Self::index_of`].
+    ///
+    /// Declaration order, not path order, because that is the order the
+    /// removals must happen in to be reproducible: it is the order the
+    /// components step in, and the order their leaves reach the log.
+    pub(crate) fn leaves_under(&self, path: &ComponentPath) -> Vec<ComponentPath> {
+        let depth = path.segments().len();
+        let mut found: Vec<(usize, ComponentPath)> = self
+            .by_path
+            .iter()
+            .filter(|(candidate, _)| {
+                candidate.segments().len() > depth && candidate.prefix(depth) == *path
+            })
+            .map(|(candidate, &index)| (index, candidate.clone()))
+            .collect();
+        found.sort_unstable_by_key(|(index, _)| *index);
+
+        // Return the subtree's leaves, earliest-declared first.
+        found.into_iter().map(|(_, path)| path).collect()
     }
 
     /// Removes a leaf: vacates its slot, frees its path for reuse, and drops
@@ -406,5 +457,116 @@ mod tests {
             reg.add(&root, Box::new(Dummy("c")), TEST_WORLD_SEED, NO_LIMITS),
             Err(ConductorError::PathConflict { .. })
         ));
+    }
+
+    /// Registers `id` under `parent`, returning the full path.
+    fn add(reg: &mut Registry, parent: &str, id: &'static str) -> ComponentPath {
+        let (_, path) = reg
+            .add(
+                &path(parent),
+                Box::new(Dummy(id)),
+                TEST_WORLD_SEED,
+                NO_LIMITS,
+            )
+            .expect("registration succeeds");
+
+        // Return where it landed.
+        path
+    }
+
+    #[test]
+    fn leaves_under_returns_a_subtree_in_declaration_order() {
+        let mut reg = Registry::default();
+        // Declared z before a, so declaration order and the `by_path`
+        // BTreeMap's path order disagree. Declaration order is the one
+        // removals must follow, because it is the order these would step.
+        add(&mut reg, "car1", "z");
+        add(&mut reg, "car1", "a");
+        add(&mut reg, "car2", "physics");
+
+        assert_eq!(
+            reg.leaves_under(&path("car1")),
+            vec![path("car1/z"), path("car1/a")],
+            "declaration order, not alphabetical"
+        );
+        assert_eq!(
+            reg.leaves_under(&path("car2")),
+            vec![path("car2/physics")],
+            "and only the subtree named"
+        );
+    }
+
+    #[test]
+    fn leaves_under_finds_nothing_under_a_leaf_or_a_stranger() {
+        let mut reg = Registry::default();
+        let physics = add(&mut reg, "car1", "physics");
+
+        // Strict descendants only: a leaf is not under itself, which is
+        // what lets a caller tell "this is a leaf" from "this is a
+        // composite" by asking both questions.
+        assert!(reg.leaves_under(&physics).is_empty());
+        assert!(reg.leaves_under(&path("nobody")).is_empty());
+    }
+
+    #[test]
+    fn leaves_under_reaches_through_nested_composites() {
+        let mut reg = Registry::default();
+        add(&mut reg, "car1/sensors", "imu");
+        add(&mut reg, "car1", "physics");
+
+        assert_eq!(
+            reg.leaves_under(&path("car1")),
+            vec![path("car1/sensors/imu"), path("car1/physics")],
+            "depth is irrelevant; declaration order still decides"
+        );
+        assert_eq!(
+            reg.leaves_under(&path("car1/sensors")),
+            vec![path("car1/sensors/imu")]
+        );
+    }
+
+    #[test]
+    fn emptying_a_node_forgets_it_all_the_way_up() {
+        // One leaf can retire a whole spine of composites that existed only
+        // to hold it.
+        let mut reg = Registry::default();
+        let imu = add(&mut reg, "car1/sensors", "imu");
+        assert!(reg.tree.is_internal_node(&path("car1")));
+        assert!(reg.tree.is_internal_node(&path("car1/sensors")));
+
+        reg.remove(&imu);
+
+        assert!(!reg.tree.is_internal_node(&path("car1/sensors")));
+        assert!(
+            !reg.tree.is_internal_node(&path("car1")),
+            "emptied in turn by its only child going"
+        );
+        assert!(
+            reg.tree.children.is_empty(),
+            "and the root forgot car1, so nothing is left declared anywhere"
+        );
+    }
+
+    #[test]
+    fn the_walk_up_stops_at_the_first_survivor() {
+        let mut reg = Registry::default();
+        let imu = add(&mut reg, "car1/sensors", "imu");
+        add(&mut reg, "car1", "physics");
+
+        reg.remove(&imu);
+
+        assert!(
+            !reg.tree.is_internal_node(&path("car1/sensors")),
+            "the sensors node emptied"
+        );
+        assert!(
+            reg.tree.is_internal_node(&path("car1")),
+            "but physics survives, so car1 stays a node"
+        );
+        assert_eq!(
+            reg.tree.children[&path("car1")],
+            vec![ComponentId::new("physics").expect("valid id")],
+            "and the emptied branch is gone from its child list"
+        );
     }
 }
