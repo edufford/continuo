@@ -105,7 +105,7 @@ See PLAN.md for what each one covers.
 - [x] **M2** — determinism harness: seeding, tick fingerprints, event-log
       recording, verification, open-loop resimulation
 - [x] **M3** — real-time pacing (1× wall time, overrun logging)
-- [ ] **M4** — runtime join/leave; per-component step budgets and timeout
+- [x] **M4** — runtime join/leave; per-component step budgets and timeout
       policy
 - [ ] **M5** — Python visualization package
 - [ ] **M6** — FMI 3.0 CS import (FMUs as components)
