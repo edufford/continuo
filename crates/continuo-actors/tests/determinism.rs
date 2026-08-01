@@ -46,6 +46,7 @@ fn run_world(sim_seconds: i64, world_seed: u64) -> EventLog {
                 Box::new(PathFollowController::new(
                     car,
                     path.clone(),
+                    0.0,                           // lateral offset: on the path itself
                     SimDuration::from_millis(100), // control period
                     8.0,                           // speed, m/s
                     6.0,                           // lookahead distance, m

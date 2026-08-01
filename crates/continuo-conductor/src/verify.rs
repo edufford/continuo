@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use continuo_core::Message;
 
 use crate::config::ConductorConfig;
-use crate::record::{EventLog, LogEvent, TickFingerprint, recorded_message};
+use crate::record::{EventLog, LogEvent, MembershipChange, TickFingerprint, recorded_message};
 
 /// The earliest point at which two logs disagree.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,6 +27,23 @@ impl fmt::Display for Divergence {
             None => write!(f, "divergence in header: {}", self.description),
         }
     }
+}
+
+/// The expectations in a log: the lines a re-run has to reproduce to be
+/// called deterministic.
+///
+/// Everything except the observations, which record what the machine did
+/// rather than what the run did, and which a faithful re-run is free to
+/// differ on (see [`RecordedObservation`]).
+///
+/// Indexes are kept alongside, so a divergence still points at the line it
+/// is in rather than at a position in some filtered stream.
+fn expectations(log: &EventLog) -> impl Iterator<Item = (usize, &LogEvent)> {
+    // Return the comparable events, each with its index in the log.
+    log.events
+        .iter()
+        .enumerate()
+        .filter(|(_, event)| !matches!(event, LogEvent::Observed(_)))
 }
 
 /// The one place two recorded events are compared, shared by both readers
@@ -58,9 +75,17 @@ fn event_mismatch(a: &LogEvent, b: &LogEvent) -> Option<String> {
                 )
             })
         }
-        (LogEvent::Tick(_), LogEvent::Msg(_)) | (LogEvent::Msg(_), LogEvent::Tick(_)) => {
-            Some("event kinds differ (tick vs msg)".to_string())
+        (LogEvent::Join(x), LogEvent::Join(y)) => {
+            (x != y).then(|| format!("joins differ: {x:?} vs {y:?}"))
         }
+        (LogEvent::Leave(x), LogEvent::Leave(y)) => {
+            (x != y).then(|| format!("leaves differ: {x:?} vs {y:?}"))
+        }
+        (expected, actual) => Some(format!(
+            "event kinds differ: {} vs {}",
+            expected.kind(),
+            actual.kind()
+        )),
     }
 }
 
@@ -76,7 +101,7 @@ impl EventLog {
                 description: format!("{:?} vs {:?}", self.header, other.header),
             });
         }
-        for (i, (a, b)) in self.events.iter().zip(other.events.iter()).enumerate() {
+        for ((i, a), (_, b)) in expectations(self).zip(expectations(other)) {
             if let Some(description) = event_mismatch(a, b) {
                 return Some(Divergence {
                     event_index: Some(i),
@@ -84,13 +109,13 @@ impl EventLog {
                 });
             }
         }
-        if self.events.len() != other.events.len() {
+        let (mine, theirs) = (expectations(self).count(), expectations(other).count());
+        if mine != theirs {
             return Some(Divergence {
-                event_index: Some(self.events.len().min(other.events.len())),
+                event_index: Some(mine.min(theirs)),
                 description: format!(
-                    "event counts differ: {} vs {}",
-                    self.events.len(),
-                    other.events.len()
+                    "expected event counts differ: {mine} vs {theirs} (observations are not \
+                     compared, so these are not the logs' line counts)"
                 ),
             });
         }
@@ -124,37 +149,58 @@ pub struct Verifier {
 }
 
 struct VerifierInner {
-    expected: EventLog,
+    /// The log's expectations only, each paired with the line it came from.
+    /// Filtering once here is what lets `cursor` mean "how many
+    /// expectations have been matched" without every reader having to step
+    /// over observations; keeping the line number is what lets a divergence
+    /// still point into the log.
+    expectations: Vec<(usize, LogEvent)>,
+    /// How many lines the log had, for the one divergence that points past
+    /// the end of it.
+    line_count: usize,
     cursor: usize,
     divergence: Option<Divergence>,
 }
 
 impl Verifier {
-    /// Builds a verifier that checks `expected` against the run `config`
-    /// describes. The world name and seed come from the *re-run*, never
+    /// Builds a verifier that checks the run `config` describes against the
+    /// `recorded` log. The world name and seed come from the *re-run*, never
     /// from the log: they are the actual side of the comparison, and taking
     /// them from the config the conductor is built with is what makes the
     /// header check meaningful — a log recorded for another scenario is
     /// diverged before the first event rather than silently verified
     /// against the wrong run.
-    pub fn new(expected: EventLog, config: &ConductorConfig) -> Self {
-        let divergence = (expected.header.world_name != config.world_name
-            || expected.header.world_seed != config.world_seed)
+    pub fn new(recorded: EventLog, config: &ConductorConfig) -> Self {
+        // The ordinary case is the one with no code: headers agreeing makes
+        // `then` yield `None`, which is a verifier that has found nothing
+        // wrong and will start comparing at the first event. Only a
+        // mismatch runs the closure below.
+        let divergence = (recorded.header.world_name != config.world_name
+            || recorded.header.world_seed != config.world_seed)
             .then(|| Divergence {
                 event_index: None,
                 description: format!(
                     "log was recorded for world {:?} seed {}; replaying world {:?} seed {}",
-                    expected.header.world_name,
-                    expected.header.world_seed,
+                    recorded.header.world_name,
+                    recorded.header.world_seed,
                     config.world_name,
                     config.world_seed
                 ),
             });
 
-        // Return the verifier, already diverged on a header mismatch.
+        let line_count = recorded.events.len();
+
+        // Return the verifier, clean unless the header check above already
+        // diverged it.
         Verifier {
             inner: Arc::new(Mutex::new(VerifierInner {
-                expected,
+                expectations: recorded
+                    .events
+                    .into_iter()
+                    .enumerate()
+                    .filter(|(_, event)| !matches!(event, LogEvent::Observed(_)))
+                    .collect(),
+                line_count,
                 cursor: 0,
                 divergence,
             })),
@@ -165,18 +211,19 @@ impl Verifier {
         if inner.divergence.is_some() {
             return;
         }
-        match inner.expected.events.get(inner.cursor) {
+        match inner.expectations.get(inner.cursor) {
             None => {
                 inner.divergence = Some(Divergence {
-                    event_index: Some(inner.cursor),
-                    description: "the re-run produced more events than the recorded log"
+                    event_index: Some(inner.line_count),
+                    description: "the re-run produced more expected events than the recorded \
+                                  log's expected events"
                         .to_string(),
                 });
             }
-            Some(expected) => {
+            Some((line, expected)) => {
                 if let Some(description) = event_mismatch(expected, actual) {
                     inner.divergence = Some(Divergence {
-                        event_index: Some(inner.cursor),
+                        event_index: Some(*line),
                         description,
                     });
                 }
@@ -207,6 +254,17 @@ impl Verifier {
         }
     }
 
+    pub fn membership_callback(&self) -> impl FnMut(&MembershipChange) + Send + 'static {
+        let inner = self.inner.clone();
+
+        // Return the checking callback, holding its own handle to the
+        // shared cursor state.
+        move |change: &MembershipChange| {
+            let mut inner = inner.lock().expect("verifier mutex is never poisoned");
+            Self::check(&mut inner, &change.clone().into());
+        }
+    }
+
     /// Whether a divergence has been found — the driving loop's stop signal.
     pub fn diverged(&self) -> bool {
         self.inner
@@ -225,17 +283,19 @@ impl Verifier {
         if let Some(divergence) = &inner.divergence {
             return Err(divergence.clone());
         }
-        if inner.cursor < inner.expected.events.len() {
+        let unmatched = inner.expectations.len() - inner.cursor;
+        if unmatched > 0 {
+            let (line, _) = inner.expectations[inner.cursor];
             return Err(Divergence {
-                event_index: Some(inner.cursor),
+                event_index: Some(line),
                 description: format!(
-                    "the recorded log has {} more event(s) than the re-run",
-                    inner.expected.events.len() - inner.cursor
+                    "the recorded log has {unmatched} more expected event(s) than the re-run \
+                     produced (observations are not compared, so this is not a line count)"
                 ),
             });
         }
 
-        // Return the number of events verified.
+        // Return the number of expectations verified.
         Ok(inner.cursor)
     }
 }

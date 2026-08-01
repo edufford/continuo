@@ -25,6 +25,11 @@ impl Transport for InProcTransport {
         self.subscriptions.entry(subscriber).or_default().push(key);
     }
 
+    fn unsubscribe(&mut self, subscriber: &ComponentPath) {
+        self.subscriptions.remove(subscriber);
+        self.queues.remove(subscriber);
+    }
+
     fn publish(&mut self, message: Message) {
         for (subscriber, keys) in &self.subscriptions {
             if keys.iter().any(|k| k.matches(&message.key)) {
@@ -111,6 +116,22 @@ mod tests {
         let rest = t.drain(&path("sub"), &|_| true);
         assert_eq!(rest.len(), 1);
         assert_eq!(rest[0].seq, 1);
+    }
+
+    #[test]
+    fn unsubscribe_stops_routing_and_discards_whatever_was_queued() {
+        let mut t = InProcTransport::new();
+        t.subscribe(path("gone"), kx("w/**"));
+        t.publish(msg("w/a", "p", 0, 0));
+
+        t.unsubscribe(&path("gone"));
+
+        // The undrained message goes too: a departed component will never
+        // step again to collect it.
+        assert!(t.drain(&path("gone"), &|_| true).is_empty());
+        // And nothing further is routed to it.
+        t.publish(msg("w/a", "p", 1, 0));
+        assert!(t.drain(&path("gone"), &|_| true).is_empty());
     }
 
     #[test]

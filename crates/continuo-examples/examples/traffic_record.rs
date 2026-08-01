@@ -9,7 +9,7 @@
 
 use continuo_conductor::{Conductor, Recorder};
 use continuo_core::SimTime;
-use continuo_examples::traffic_world;
+use continuo_examples::traffic_world::{self, TrafficRequestHandler};
 use continuo_transport::{InProcTransport, MonitorTransport};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -22,18 +22,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .nth(1)
         .ok_or("usage: traffic_record <file>")?;
 
-    // The recorder taps the two observation points: a transport monitor for
-    // every published message, the tick callback for every fingerprint. It
-    // takes the same config the conductor runs with, so the log header
-    // always names the run that produced it.
+    // The recorder taps every observation point: a transport monitor for
+    // published messages, and callbacks for tick fingerprints, membership
+    // changes, and steps that ran over budget. It takes the same config the
+    // conductor runs with, so the log header always names the run that
+    // produced it.
     let config = traffic_world::config();
     let recorder = Recorder::new(&config);
-    let transport = MonitorTransport::new(InProcTransport::new(), recorder.message_callback());
-    let mut conductor = Conductor::new(config, transport)?;
+    let traffic_request_handler = TrafficRequestHandler::default();
+    let mut conductor = Conductor::new(
+        config,
+        traffic_request_handler.wrap_transport(MonitorTransport::new(
+            InProcTransport::new(),
+            recorder.message_callback(),
+        )),
+    )?;
     conductor.set_tick_callback(recorder.tick_callback());
-    traffic_world::populate(&mut conductor)?;
+    conductor.set_membership_callback(recorder.membership_callback());
+    // No component in this world declares a budget, so this writes nothing
+    // today. It is wired anyway: a recorder that taps only some of what the
+    // conductor reports writes a log that quietly omits the rest.
+    conductor.set_observation_callback(recorder.observation_callback());
+    traffic_world::setup_live_traffic_scenario(&mut conductor)?;
 
-    conductor.run_until(SimTime::from_secs(traffic_world::SIM_SECONDS))?;
+    traffic_world::run_live_traffic_scenario(
+        &mut conductor,
+        &traffic_request_handler,
+        SimTime::from_secs(traffic_world::SIM_SECONDS),
+        None,
+    )?;
 
     let log = recorder.finish();
     log.write_file(&file)?;

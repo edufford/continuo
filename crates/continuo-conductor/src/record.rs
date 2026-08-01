@@ -1,10 +1,16 @@
 //! The determinism harness's event log (milestone 2): tick fingerprints and
 //! published messages, recorded as human-readable JSON lines.
 //!
-//! Recording taps the two existing observation points — a
-//! `MonitorTransport` callback for messages and the conductor's tick
-//! callback for fingerprints — so the sim itself is untouched by being
-//! recorded.
+//! Recording taps the conductor's observation points — a `MonitorTransport`
+//! callback for messages, and conductor callbacks for tick fingerprints,
+//! membership changes, and over-budget steps — so the sim itself is
+//! untouched by being recorded.
+//!
+//! Lines come in two categories: **expectations** are what the run did, and
+//! a faithful re-run must produce them again; **observations** are what the
+//! machine did, and a re-run is free to differ. Only the first kind is ever
+//! compared. Every observation sits under [`LogEvent::Observed`], so which
+//! category a line is in is read off its variant — see [`RecordedObservation`].
 //!
 //! A recorded log has two distinct consumers, near-opposite in how the
 //! log's data flows relative to the simulation, one module each:
@@ -32,6 +38,7 @@ use serde_json::value::RawValue;
 use thiserror::Error;
 
 use crate::config::ConductorConfig;
+use crate::timing::OnTimeout;
 
 /// Per-tick determinism fingerprint emitted by the conductor.
 ///
@@ -61,14 +68,168 @@ pub struct RecordedMessage {
     pub payload: Box<RawValue>,
 }
 
+/// A component admitted to the world, as recorded.
+///
+/// Deliberately *not* recorded: the sim time the join was applied at. It is
+/// already implied by where this event sits between tick fingerprints, and
+/// it is the part that may legitimately vary — once joins arrive over the
+/// transport (milestone 7) the boundary that admits one depends on
+/// delivery. What shapes the run is `first_due`, which the joiner declares,
+/// so a run stays deterministically reproducible as long as that is
+/// processed the same, whichever boundary the request landed on.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecordedJoin {
+    pub path: String,
+    /// The instant the newcomer first steps.
+    pub first_due: SimTime,
+}
+
+/// A component removed from the world, as recorded.
+///
+/// Carries the declared instant for the same reason a join carries
+/// `first_due`: it is chosen by whoever asked, so it is stable however
+/// early or late the request was made, and it is what decides where this
+/// component's output stops. What is *not* recorded — here as on a join —
+/// is the moment the request was applied, which says nothing extra and is
+/// the part that varies with delivery.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecordedLeave {
+    pub path: String,
+    /// The first instant the component did not step.
+    pub leaves_at: SimTime,
+}
+
+/// A component joining the world, or leaving it.
+///
+/// The log records *that* a component joined or left, not how to rebuild it
+/// — a component cannot be reconstructed from bytes. Replaying a dynamic
+/// run means re-running the scenario that issues the same joins and leaves,
+/// and checking the resulting stream against the log.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MembershipChange {
+    Joined(RecordedJoin),
+    Left(RecordedLeave),
+}
+
+/// A step that ran over the wall-clock budget its component declared.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RecordedBudgetMiss {
+    pub path: String,
+    /// The instant the over-budget step ran at.
+    pub sim_time: SimTime,
+    /// What the step took, and what it was allowed, in wall-clock
+    /// milliseconds.
+    pub step_ms: f64,
+    pub budget_ms: f64,
+}
+
+/// A component the conductor stopped waiting for, and what it did about it.
+///
+/// This is what says *why* a component left. The [`RecordedLeave`] that
+/// follows a [`OnTimeout::Remove`] is deliberately identical to a scripted
+/// one — the run behaved the same way, so replaying it by asking for that
+/// leave at that instant must produce a matching log — and the reason lives
+/// here, outside what verification compares. It is also the only record of a
+/// [`OnTimeout::Halt`], which produces no leave at all: without this line a
+/// halted run's log simply stops, saying nothing about why.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RecordedTimeout {
+    pub path: String,
+    /// The instant whose step the conductor gave up waiting for.
+    pub sim_time: SimTime,
+    /// How long it waited, and how long it had declared it would, in
+    /// wall-clock milliseconds.
+    pub waited_ms: f64,
+    pub timeout_ms: f64,
+    /// What this did to the run — so a reader knows whether to expect a
+    /// leave next or the log to end here.
+    pub policy: OnTimeout,
+}
+
+/// Something the *machine* did rather than the run: one of the log's
+/// **observations**.
+///
+/// The log holds two kinds of line. Every other kind is an **expectation**,
+/// recording what the run did, and a faithful re-run must produce it again.
+/// An observation is something noticed while the run happened that is worth
+/// writing down, but that says nothing about whether the run was right.
+///
+/// They are noted centrally so they can all be read back from one file
+/// afterwards, rather than from whichever process each step ran in.
+/// Verification never compares them: another machine notices different
+/// things, and treating that as a divergence would report two runs that
+/// behaved identically as different.
+///
+/// Both members so far are wall-clock facts, because that is what milestones
+/// 3 and 4 measure. Anything else of the same character belongs here rather
+/// than as a new top-level event: the pacing overruns counted by
+/// [`Conductor::overrun_reanchor_count`](crate::Conductor::overrun_reanchor_count)
+/// are the obvious next one, being a run-level measurement that today exists
+/// only as a counter that dies with the process.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum RecordedObservation {
+    #[serde(rename = "budget")]
+    BudgetMissed(RecordedBudgetMiss),
+    #[serde(rename = "timeout")]
+    TimedOut(RecordedTimeout),
+}
+
 /// One line of the log body, in emission order (messages of a tick precede
-/// its fingerprint, since publishes happen during the steps).
+/// its fingerprint, since publishes happen during the steps; membership
+/// changes sit between ticks, where they are applied).
+///
+/// Every observation nests under the one [`LogEvent::Observed`] variant
+/// rather than getting a variant of its own, so that being an observation is
+/// a structural fact instead of a list for each reader to keep in step with.
+/// A new kind added to [`RecordedObservation`] is categorised correctly the
+/// moment it exists; a new top-level variant would silently become an
+/// expectation and start reporting false divergences.
 #[derive(Debug, Serialize, Deserialize)]
 pub enum LogEvent {
     #[serde(rename = "msg")]
     Msg(RecordedMessage),
     #[serde(rename = "tick")]
     Tick(TickFingerprint),
+    #[serde(rename = "join")]
+    Join(RecordedJoin),
+    #[serde(rename = "leave")]
+    Leave(RecordedLeave),
+    /// Anything the machine did rather than the run — a log line reads
+    /// `{"observed":{"budget":{...}}}`.
+    #[serde(rename = "observed")]
+    Observed(RecordedObservation),
+}
+
+impl LogEvent {
+    /// The event's kind, for reporting a mismatch between two different
+    /// kinds of event.
+    pub(crate) fn kind(&self) -> &'static str {
+        match self {
+            LogEvent::Msg(_) => "msg",
+            LogEvent::Tick(_) => "tick",
+            LogEvent::Join(_) => "join",
+            LogEvent::Leave(_) => "leave",
+            LogEvent::Observed(RecordedObservation::BudgetMissed(_)) => "observed/budget",
+            LogEvent::Observed(RecordedObservation::TimedOut(_)) => "observed/timeout",
+        }
+    }
+}
+
+impl From<RecordedObservation> for LogEvent {
+    fn from(observation: RecordedObservation) -> Self {
+        // Return the observation as the log line that records it.
+        LogEvent::Observed(observation)
+    }
+}
+
+impl From<MembershipChange> for LogEvent {
+    fn from(change: MembershipChange) -> Self {
+        // Return the change as the log line that records it.
+        match change {
+            MembershipChange::Joined(join) => LogEvent::Join(join),
+            MembershipChange::Left(leave) => LogEvent::Leave(leave),
+        }
+    }
 }
 
 /// First line of the log: enough to re-create the run.
@@ -223,6 +384,38 @@ impl Recorder {
                 .expect("recorder mutex is never poisoned")
                 .events
                 .push(LogEvent::Tick(*d));
+        }
+    }
+
+    pub fn membership_callback(&self) -> impl FnMut(&MembershipChange) + Send + 'static {
+        let inner = self.inner.clone();
+
+        // Return the recording callback, holding its own handle to the
+        // shared log.
+        move |change: &MembershipChange| {
+            inner
+                .lock()
+                .expect("recorder mutex is never poisoned")
+                .events
+                .push(change.clone().into());
+        }
+    }
+
+    /// Records what the machine did — over-budget steps, and the timeouts
+    /// that say why a component left or a run stopped — so a run's
+    /// conditions end up in one file rather than in whichever process each
+    /// step ran in. These lines are never compared; see [`RecordedObservation`].
+    pub fn observation_callback(&self) -> impl FnMut(&RecordedObservation) + Send + 'static {
+        let inner = self.inner.clone();
+
+        // Return the recording callback, holding its own handle to the
+        // shared log.
+        move |observation: &RecordedObservation| {
+            inner
+                .lock()
+                .expect("recorder mutex is never poisoned")
+                .events
+                .push(observation.clone().into());
         }
     }
 

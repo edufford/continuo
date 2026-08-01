@@ -149,8 +149,12 @@ Baked in from the start — hard to retrofit:
 - Inboxes delivered sorted by `(publisher_id, sequence)`, never arrival order.
 - Per-component RNG seeded from `(world_seed, component_id)`. No OS entropy or
   wall clock in sim logic; wall clock exists only in the conductor's pacing.
-- Join/leave applied **only at tick boundaries** and recorded in an event log, so
-  runs with dynamic actors are replayable.
+- Join/leave applied **only at tick boundaries**, and every request **names the
+  sim time it takes effect** — a join its first step, a leave its first
+  *non*-step — rather than taking effect on arrival. A dynamic run then
+  reproduces however early or late the request was made, which is what keeps
+  it replayable once requests travel over a transport and delivery timing
+  stops being fixed. Both are recorded in the event log.
 - Per-tick canonical **state hash** (e.g. xxhash over serialized state) as the
   determinism check. Two runs with the same seed must produce identical hash
   streams; this becomes a CI test.
@@ -259,56 +263,79 @@ throughout, so an instant that starts late still stamps its outputs with the
 sim time it was scheduled for — which is why pacing cannot move the world
 hash.
 
-## Failure handling at the barrier
+## Per-component timing
 
-The conductor must never hang indefinitely waiting for a `TickDone`. A
-per-world configurable policy with a required timeout:
+The conductor must never hang indefinitely waiting for a `TickDone`. Every
+component therefore declares its own wall-clock limits as part of its
+registration metadata: two levels in one declaration, answering different
+questions, with only the hard one able to act.
 
-- `on_component_timeout = "halt"` — stop the world (default for
-  determinism-sensitive runs; a dropped component silently changes the
-  scenario).
-- `on_component_timeout = "drop"` — log the failure, deregister the component
-  at the barrier (recorded in the event log like any leave, so the run stays
-  replayable), and continue.
+- **budget** (soft, diagnostic) — did *this component's* `step` finish in
+  time? Measured around the step itself, so it is attributable to the
+  component and to nothing else: not to whatever ran ahead of it in the
+  instant, and not to the schedule around it. A step over it is logged and
+  counted, and that is all — nothing about the run changes, so a run that
+  misses every budget produces the identical world hash to one that misses
+  none. `None`, the default, declares no budget; a scenario is free to give
+  one component a deadline an operator wants flagged on every miss and leave
+  its neighbours with no real-time restriction at all.
+- **timeout** (hard, policy) — is the conductor still willing to wait? This
+  is the barrier deadline, so it covers everything between dispatching a
+  component and hearing back from it, transport included once that is a
+  network. `OnTimeout` declares what happens when it runs out:
+  - **`Halt`** stops the world, and is the default. Everything published
+    before it is unchanged, so the hash stream stays valid up to where it
+    stops.
+  - **`Remove`** logs the failure, deregisters the component at the barrier,
+    and continues — which **changes the scenario, and therefore the hash**. A
+    deregistered component stops publishing, so every tick after it differs
+    from a run where it survived, and the trigger is wall-clock-dependent, so
+    a live re-run on a faster machine may remove it later or not at all. The
+    removal is recorded in the event log like any other leave, which keeps the
+    run **replayable**, but it is no longer reproducible from
+    `(seed, scenario)` alone. That is precisely why halt is the default.
 
-Either way the overrun/failure is logged with the component id and step time.
-Component panics in-process are caught at the host boundary and treated the
-same as a timeout.
+In-process the two limits coincide, because the conductor's wait *is* the
+call: `step` is synchronous with nothing in between, so one measurement is
+what both are judged against. Distributed they separate — the budget is
+measured by the host running the step and rides back in its `TickDone`, while
+the timeout stays the conductor's own wait. Keeping the soft level permanently
+soft is what makes that split harmless: a limit that never acts never has to
+mean the same thing on two machines.
 
-### Per-component timing: one declaration, two severities
+Both are judged every step, never collapsed into whichever is worse. A step
+slow enough to time out has missed its budget too, and that miss is worth
+counting; more importantly, once a transport is in between, **a timeout with
+the budget intact is how you tell a slow network from a slow component.**
 
-The timeout above is the *hard* end of a single per-component measurement —
-how long a component's `step` took in wall time. The soft end is a **step
-budget**:
+Both levels are recorded in the event log as well as counted, so a run's
+timing reads back from one file rather than from whichever process each step
+ran in. They are the log's **observations**: every other line records what
+the *run* did and a faithful re-run must reproduce it, while these record
+what the *machine* did, which a re-run is free to differ on. Verification
+skips them for exactly that reason — comparing a budget miss would report two
+runs that behaved identically as divergent.
 
-- **budget** (soft, diagnostic) — "this component's `step` should complete
-  within X wall time". Exceeding it is logged and counted; the run is
-  unaffected. This is what real-time scenarios need when some components
-  carry deadlines an operator wants flagged on every miss, while others have
-  no real-time restriction at all (`None`, the default).
-- **timeout** (hard, policy) — `on_component_timeout` above: halt or drop.
+The *leave* a timeout removal produces is not an observation. It changes the
+scenario, so it is an ordinary `Leave` and is compared like one — and it is
+deliberately indistinguishable from a scripted leave, so that replaying the
+run by asking for that leave at that instant still matches. What says the
+removal was a timeout is the observation recorded beside it, which is also
+the only trace a *halt* leaves: without it, a halted run's log simply stops
+without saying why.
 
-They measure the same quantity, so they are declared together as part of a
-component's registration metadata rather than built as two mechanisms. What
-they do to a run differs sharply, though, and only the soft end is free:
+Whichever level a step passes, **the verdict never edits the tick it was
+measured in**: the step has already run, so its outputs stand and its tick
+fingerprints exactly as it would have anyway. Halting ends the run after that
+tick's work; removal takes effect at the next tick boundary like any other
+leave, since membership is frozen for the whole of a tick. Either way the
+failure is logged with the component's path and the duration that passed the
+limit. Component panics in-process are caught at the host boundary and treated
+the same as a timeout.
 
-- A **budget miss only observes.** Nothing about the run changes, so the
-  world hash is untouched — a run that misses every budget produces the
-  identical hash to one that misses none.
-- **Halt** ends the run. Everything published before it is unchanged, so the
-  hash stream stays valid up to where it stops.
-- **Drop changes the scenario, and therefore the hash.** A deregistered
-  component stops publishing, so every tick after the drop differs from a run
-  where it survived — and the trigger is wall-clock-dependent, so a live
-  re-run on a faster machine may drop later, or not at all. The drop is
-  recorded in the event log like any other leave, which keeps the run
-  **replayable**, but it is no longer reproducible from `(seed, scenario)`
-  alone. That is precisely why halt is the default for
-  determinism-sensitive runs.
-
-Note this is a different measurement from the pacing overrun of milestone 3,
-which asks whether the *schedule as a whole* tracked the wall clock and is
-attributable to no component in particular.
+Neither level is the pacing overrun of milestone 3, which asks whether the
+*schedule as a whole* tracked the wall clock and is attributable to no
+component in particular.
 
 ## FMI 3.0 CS support
 
@@ -384,6 +411,65 @@ attributable to no component in particular.
   rule is simply `msg.time < now` — sibling-order knowledge never leaves
   the conductor.
 
+### What `step_once` becomes
+
+Worked out while building milestone 4's timing, and written down so it is
+not re-derived: **the conductor does not grow a second step loop, and does
+not grow per-component `Local`/`Remote` branches inside the one it has.**
+
+Almost nothing in `step_once` depends on where a component runs. The tick
+boundary, pacing, hash chaining, fingerprint emission, rescheduling, the
+strict-advance guard, the timing verdict — all of it reads the same either
+way. What changes is three consecutive lines in the middle (drain the
+inbox, call `step`, publish the outbox), and those collapse into one idea:
+*obtain this component's contribution to this instant*.
+
+- **The seam is a value, not a branch.** Roughly
+  `{ next_due, contribution, step_wall }`, where `contribution` is this
+  component's fold into the tick hash. Local: call `step`, publish, hash.
+  Remote: the host does all three and `TickDone` carries the outcome back.
+  The conductor's own code is identical.
+- **The tick hash must become a fold of per-component sub-hashes**, in
+  declaration order, because the conductor never sees a remote component's
+  published bytes — the host publishes them. This is the load-bearing
+  prerequisite, it is a pure refactor with no distribution in sight, and it
+  has an exact acceptance test: the traffic demo's world hash must not
+  move. Worth landing early rather than inside the M7 pile.
+- **Acks are collected unordered.** Waiting in declaration order would
+  serialize the barrier at the *sum* of the hosts rather than the maximum,
+  discarding the parallelism distribution is for. Determinism comes from
+  folding in declaration order once the set is in, not from waiting in it —
+  the same principle as sorting inboxes by `(publisher, seq)` rather than
+  by arrival. This is safe precisely because same-instant delivery never
+  crosses a host boundary: components the conductor can dispatch
+  concurrently are exactly the components with no same-instant
+  relationship, and a coupled composite's internal ordering is its host's
+  problem.
+- **A remote component must always carry a timeout.** `StepTiming::timeout`
+  is optional today, which is safe only because an in-process `step` is a
+  synchronous call that always returns. A remote component without one is
+  an unbounded barrier wait — the hang this document opens by forbidding.
+  Either require it at admission for remote components or default it from
+  the world.
+- **Skip the budget check when no measurement arrived.** The step duration
+  becomes `Option`: the host measures it and reports it in `TickDone`, so a
+  host that never answers reports nothing. Never substitute the conductor's
+  wait for it. That would attribute transport delay to the component, and
+  would make every timeout also a budget miss, destroying the one signal
+  that tells them apart.
+- **A timeout then has three diagnoses, and whatever is recorded should say
+  which**: the measurement arrived and was within budget (the network or
+  the host was slow), it arrived and was over budget (the component was
+  slow), or nothing arrived at all (the host is silent, and nothing is
+  known about the component). Only the third is new; the first two are the
+  in-process pair.
+
+The rule that covers both modes at the barrier: **a tick is the fold of the
+contributions that arrived by its deadline, and a verdict never retracts one
+that did.** In-process a synchronous call always arrives, which is why
+milestone 4 could state that as "the verdict never edits the tick it was
+measured in".
+
 ## Workspace layout
 
 ```
@@ -417,10 +503,13 @@ owning an async runtime later.
 3. **Pacing** — `pacing: Pacing` config (default `FreeRun`), 1× wall-time
    gating with anchor-slip once lateness accumulates past the re-anchor
    threshold, overrun logging.
-4. **Dynamic join/leave** — registration over transport, tick-boundary
-   application, live traffic spawner, replay still deterministic via event log.
-   Registration metadata gains per-component timing — step budget and timeout
-   policy together (see "Per-component timing").
+4. **Dynamic join/leave** — registration metadata shaped for the transport,
+   tick-boundary application, live traffic spawner, replay still deterministic
+   via event log. Registration metadata gains per-component timing — step
+   budget and timeout policy together (see "Per-component timing"). Requests
+   still arrive as direct calls: a join hands over a `Box<dyn Component>`,
+   which no transport can carry, so sending one only means something once a
+   remote host can run what it admits (milestone 7).
 5. **Visualization** — viz bridge + Python package; watch the traffic move.
 6. **FMI** — `continuo-fmi`, mapping config, FMI 3.0 reference FMU driving an
    actor.
@@ -473,7 +562,10 @@ the mix. They are independent and can swap if priorities shift.
   quaternion-only.
 - **2026-07-17** — Barrier failure policy is configurable per world:
   **halt** or **timeout-and-drop** (logged, event-logged for replay). The
-  conductor never waits indefinitely.
+  conductor never waits indefinitely. *(Superseded 2026-07-28: still the same
+  two policies and still no indefinite wait, but declared per component
+  rather than per world, and "drop" is now "remove" — see the milestone 4
+  timing entry below.)*
 - **2026-07-17** — World spec starts minimal but is shaped as a **scene
   graph** (nodes + transforms + open properties) for later expansion.
 - **2026-07-17** — **Replay-from-log over snapshot/restore**; snapshots
@@ -591,9 +683,9 @@ the mix. They are independent and can swap if priorities shift.
     spell the padding (or the `ZERO`-means-coarse convention) out. Coarse is
     exactly zero-padding spin — one `SystemClock::sleep` path, its
     sleep-vs-spin cutoff a pure function with its own unit test.
-  - Failure handling at the barrier (`on_component_timeout`, PLAN.md) is
-    **not** part of M3 — it needs the join/leave machinery of M4 to drop a
-    component mid-run, so it lands there.
+  - Failure handling at the barrier (`on_component_timeout`, see
+    "Per-component timing") is **not** part of M3 — it needs the join/leave
+    machinery of M4 to drop a component mid-run, so it lands there.
 - **2026-07-24** — **Per-component step budgets are M4, not M3**, together
   with the timeout policy they share a measurement with (see "Per-component
   timing"). Considered for M3 since real-time scenarios want per-component
@@ -620,8 +712,229 @@ the mix. They are independent and can swap if priorities shift.
     components would need an arbitrary combining rule. And the lateness it
     would suppress is not the lax component's anyway — it is caused by the
     previous instant's work, and belongs to the gap.
+- **2026-07-28** — Milestone 4 membership design (joining and leaving a
+  running world):
+  - **Requests name the instant they take effect, and it is half-open.** A
+    join declares `first_due` (its first step), a leave declares `leaves_at`
+    (its first *non*-step), so a component present for `[0, 10ms)` joins at 0
+    and leaves at 10 ms, and one component's `leaves_at` is the next one's
+    `first_due` with no off-by-one reasoning about periods. Declared rather
+    than inferred because only the requester knows the phase it wants — and
+    because it is what makes a dynamic run reproducible when a request's
+    *arrival* varies, which it will as soon as requests cross a transport.
+  - **A departure vacates a registry slot rather than removing it.** An index
+    *is* the execution order within an instant, so compacting the vector
+    would silently reorder components that had nothing to do with the
+    departure, and with them the visibility rule's "earlier sibling"
+    relations. Reoccupying a freed path is a *new arrival* — fresh slot at
+    the end, end of the parent's child list — so arrival order drives both
+    the execution order (index) and the visibility rule (tree position), and
+    the two cannot disagree about who is earlier. A disagreement would not
+    fail loudly; it would just stop a same-instant hand-off arriving.
+  - **The log records the declared instant, never the applied one.** The
+    applied instant is redundant — the event's position between tick
+    fingerprints already says which instants it fell between — and it is
+    exactly the part that varies with delivery, so comparing it would report
+    divergences for runs that behave identically.
+  - **A request naming an already-stepped instant is an error**, not a
+    silent no-op, and validation precedes mutation so a rejected request
+    leaves no half-registered entry or stray subscription. Quietly resolving
+    a late request to the next open instant would put it a nanosecond after
+    the last one: an arbitrary phase, and the too-fine-gap pathology pacing
+    already has to absorb.
+  - **Scheduled leaves apply at the tick boundary before the instant is
+    entered**, found by *peeking* the schedule rather than popping it.
+    Popping first hands the due loop a set that still lists the departing
+    component, and leaves an instant holding only that component unprunable —
+    so it becomes a tick with nobody in it, numbered and fingerprinted and
+    chained into the world hash. That pending-leave queue is the
+    tick-boundary queue the timeout policy's removal will reuse.
+  - Vocabulary: the conductor **adds and removes**; a component **joins and
+    leaves**. `add_component`/`remove_component` against
+    `JoinMetadata`/`LeaveMetadata` and `LogEvent::Join`/`Leave` — no third
+    verb for the same event.
+  - Deferred within the milestone, both to section 5 because its traffic
+    spawner is what needs them: removing a composite should take its whole
+    subtree (**one leave per leaf**, since every join names a leaf), and a
+    component should be able to ask to leave. A car that has driven out of
+    the scene should retire itself rather than have the spawner watch every
+    pose to notice. Only the way back from `StepCtx` is missing — what the
+    request does when it arrives is the `pending_leaves` queue built in
+    section 3, which applies a leave at the next tick boundary, exactly
+    where a mid-tick request has to take effect. Both were settled on
+    2026-07-31: the subtree removal built, the voluntary departure rejected.
+  - Deferred to **M7**: requests arriving over the transport rather than as
+    direct calls. Not a scheduling matter after all — a join carries a
+    `Box<dyn Component>`, which no transport can carry, so the request only
+    means something once a remote host owns and steps the component it
+    admits. What M4 can and does deliver is the half that survives the
+    crossing: metadata split from the component, and declared instants
+    (`first_due`, `leaves_at`) chosen precisely so a run reproduces when a
+    request's *arrival* varies.
+- **2026-07-28** — Milestone 4 per-component timing, as built (see
+  "Per-component timing"):
+  - **The timeout policy is declared per component, not per world**,
+    superseding the 2026-07-17 entry above. A world-level setting cannot
+    express the case that motivates the feature at all: one component
+    carrying a deadline while its neighbours have no real-time restriction
+    whatsoever.
+  - **The two levels measure different things**, correcting the 2026-07-24
+    premise that they share one. The budget is the component's own `step`,
+    measured where the step runs; the timeout is the conductor's *wait* — the
+    barrier deadline — which once components are distributed necessarily
+    includes the transport. They coincide only in-process, where that wait is
+    a synchronous call, so one measured duration is what both are judged
+    against today; at M7 each reads its own.
+    - **Judged separately, never as one worst-level verdict.** Either can be
+      passed without the other, and the pair is what carries the diagnosis: a
+      timeout with the budget intact says the transport was slow, one with the
+      budget missed says the component was — a state a single verdict on a
+      single number cannot even represent. Worst-wins also quietly dropped the
+      budget miss that accompanies every timeout.
+    - That is what settles the soft level as **permanently** soft: a limit
+      that never acts never has to mean the same thing on two machines, so a
+      host can measure its own step and report it for diagnosis with none of
+      the cross-machine comparability a policy trigger would demand.
+      Escalating on a host-measured step — the rejected alternative — would
+      have needed a second hard limit at the conductor anyway, since a host
+      that dies reports nothing at all.
+  - **`drop` is called `remove`** (`OnTimeout::Remove`), for the vocabulary
+    rule above: a third verb for the same event is exactly what that rule
+    exists to prevent. It surfaces in the log as an ordinary `Leave`.
+  - **A timing verdict never edits the tick it was measured in**, so removal
+    is queued as a leave at the earliest open instant and goes out through the
+    same `pending_leaves` path a declared leave takes. Discarding a timed-out
+    step's outputs instead — imitating a distributed barrier giving up on a
+    missing `TickDone` — would break the invariant that membership is frozen
+    for a whole tick: the component was a member of that tick, so its work
+    belongs to it.
+  - **A schedule violation still always halts**, whatever the timeout policy
+    says — a violation being a component returning a `next_due` at or before
+    the instant it just stepped, breaking the strict-advance guard that keeps
+    sim time moving. Determinism is what decides it: a timeout is
+    wall-clock-dependent, which is the whole reason `Remove` exists at all,
+    while a violation is a pure function of the component's logic and the sim
+    state and so reproduces at the identical instant on every machine and
+    every re-run. Removing the component would trade a loud, perfectly
+    reproducible bug for a silent scenario change — and a changed hash. Nor is
+    there anything to carry on from: the only handle the conductor has on when
+    to wake a component is the `next_due` it just returned.
+  - **A budget at or above its timeout is rejected at registration**, since
+    the conductor gives up before any step slow enough to miss it can finish.
+    That holds however the two are measured — a wait always contains the step
+    it is waiting on — so it survives them separating. Misdeclarations are
+    rejected rather than silently ignored, as joins and leaves in the past
+    already are.
+  - Timing applies in free-run too: a budget measures what a step costs
+    whichever way the run advances, and the barrier needs a deadline
+    regardless of pacing.
+  - Counted per component (`Conductor::budget_misses(path)`) rather than as a
+    run-wide total, because attribution is the whole point — it answers what
+    `overrun_reanchor_count` structurally cannot, namely whether *this*
+    component finished within its time.
+  - **Timing is recorded in the event log too, which splits the log into
+    expectations and observations.** Counting alone dies with the run, and
+    once components are distributed a host's local log only knows its own
+    steps, so this is reported to the conductor and written centrally. But it
+    cannot be *verified*: a budget miss changes nothing, so a faster machine
+    records none, and comparing them would call two identical runs divergent.
+    Both readers — live checking and log-vs-log — therefore filter
+    observations out.
+    - Every observation nests under one `LogEvent::Observed` variant rather
+      than getting a top-level variant each, so the category is structural.
+      A new kind added to `RecordedObservation` is classified correctly the
+      moment it exists, where a new top-level variant would silently become
+      an expectation and start reporting false divergences. Pacing overruns
+      are the obvious next member: a run-level wall-clock measurement that
+      today only exists as a counter dying with the process.
+    - **The reason a component timed out is an observation; the leave it
+      causes is not.** The leave changes the scenario, so it is compared like
+      any other — and is deliberately indistinguishable from a scripted one,
+      so replaying the run by asking for that leave still matches. Putting a
+      reason *on* `RecordedLeave` would either break that replay or need a
+      struct whose fields are selectively compared. The observation beside it
+      is also the only trace a **halt** leaves, which otherwise ends a log
+      with no indication why.
+
+- **2026-07-31** — Milestone 4's live traffic demo, and what it settled about
+  who may change membership:
+  - **The scenario is a straight highway**, not the milestone 1 oval: an ego
+    holding the centre lane at 30 m/s while slower traffic spawns ahead in
+    the lanes either side and is retired once overtaken. Traffic never
+    shares the ego's lane, because nothing here models a collision — cars in
+    front would be driven through. `Waypoints` grew an **open** mode for it:
+    a road that clamps at its ends rather than wrapping, so a lookahead past
+    the end keeps pointing down the road instead of teleporting a follower
+    back to the start.
+  - **Lanes are Frenet offsets, not paths.** One road is shared by every car
+    ever spawned, and a car holds a lateral offset `d` while following the
+    arc length `s` it projects onto — so `PathFollowController` takes a road
+    plus an offset, and a spawn request naming `(start_s, lane_offset)` is
+    already `(s, d)`. Giving each lane its own polyline instead looked
+    simpler and was worse in three ways: it allocated geometry per car, it
+    made the spawner compare arc lengths measured on *different* curves
+    (equal only because the curves were parallel straight lines), and it
+    could not survive the road bending, since parallel curves have
+    different lengths. A lane change also becomes a varying `d` rather than
+    new geometry.
+  - **A component decides the population; something outside builds it.** The
+    spawner watches poses and publishes `SpawnTrafficRequest` and
+    `DespawnTrafficRequest`; the run loop turns those into
+    `add_component`/`remove_component`. The split is forced — a component
+    cannot hand over a `Box<dyn Component>`, the same reason
+    join-over-transport is M7 — but it is also what keeps the traffic
+    pattern *inside* the determinism guarantee: the choices come from sim
+    state and a seeded stream, so a recorded run verifies. A loop that
+    picked spawn times itself would put the pattern outside what the log
+    can check.
+  - **Removing a composite takes its whole subtree**, one leave per leaf in
+    declaration order — the deferral recorded on 2026-07-28, built here
+    because retiring a car is what needed it. A car is a composite, so
+    "remove `traffic7`" has to reach both halves, and the log shows two
+    leaves rather than one: joins name leaves, so leaves must too, or a
+    recorded run could not be replayed by reissuing what the log contains.
+  - Timing of the application is deliberately not load-bearing. Requests
+    declare `first_due`, so *when* the loop applies one does not shape the
+    run, only that it lands before that instant.
+  - **Verification drives the same loop as an ordinary run**, which takes an
+    optional verifier and stops at the first divergence, rather than each
+    example hand-rolling its own step loop. A second loop is not a small
+    duplication here: forget to apply the spawner's requests in it and it
+    verifies a *different* world from the one recorded, and reports the
+    difference as a divergence in the sim.
+  - **Rejected: a component asking to leave on behalf of its actor.** Built
+    first, then reverted. An actor has no runtime existence — the tree is
+    registry data and a composite never steps — so a component speaking for
+    one claims authority over siblings it is told nothing about, on behalf
+    of something that is not there. Nothing joins as an actor either (joins
+    are per-leaf), so there was no arrival for it to mirror. Population
+    turned out to be somebody's job rather than each car's, and the spawner
+    is that somebody.
+  - The request type is **scenario-specific on purpose** and lives in
+    `continuo-actors` beside the spawner, not in `continuo-core`: a lane
+    offset in meters is not framework vocabulary. Its general form is the scenario
+    config's type-name-plus-parameters request, resolved by a host-side
+    registry — the same registry the run loop is standing in for, and the
+    part a host takes over at M7.
 
 ## Deferred (decided-not-now, revisit when they bite)
+
+- **A component asking to retire itself**: `StepCtx` has no way back to the
+  conductor, so nothing can say "I am done" (see `Component`'s TODO).
+  Milestone 4 expected its spawner to need this and it did not. Worth
+  building for a scripted actor that finishes its own work — and then only
+  at *component* scope, never on behalf of an actor.
+
+- **Reclaiming vacated registry slots**: `Registry::entries` never shrinks,
+  so a long run with heavy turnover accumulates one dead slot per departed
+  component, and the due loop skips past them for the rest of the run. Fine
+  at demo scale — thirty sim-seconds of traffic leaves eight holes — and the
+  cost is bounded by *total* joins rather than by live components, so it
+  only bites where a scenario churns many actors over a long run. Not
+  fixable by compacting: an index **is** the execution order within an
+  instant, so shifting one silently reorders components that had nothing to
+  do with the departure. It needs a free list plus a generation counter on
+  each slot, so a reused index cannot be mistaken for its predecessor.
 
 - **Road-network importer**: which format (OpenDRIVE, Lanelet2, other) lowers
   into the world spec — decide when realistic road scenarios are needed.

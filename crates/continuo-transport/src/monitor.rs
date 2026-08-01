@@ -37,6 +37,10 @@ impl<T: Transport> Transport for MonitorTransport<T> {
         self.inner.subscribe(subscriber, key);
     }
 
+    fn unsubscribe(&mut self, subscriber: &ComponentPath) {
+        self.inner.unsubscribe(subscriber);
+    }
+
     fn publish(&mut self, message: Message) {
         (self.callback)(&message);
         self.inner.publish(message);

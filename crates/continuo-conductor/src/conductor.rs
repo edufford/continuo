@@ -1,18 +1,28 @@
+use std::collections::BTreeMap;
+use std::time::{Duration, Instant};
+
 use continuo_core::{
-    Component, ComponentPath, HashFnv1a64, Message, SimTime, StepCtx, TickDone, TickStart,
-    hash_bytes, mix_seeds,
+    Component, ComponentPath, HashFnv1a64, Message, SimDuration, SimTime, StepCtx, TickDone,
+    TickStart, hash_bytes, mix_seeds,
 };
 use continuo_transport::Transport;
-use tracing::trace;
+use tracing::{trace, warn};
 
 use crate::config::ConductorConfig;
 use crate::error::ConductorError;
+use crate::membership::{JoinMetadata, LeaveMetadata};
 use crate::pacing::{Pacer, Pacing, SystemClock};
-use crate::record::TickFingerprint;
+use crate::record::{
+    MembershipChange, RecordedBudgetMiss, RecordedJoin, RecordedLeave, RecordedObservation,
+    RecordedTimeout, TickFingerprint,
+};
 use crate::registry::Registry;
 use crate::schedule::Schedule;
+use crate::timing::{OnTimeout, StepTiming, diagnostic_millis};
 
 type TickCallback = Box<dyn FnMut(&TickFingerprint) + Send>;
+type MembershipCallback = Box<dyn FnMut(&MembershipChange) + Send>;
+type ObservationCallback = Box<dyn FnMut(&RecordedObservation) + Send>;
 
 /// Owns simulation time and drives the discrete-event loop over a
 /// [`Transport`].
@@ -21,6 +31,13 @@ pub struct Conductor<T: Transport> {
     transport: T,
     registry: Registry,
     schedule: Schedule,
+    /// `Some` in 1× real-time mode, gating each instant to wall time;
+    /// `None` in free-run. Pacing never affects `world_hash`.
+    pacer: Option<Pacer<SystemClock>>,
+    /// Leaves declared for a future instant, applied at the tick
+    /// boundary before that instant is stepped. Sorted by `leaves_at`, so
+    /// draining the front is enough to find the ones that have come due.
+    pending_leaves: BTreeMap<SimTime, Vec<ComponentPath>>,
     sim_time: SimTime,
     tick: u64,
     /// Running determinism fingerprint: seeded from the world config, then
@@ -28,9 +45,8 @@ pub struct Conductor<T: Transport> {
     /// values at every tick.
     world_hash: u64,
     tick_callback: Option<TickCallback>,
-    /// `Some` in 1× real-time mode, gating each instant to wall time;
-    /// `None` in free-run. Pacing never affects `world_hash`.
-    pacer: Option<Pacer<SystemClock>>,
+    membership_callback: Option<MembershipCallback>,
+    observation_callback: Option<ObservationCallback>,
 }
 
 impl<T: Transport> Conductor<T> {
@@ -54,19 +70,81 @@ impl<T: Transport> Conductor<T> {
             transport,
             registry: Registry::default(),
             schedule: Schedule::default(),
+            pacer,
+            pending_leaves: BTreeMap::new(),
             sim_time: SimTime::ZERO,
             tick: 0,
             world_hash,
             tick_callback: None,
-            pacer,
+            membership_callback: None,
+            observation_callback: None,
         })
     }
+
+    // TODO(M7): these three setters, plus the `MonitorTransport` wrap that
+    // catches published messages, are four hookups a caller has to remember
+    // — and forgetting one does not fail, it writes a log that quietly
+    // omits a channel. Every observation point added so far has needed
+    // every caller updated by hand.
+    //
+    // Wanted: an `Observer` trait with default no-op methods and a single
+    // `set_observer`, implemented by `Recorder` and `Verifier`, so a new
+    // observation point cannot be silently skipped by an existing caller.
+    //
+    // Tagged M7 because it is not a rename. Messages are observed at the
+    // *transport*, wrapped before the conductor exists, so construction
+    // order rules out one call today — and where that seam belongs is the
+    // same question as the hash fold (PLAN.md, "What `step_once`
+    // becomes"), since a distributed conductor no longer publishes remote
+    // components' messages at all. Better to settle both together than to
+    // move the seam twice. The three conductor-side callbacks could be
+    // folded sooner if the churn is worth it on its own.
 
     /// Installs a callback invoked with every tick's [`TickFingerprint`] — the hook
     /// for recording (see [`crate::Recorder::tick_callback`]) or live
     /// divergence checking.
     pub fn set_tick_callback(&mut self, callback: impl FnMut(&TickFingerprint) + Send + 'static) {
         self.tick_callback = Some(Box::new(callback));
+    }
+
+    /// Installs a callback invoked whenever a component joins or leaves —
+    /// the third observation point, alongside published messages and tick
+    /// fingerprints, and the one that makes a dynamic run recordable
+    /// (see [`crate::Recorder::membership_callback`]).
+    pub fn set_membership_callback(
+        &mut self,
+        callback: impl FnMut(&MembershipChange) + Send + 'static,
+    ) {
+        self.membership_callback = Some(Box::new(callback));
+    }
+
+    /// Installs a callback invoked for everything the *machine* did rather
+    /// than the run: steps over their budget, and the timeouts that say why
+    /// a component left or a run stopped (see
+    /// [`crate::Recorder::observation_callback`]).
+    ///
+    /// The fourth observation point, and the one whose reports a re-run is
+    /// free to differ on — see [`RecordedObservation`].
+    pub fn set_observation_callback(
+        &mut self,
+        callback: impl FnMut(&RecordedObservation) + Send + 'static,
+    ) {
+        self.observation_callback = Some(Box::new(callback));
+    }
+
+    /// Reports an applied membership change to the observer, if any.
+    fn emit_membership(&mut self, change: MembershipChange) {
+        if let Some(callback) = self.membership_callback.as_mut() {
+            callback(&change);
+        }
+    }
+
+    /// Reports an observation to the observer, if any — something worth
+    /// noting about the run rather than a part of it.
+    fn emit_observation(&mut self, observation: RecordedObservation) {
+        if let Some(callback) = self.observation_callback.as_mut() {
+            callback(&observation);
+        }
     }
 
     /// The current running determinism fingerprint (see PLAN.md,
@@ -106,13 +184,29 @@ impl<T: Transport> Conductor<T> {
     /// quickly, or that anything met a deadline: lateness under the
     /// re-anchor threshold is deliberately absorbed, and a component that
     /// runs long stays invisible here as long as the run recovers before
-    /// the threshold.
-    // TODO(M4): per-component step budgets answer the question this metric
-    // cannot — "did *this* component finish within its time" — declared with
-    // the timeout policy they share a measurement with (PLAN.md,
-    // "Per-component timing").
+    /// the threshold. [`Self::budget_misses`] answers the question this
+    /// metric cannot — did *this* component finish within its time.
     pub fn overrun_reanchor_count(&self) -> u64 {
         self.pacer.as_ref().map_or(0, Pacer::overrun_reanchor_count)
+    }
+
+    /// How many of this component's steps have run over the wall-clock
+    /// budget it declared when it joined; `None` if nothing is registered at
+    /// `path`, and always 0 for a component that declared no budget.
+    ///
+    /// Attributable by construction, which is the point of it — it counts
+    /// one component's own `step` calls, not lateness the schedule
+    /// accumulated around it (see [`Self::overrun_reanchor_count`]). Purely
+    /// diagnostic: missing a budget changes nothing about the run, so this
+    /// can differ between two runs with the identical world hash.
+    ///
+    /// Counted against the live component, so it resets if a path is
+    /// vacated and reoccupied — the newcomer is a different component that
+    /// happens to share a name.
+    pub fn budget_misses(&self, path: &ComponentPath) -> Option<u64> {
+        // Return the live component's miss count, if one is registered here.
+        let index = self.registry.index_of(path)?;
+        self.registry.entry(index).map(|entry| entry.budget_misses)
     }
 
     /// Total wall-clock time the run has permanently fallen behind real
@@ -126,50 +220,235 @@ impl<T: Transport> Conductor<T> {
             .map_or(std::time::Duration::ZERO, Pacer::total_slip)
     }
 
-    /// Registers a component under `parent` (`""` for a world-level actor;
-    /// `"car1"` makes it a child of the `car1` composite). Sibling order is
-    /// registration order — it defines both execution order within an
-    /// instant and the "earlier sibling" of the visibility rule.
+    /// The earliest instant a component can still be admitted for. Nothing
+    /// has stepped before the first tick, so the world's opening instant is
+    /// open; afterwards the instant at `sim_time` has been executed and
+    /// scheduling into it would step it a second time.
+    fn earliest_open_instant(&self) -> SimTime {
+        // Return the first instant that has not already happened.
+        if self.tick == 0 {
+            self.sim_time
+        } else {
+            self.sim_time + SimDuration::from_nanos(1)
+        }
+    }
+
+    /// Admits a component. Pass a [`JoinMetadata`] to say when a newcomer to
+    /// a running world first steps, or — before the run starts — just the
+    /// parent path (`""` for a world-level actor, `"car1"` to join that
+    /// composite), which is shorthand for first stepping at sim time zero.
     ///
-    /// Milestone 1 supports registration before running only; the component
-    /// is first due at sim time zero. Runtime join/leave is milestone 4.
+    /// Sibling order is arrival order, which fixes both the execution order
+    /// within an instant and the "earlier sibling" of the visibility rule.
+    /// A component admitted mid-run is therefore the newest sibling of
+    /// whatever it joins.
+    ///
+    /// The first step is scheduled here, as the component is admitted,
+    /// rather than discovered when the instant arrives — so the barrier at
+    /// `first_due` already counts the newcomer among the components it
+    /// waits for.
+    ///
+    /// Joining is also where a component says what its steps may cost in
+    /// wall time, if anything: see [`JoinMetadata::with_timing`] and
+    /// [`StepTiming`](crate::StepTiming).
+    // TODO(M7): joins arrive as this direct call, and cannot do otherwise
+    // until there is somewhere else to run a component. A join hands over a
+    // `Box<dyn Component>`, which no transport can carry, so a request on
+    // continuo/{world}/conductor/join only means something once a remote
+    // host owns and steps the component it admits. That is the same change:
+    // the registry entry becomes Local(Box<dyn Component>) vs.
+    // Remote(metadata), the conductor never holding a remote component's
+    // box. Scheduling, the visibility rule, and seq assignment already work
+    // off metadata alone, which is why `JoinMetadata` is a separate type
+    // from the component — the half that *can* cross a transport already
+    // does not depend on the half that cannot.
     pub fn add_component(
         &mut self,
-        parent: &str,
+        join: impl Into<JoinMetadata>,
         component: Box<dyn Component>,
     ) -> Result<ComponentPath, ConductorError> {
-        // TODO(M4): runtime join/leave — accept join requests over the
-        // transport (continuo/{world}/conductor/join), apply them at step
-        // boundaries, schedule the first step at the join time instead of
-        // ZERO, and record admissions in the event log for replay.
-        //
-        // For remote components the conductor never holds the Box — the
-        // component lives in its host process. Registration then needs only
-        // the component's *metadata*, carried in the join request:
-        //   { parent path, id (=> declared sibling order from arrival order),
-        //     subscriptions, first_due, coupled/decoupled flag (PLAN.md
-        //     decision 2026-07-18: decoupled children use next-step
-        //     visibility, freeing their host placement) }.
-        // The registry entry becomes Local(Box<dyn Component>) vs.
-        // Remote(metadata); scheduling, the visibility rule, and seq
-        // assignment work identically on both since they only use metadata.
-        let parent = ComponentPath::parse(parent)?;
+        let join = join.into();
+        let parent_path = ComponentPath::parse(&join.parent_path)?;
+
+        // Validate before touching anything, so a rejected join leaves no
+        // trace: no half-registered entry, no stray subscriptions.
+        let earliest_open = self.earliest_open_instant();
+        if join.first_due < earliest_open {
+            return Err(ConductorError::JoinInThePast {
+                path: parent_path.join(component.id()),
+                first_due: join.first_due,
+                earliest_open,
+            });
+        }
+        if let Some((budget, timeout)) = join.timing.unreachable_budget() {
+            return Err(ConductorError::UnreachableStepBudget {
+                path: parent_path.join(component.id()),
+                budget,
+                timeout,
+            });
+        }
+
         let subscriptions = component.subscriptions();
-        let (index, path) = self
-            .registry
-            .add(&parent, component, self.config.world_seed)?;
+        let (index, path) =
+            self.registry
+                .add(&parent_path, component, self.config.world_seed, join.timing)?;
         for key in subscriptions {
             self.transport.subscribe(path.clone(), key);
         }
-        self.schedule.insert(SimTime::ZERO, index);
+        self.schedule.insert(join.first_due, index);
+        self.emit_membership(MembershipChange::Joined(RecordedJoin {
+            path: path.to_string(),
+            first_due: join.first_due,
+        }));
 
         // Return the registered component's full path.
         Ok(path)
     }
 
+    /// Applies every leave due at or before `instant`, in declared
+    /// order. Called at the tick boundary, before anything steps, so a
+    /// component that has left takes no part in the instant it left at.
+    fn apply_due_leaves(&mut self, instant: SimTime) {
+        while let Some(entry) = self.pending_leaves.first_entry() {
+            if *entry.key() > instant {
+                break;
+            }
+            let leaves_at = *entry.key();
+            for path in entry.remove() {
+                // A path may have been removed directly in the meantime;
+                // a leave that finds nothing to remove is already satisfied.
+                if self.registry.index_of(&path).is_some() {
+                    self.apply_leave(&path, leaves_at);
+                }
+            }
+        }
+    }
+
+    /// Deregisters a component and tells observers. The one place a
+    /// leave is applied, whichever route asked for it.
+    ///
+    /// `leaves_at` is the instant recorded as the component's last — the
+    /// declared one for a scheduled leave, or the earliest still-open
+    /// instant for an immediate removal, which is when it stops either way.
+    fn apply_leave(&mut self, path: &ComponentPath, leaves_at: SimTime) {
+        let Some(index) = self.registry.remove(path) else {
+            return;
+        };
+        self.schedule.remove_index(index);
+        self.transport.unsubscribe(path);
+        self.emit_membership(MembershipChange::Left(RecordedLeave {
+            path: path.to_string(),
+            leaves_at,
+        }));
+    }
+
+    /// Removes a component. Pass a [`LeaveMetadata`] to name the instant it
+    /// stops at, or just its path to stop it immediately — at this tick
+    /// boundary, since membership never changes mid-tick.
+    ///
+    /// Prefer naming the instant for anything a run must reproduce: the
+    /// bare-path form stops the component wherever the caller happens to
+    /// be, which is deterministic only because the caller is. A named
+    /// instant gives the same run whenever the request was made.
+    ///
+    /// The component stops being scheduled, stops receiving messages, and
+    /// is dropped. Everything it published stays published — departing is
+    /// not a rollback.
+    ///
+    /// Survivors are untouched. Their declaration indexes do not shift, so
+    /// execution order within an instant and every "earlier sibling"
+    /// relationship the visibility rule depends on are exactly as they were.
+    ///
+    /// The path becomes free again; a later component may take it and
+    /// arrives as a new sibling, ordered by its arrival like any other.
+    ///
+    /// **A composite's path takes its whole subtree.** `"car1"` removes
+    /// every leaf under it — `car1/controller`, `car1/physics`, and anything
+    /// nested below — because an actor leaving a world leaves whole, and
+    /// removing only some of its parts would leave a controller publishing
+    /// at a physics model that is gone.
+    ///
+    /// The log records **one leave per leaf**, never one for the composite.
+    /// Every join names a leaf, because a leaf is what joins, so departures
+    /// stay symmetrical with arrivals and nothing reading the log needs to
+    /// know the shape of the tree. They go out in declaration order, which
+    /// is the order those components step in.
+    // TODO(M7): departure over the transport
+    // (`continuo/{world}/conductor/leave`) waits on distribution too, though
+    // for a weaker reason than the join above: `LeaveMetadata` is a path and
+    // an instant, so it could cross a transport today. There is simply
+    // nobody to send it. Everything in this process holds `&mut Conductor`
+    // and calls this.
+    pub fn remove_component(
+        &mut self,
+        leave: impl Into<LeaveMetadata>,
+    ) -> Result<(), ConductorError> {
+        let leave = leave.into();
+        let path = ComponentPath::parse(&leave.path)?;
+        // One leaf, or every leaf of a composite. Checking for a registered
+        // leaf first means a leaf always wins: a path cannot be both, since
+        // `Registry::add` refuses to make a leaf into a composite or the
+        // reverse.
+        let departing = if self.registry.index_of(&path).is_some() {
+            vec![path]
+        } else {
+            let subtree = self.registry.components_under(&path);
+            if subtree.is_empty() {
+                return Err(ConductorError::UnknownPath(path));
+            }
+            subtree
+        };
+        let earliest_open = self.earliest_open_instant();
+
+        let Some(leaves_at) = leave.leaves_at else {
+            // Unnamed: stop them at the earliest instant still open, which
+            // is now, so there is nothing to defer.
+            for path in &departing {
+                self.apply_leave(path, earliest_open);
+            }
+            return Ok(());
+        };
+        if leaves_at < earliest_open {
+            // The instant it would stop at has already been stepped, so the
+            // component has already done work this leave claims it did
+            // not. Refuse rather than silently apply it late.
+            let path = departing.into_iter().next().expect("non-empty above");
+            return Err(ConductorError::LeaveInThePast {
+                path,
+                leaves_at,
+                earliest_open,
+            });
+        }
+        // Queued in declaration order, and `apply_due_leaves` drains the
+        // vector in order, so the log's leaves come out in the order the
+        // components would have stepped.
+        self.pending_leaves
+            .entry(leaves_at)
+            .or_default()
+            .extend(departing);
+
+        // Return success; the leaves apply at the boundary before that
+        // instant is stepped.
+        Ok(())
+    }
+
     /// Advances to the earliest due instant and steps every component due at
     /// it, in declaration order. Returns `false` when nothing is scheduled.
     pub fn step_once(&mut self) -> Result<bool, ConductorError> {
+        // Remove anyone whose declared leave has come due before the
+        // instant is entered, so a component that leaves at T takes no part
+        // in T. This is the tick boundary: membership settles here, and is
+        // frozen for the rest of the tick.
+        //
+        // Peek rather than pop, because popping takes the due set *and*
+        // the instant with it, leaving the leave nothing to affect: the due
+        // set would already list the departing component, and an instant
+        // holding only that component could no longer be pruned, so it
+        // would still become a tick — numbered, fingerprinted, and chained
+        // into the world hash for an instant where nobody stepped.
+        if let Some(next) = self.schedule.earliest() {
+            self.apply_due_leaves(next);
+        }
         let Some((now, due)) = self.schedule.pop_earliest() else {
             return Ok(false);
         };
@@ -196,8 +475,17 @@ impl<T: Transport> Conductor<T> {
         // the transport; every component (host) subscribes, and steps itself
         // when TickStart.sim_time reaches its own next_due. The conductor
         // barriers on TickDone acks from exactly the components it knows are
-        // due (their next_due values arrived in prior TickDones). In-proc,
-        // activation is a direct call and the messages exist as trace events.
+        // due (their next_due values arrived in prior TickDones), collected
+        // in whatever order they land. In-proc, activation is a direct call
+        // and the messages exist as trace events.
+        //
+        // What that does to this function is worked out in PLAN.md,
+        // "What `step_once` becomes": no second loop and no per-component
+        // Local/Remote branch, but the three lines below that drain, step,
+        // and publish become one value the host can supply instead — which
+        // needs this tick hash to be a fold of per-component sub-hashes
+        // first, since the conductor never sees a remote component's
+        // published bytes.
         let tick_start = TickStart {
             tick: self.tick,
             sim_time: now,
@@ -205,11 +493,18 @@ impl<T: Transport> Conductor<T> {
         trace!(target: "continuo::conductor", tick = tick_start.tick, sim_time = %now, "tick start");
 
         for index in due {
-            let path = self.registry.entries[index].path.clone();
-            let dt = self.registry.entries[index]
-                .last_step
-                .map(|prev| now - prev);
-            let component_seed = self.registry.entries[index].component_seed;
+            // Membership only changes at tick boundaries, so every due slot
+            // is live. Assert that, then skip rather than panic if it ever
+            // stops holding: not stepping is the right outcome for a
+            // component that has left.
+            let Some(entry) = self.registry.entry(index) else {
+                debug_assert!(false, "slot {index} vacated mid-tick");
+                continue;
+            };
+            let path = entry.path.clone();
+            let dt = entry.last_step.map(|prev| now - prev);
+            let component_seed = entry.component_seed;
+            let timing = entry.timing;
 
             // The visibility rule (PLAN.md): everything published before this
             // instant is released; same-instant messages only from an
@@ -221,13 +516,30 @@ impl<T: Transport> Conductor<T> {
             let inbox = self.transport.drain(&path, &release_condition);
 
             let mut ctx = StepCtx::new(now, dt, &self.config.world_name, component_seed, inbox);
-            let entry = &mut self.registry.entries[index];
+            let entry = self
+                .registry
+                .entry_mut(index)
+                .expect("checked live above, and membership is frozen mid-tick");
+            // Time the component's own step. In-process this one duration
+            // answers both declared levels, because the conductor's wait for
+            // a synchronous call is the call — they part company only when a
+            // transport gets between them (see `timing`). The verdict waits
+            // until the step's effects below have been applied — see the end
+            // of this loop body.
+            let started = Instant::now();
             let next_due = entry.component.step(&mut ctx);
+            let step_wall = started.elapsed();
 
-            // TODO(PLAN "Failure handling"): apply the per-world policy
-            // (halt vs. timeout-and-drop, with drops event-logged for
-            // replay) instead of always halting; extend beyond schedule
-            // violations to component panics and step timeouts.
+            // A schedule violation always halts, whatever the timeout policy
+            // says. Unlike a timeout it does not depend on the wall clock —
+            // it is a pure function of the component's logic and the sim
+            // state, so it reproduces exactly — and removing the component
+            // would trade a loud, reproducible bug for a silent scenario
+            // change. There is no next due time to carry on from either.
+            // TODO(M7): a component panicking is the third failure at the
+            // barrier, and PLAN.md treats it like a timeout. Catching one
+            // needs the host boundary an out-of-process component has, so it
+            // lands with distribution.
             if next_due <= now {
                 return Err(ConductorError::ScheduleViolation {
                     path: entry.path.clone(),
@@ -260,7 +572,6 @@ impl<T: Transport> Conductor<T> {
                 });
             }
 
-            let entry = &mut self.registry.entries[index];
             // Components exposing internal state join the hash in
             // state-hash mode; the rest are covered by their output bytes
             // above (output-hash mode). The b"|state|" marker below
@@ -299,6 +610,17 @@ impl<T: Transport> Conductor<T> {
                 next_due = %tick_done.next_due,
                 "tick done"
             );
+
+            // Per-component timing (PLAN.md, "Per-component timing"). Both
+            // levels are judged, not just the worse one: they read
+            // different quantities — the step itself, and how long the
+            // conductor waited to hear about it — which happen to be the
+            // one measurement in-process, and are two the moment a
+            // transport gets between them. Hence one call each, with
+            // `step_wall` standing in for both. The soft one goes first so
+            // a run that is about to halt still records what it observed.
+            self.judge_step_budget(&path, now, step_wall, &timing);
+            self.judge_step_timeout(&path, now, step_wall, &timing)?;
         }
 
         // Chain this tick into the running world hash and emit the
@@ -318,6 +640,117 @@ impl<T: Transport> Conductor<T> {
 
         // Return true: a tick was executed (more may be scheduled).
         Ok(true)
+    }
+
+    /// Judges how long a component's own `step` took against the **budget**
+    /// it declared (PLAN.md, "Per-component timing").
+    ///
+    /// Soft, permanently: it counts the miss, says so, and returns. Nothing
+    /// about the run changes, which is what makes the level safe to measure
+    /// on whichever machine the step ran on — and so what keeps it harmless
+    /// once components are distributed and `step` no longer runs here.
+    /// Returns nothing because there is no verdict to act on.
+    fn judge_step_budget(
+        &mut self,
+        path: &ComponentPath,
+        now: SimTime,
+        step: Duration,
+        timing: &StepTiming,
+    ) {
+        if !timing.over_budget(step) {
+            return;
+        }
+        let budget = timing.budget.expect("over a budget, so one was set");
+        // Found by path rather than by an index threaded in from the caller.
+        // The lookup only happens on a miss, which is the diagnostic path.
+        let entry = self
+            .registry
+            .entry_mut_by_path(path)
+            .expect("just stepped, and membership is frozen mid-tick");
+        entry.budget_misses += 1;
+        warn!(
+            target: "continuo::timing",
+            component = %path,
+            sim_time = %now,
+            step_ms = diagnostic_millis(step),
+            budget_ms = diagnostic_millis(budget),
+            misses = entry.budget_misses,
+            "step over its budget (diagnostic only; the run is unaffected)"
+        );
+        self.emit_observation(RecordedObservation::BudgetMissed(RecordedBudgetMiss {
+            path: path.to_string(),
+            sim_time: now,
+            step_ms: diagnostic_millis(step),
+            budget_ms: diagnostic_millis(budget),
+        }));
+    }
+
+    /// Judges how long the conductor **waited** to hear that a component
+    /// had stepped against the **timeout** it declared (PLAN.md,
+    /// "Per-component timing").
+    ///
+    /// Hard: the declared policy either ends the run or takes the component
+    /// out of the next tick. Neither touches this one — the step has
+    /// already happened and everything it did stands, so the tick
+    /// fingerprints exactly as it would have anyway.
+    fn judge_step_timeout(
+        &mut self,
+        path: &ComponentPath,
+        now: SimTime,
+        waited: Duration,
+        timing: &StepTiming,
+    ) -> Result<(), ConductorError> {
+        if timing.over_timeout(waited) {
+            let timeout = timing.timeout.expect("over a timeout, so one was set");
+            warn!(
+                target: "continuo::timing",
+                component = %path,
+                sim_time = %now,
+                waited_ms = diagnostic_millis(waited),
+                timeout_ms = diagnostic_millis(timeout),
+                policy = ?timing.on_timeout,
+                "timed out waiting for its step"
+            );
+            // Record *why*, before the policy is applied. The leave a
+            // removal produces is deliberately indistinguishable from a
+            // scripted one, so that a replay which asks for the same leave
+            // matches; this observation is what carries the reason, and for
+            // a halt it is the only trace the log gets.
+            self.emit_observation(RecordedObservation::TimedOut(RecordedTimeout {
+                path: path.to_string(),
+                sim_time: now,
+                waited_ms: diagnostic_millis(waited),
+                timeout_ms: diagnostic_millis(timeout),
+                policy: timing.on_timeout,
+            }));
+            match timing.on_timeout {
+                OnTimeout::Halt => {
+                    return Err(ConductorError::StepTimeout {
+                        path: path.clone(),
+                        now,
+                        elapsed: waited,
+                        timeout,
+                    });
+                }
+                OnTimeout::Remove => {
+                    // Queue it exactly as a leave declared for the next open
+                    // instant, so it goes out through the one path that
+                    // removes a component: applied at the coming tick
+                    // boundary, and recorded like any other leave. It keeps
+                    // the tick it timed out in, because membership is frozen
+                    // for the whole of a tick.
+                    let leaves_at = self.earliest_open_instant();
+                    self.pending_leaves
+                        .entry(leaves_at)
+                        .or_default()
+                        .push(path.clone());
+                }
+            }
+        }
+
+        // Return Ok when the wait was within the timeout, or when the policy
+        // was to remove rather than halt: either way the run continues.
+        Ok(())
     }
 
     /// Runs until the earliest scheduled instant would exceed `end`

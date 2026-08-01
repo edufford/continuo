@@ -15,13 +15,20 @@ pub struct Cmd {
 }
 
 /// Pure-pursuit-flavored path follower: projects the latest pose onto the
-/// path, aims at a lookahead point, and commands a clamped yaw rate.
+/// road, aims at a lookahead point, and commands a clamped yaw rate.
+///
+/// Follows the road in **Frenet coordinates** — an arc length `s` found by
+/// projection, and a fixed lateral offset it holds. So every car on a road
+/// shares one [`Waypoints`], and a lane is a number rather than a curve of
+/// its own. Pass `0.0` to drive the road itself.
 ///
 /// Declared *before* its physics sibling in the car composite, so its
 /// command is delivered same-instant when both are due.
 pub struct PathFollowController {
     actor: String,
-    path: Arc<Waypoints>,
+    road: Arc<Waypoints>,
+    /// Meters left of the road's centerline to hold — the Frenet `d`.
+    lateral: f64,
     period: SimDuration,
     speed: f64,
     lookahead: f64,
@@ -34,7 +41,8 @@ impl PathFollowController {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         actor: impl Into<String>,
-        path: Arc<Waypoints>,
+        road: Arc<Waypoints>,
+        lateral: f64,
         period: SimDuration,
         speed: f64,
         lookahead: f64,
@@ -44,7 +52,8 @@ impl PathFollowController {
     ) -> Self {
         PathFollowController {
             actor: actor.into(),
-            path,
+            road,
+            lateral,
             period,
             speed,
             lookahead,
@@ -89,8 +98,8 @@ impl Component for PathFollowController {
         }
 
         let position = self.last_pose.position;
-        let s = self.path.project(position.x, position.y);
-        let target = self.path.point_at(s + self.lookahead);
+        let s = self.road.project(position.x, position.y);
+        let target = self.road.point_at_offset(s + self.lookahead, self.lateral);
         let desired_heading = f64::atan2(target.y - position.y, target.x - position.x);
         let heading_error = wrap_pi(desired_heading - self.last_pose.orientation.yaw());
         let cmd = Cmd {
