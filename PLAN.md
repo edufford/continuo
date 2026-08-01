@@ -761,7 +761,8 @@ the mix. They are independent and can swap if priorities shift.
     pose to notice. Only the way back from `StepCtx` is missing — what the
     request does when it arrives is the `pending_leaves` queue built in
     section 3, which applies a leave at the next tick boundary, exactly
-    where a mid-tick request has to take effect.
+    where a mid-tick request has to take effect. Both were settled on
+    2026-07-31: the subtree removal built, the voluntary departure rejected.
   - Deferred to **M7**: requests arriving over the transport rather than as
     direct calls. Not a scheduling matter after all — a join carries a
     `Box<dyn Component>`, which no transport can carry, so the request only
@@ -855,7 +856,74 @@ the mix. They are independent and can swap if priorities shift.
       is also the only trace a **halt** leaves, which otherwise ends a log
       with no indication why.
 
+- **2026-07-31** — Milestone 4's live traffic demo, and what it settled about
+  who may change membership:
+  - **The scenario is a straight highway**, not the milestone 1 oval: an ego
+    holding the centre lane at 30 m/s while slower traffic spawns ahead in
+    the lanes either side and is retired once overtaken. Traffic never
+    shares the ego's lane, because nothing here models a collision — cars in
+    front would be driven through. `Waypoints` grew an **open** mode for it:
+    a road that clamps at its ends rather than wrapping, so a lookahead past
+    the end keeps pointing down the road instead of teleporting a follower
+    back to the start.
+  - **Lanes are Frenet offsets, not paths.** One road is shared by every car
+    ever spawned, and a car holds a lateral offset `d` while following the
+    arc length `s` it projects onto — so `PathFollowController` takes a road
+    plus an offset, and a spawn request naming `(start_s, lane_offset)` is
+    already `(s, d)`. Giving each lane its own polyline instead looked
+    simpler and was worse in three ways: it allocated geometry per car, it
+    made the spawner compare arc lengths measured on *different* curves
+    (equal only because the curves were parallel straight lines), and it
+    could not survive the road bending, since parallel curves have
+    different lengths. A lane change also becomes a varying `d` rather than
+    new geometry.
+  - **A component decides the population; something outside builds it.** The
+    spawner watches poses and publishes `SpawnTrafficRequest` and
+    `DespawnTrafficRequest`; the run loop turns those into
+    `add_component`/`remove_component`. The split is forced — a component
+    cannot hand over a `Box<dyn Component>`, the same reason
+    join-over-transport is M7 — but it is also what keeps the traffic
+    pattern *inside* the determinism guarantee: the choices come from sim
+    state and a seeded stream, so a recorded run verifies. A loop that
+    picked spawn times itself would put the pattern outside what the log
+    can check.
+  - **Removing a composite takes its whole subtree**, one leave per leaf in
+    declaration order — the deferral recorded on 2026-07-28, built here
+    because retiring a car is what needed it. A car is a composite, so
+    "remove `traffic7`" has to reach both halves, and the log shows two
+    leaves rather than one: joins name leaves, so leaves must too, or a
+    recorded run could not be replayed by reissuing what the log contains.
+  - Timing of the application is deliberately not load-bearing. Requests
+    declare `first_due`, so *when* the loop applies one does not shape the
+    run, only that it lands before that instant.
+  - **Verification drives the same loop as an ordinary run**, which takes an
+    optional verifier and stops at the first divergence, rather than each
+    example hand-rolling its own step loop. A second loop is not a small
+    duplication here: forget to apply the spawner's requests in it and it
+    verifies a *different* world from the one recorded, and reports the
+    difference as a divergence in the sim.
+  - **Rejected: a component asking to leave on behalf of its actor.** Built
+    first, then reverted. An actor has no runtime existence — the tree is
+    registry data and a composite never steps — so a component speaking for
+    one claims authority over siblings it is told nothing about, on behalf
+    of something that is not there. Nothing joins as an actor either (joins
+    are per-leaf), so there was no arrival for it to mirror. Population
+    turned out to be somebody's job rather than each car's, and the spawner
+    is that somebody.
+  - The request type is **scenario-specific on purpose** and lives in
+    `continuo-actors` beside the spawner, not in `continuo-core`: a lane
+    offset in meters is not framework vocabulary. Its general form is the scenario
+    config's type-name-plus-parameters request, resolved by a host-side
+    registry — the same registry the run loop is standing in for, and the
+    part a host takes over at M7.
+
 ## Deferred (decided-not-now, revisit when they bite)
+
+- **A component asking to retire itself**: `StepCtx` has no way back to the
+  conductor, so nothing can say "I am done" (see `Component`'s TODO).
+  Milestone 4 expected its spawner to need this and it did not. Worth
+  building for a scripted actor that finishes its own work — and then only
+  at *component* scope, never on behalf of an actor.
 
 - **Road-network importer**: which format (OpenDRIVE, Lanelet2, other) lowers
   into the world spec — decide when realistic road scenarios are needed.

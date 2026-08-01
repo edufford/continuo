@@ -29,18 +29,20 @@ instant, and repeats.
              TickStart   │   TickDone { next_due }
             ┌────────────┴─────────────┐
             │        Transport         │   pub/sub on key expressions,
-            │   (InProc now, Zenoh     │   e.g. continuo/demo/actor/car1/pose
+            │   (InProc now, Zenoh     │   e.g. continuo/demo/actor/ego/pose
             │    later — same trait)   │
             └────────────┬─────────────┘
-          ┌──────────────┼──────────────┐
-   ┌──────┴─────┐ ┌──────┴─────┐ ┌──────┴─────┐
-   │    car1    │ │    car2    │ │   logger   │  world-level actors
-   │ ┌────────┐ │ │ ┌────────┐ │ │   (1 Hz)   │  (join/leave at runtime:
-   │ │  ctrl  │ │ │ │  ctrl  │ │ └────────────┘   milestone 4)
-   │ ├────────┤ │ │ ├────────┤ │
-   │ │physics │ │ │ │physics │ │  composites: ordered children,
-   │ └────────┘ │ │ └────────┘ │  intra-step pipeline
-   └────────────┘ └────────────┘
+       ┌─────────────┬───┴──────────┬──────────────────┐
+┌──────┴─────┐ ┌─────┴──────┐ ┌─────┴─────────┐ ┌──────┴─────┐
+│    ego     │ │  traffic7  │ │traffic_spawner│ │   logger   │ world-level
+│ ┌────────┐ │ │ ┌────────┐ │ │    (2 Hz)     │ │   (1 Hz)   │ actors
+│ │  ctrl  │ │ │ │  ctrl  │ │ └───────┬───────┘ └────────────┘
+│ ├────────┤ │ │ ├────────┤ │         │
+│ │physics │ │ │ │physics │ │         │ watches poses, asks for cars
+│ └────────┘ │ │ └────────┘ │         │ to be added and removed
+└────────────┘ └────────────┘         ▼
+  composites: ordered children,     traffic joins and leaves while
+  intra-step pipeline               the run is under way
 ```
 
 ### Key ideas
@@ -92,7 +94,7 @@ instant, and repeats.
 | [`continuo-core`](crates/continuo-core/) | `SimTime`/`SimDuration`, ids and paths, key expressions, `Vec3`/`Quat`/Euler (canonical Z-Y-X conversions), wire messages, the `Component` trait, owned hash/random/seed derivation |
 | [`continuo-transport`](crates/continuo-transport/) | `Transport` trait, deterministic `InProcTransport`, `MonitorTransport` for out-of-band message recording |
 | [`continuo-conductor`](crates/continuo-conductor/) | Registry (component tree as data), event schedule, the conductor loop, tick fingerprints, and the event log: `record`, `verify`, `playback` |
-| [`continuo-actors`](crates/continuo-actors/) | Sample components: waypoint path, path-follow controller, unicycle physics, pose logger |
+| [`continuo-actors`](crates/continuo-actors/) | Sample components: waypoint path, path-follow controller, unicycle physics, pose logger, traffic spawner |
 | [`continuo-examples`](crates/continuo-examples/) | Runnable example worlds: `traffic` (base demo), `traffic_realtime`, `traffic_record`, `traffic_verify`, `traffic_resim` |
 
 ### Milestones
@@ -128,7 +130,8 @@ cargo test --workspace
 cargo clippy --workspace --all-targets
 cargo fmt --all
 
-# Run the demo: three cars circulating an oval, free-run, 30 sim-seconds
+# Run the demo: an ego car on a straight highway, traffic spawning ahead of
+# it and retiring once passed; free-run, 30 sim-seconds
 cargo run -p continuo-examples --example traffic
 
 # The same world paced to 1x real time (argument = sim-seconds to run;
@@ -143,25 +146,34 @@ cargo run -p continuo-examples --example traffic_record -- run.jsonl
 # divergence
 cargo run -p continuo-examples --example traffic_verify -- run.jsonl
 
-# Open-loop resimulation: car1 runs live while car2/car3 are played back
-# from the log — the harness for what-if experiments (nothing is compared)
+# Open-loop resimulation: a live ego driven against played-back traffic —
+# change the ego and see what it does to the same recorded scene
+# (nothing is compared)
 cargo run -p continuo-examples --example traffic_resim -- run.jsonl
 ```
 
-The demo logs each car's pose once per sim-second and finishes in a fraction
-of a wall-second:
+The demo logs every live car's pose once per sim-second and finishes in a
+fraction of a wall-second. Traffic appears as it is spawned, so the roll
+changes as the run goes on:
 
 ```
-INFO initial pose sim_time=0.0 key="continuo/demo/actor/car1/pose" x=40.00 y=0.00 yaw_deg=94.0
-INFO initial pose sim_time=0.0 key="continuo/demo/actor/car2/pose" x=-17.02 y=22.62 yaw_deg=-162.0
-INFO initial pose sim_time=0.0 key="continuo/demo/actor/car3/pose" x=-17.02 y=-22.62 yaw_deg=-18.0
+INFO initial pose sim_time=0.0 key="continuo/demo/actor/ego/pose" x=0.00 y=0.00 yaw_deg=0.0
+INFO initial pose sim_time=0.5 key="continuo/demo/actor/traffic1/pose" x=80.36 y=-3.50 yaw_deg=0.0
 ...
-INFO pose sim_time=1.0 key="continuo/demo/actor/car1/pose" x=38.36 y=7.79 yaw_deg=112.3
-INFO pose sim_time=1.0 key="continuo/demo/actor/car2/pose" x=-24.51 y=19.83 yaw_deg=-155.9
+INFO pose sim_time=4.0 key="continuo/demo/actor/ego/pose" x=120.00 y=0.00 yaw_deg=0.0
+INFO pose sim_time=4.0 key="continuo/demo/actor/traffic1/pose" x=145.38 y=-3.50 yaw_deg=0.0
+INFO pose sim_time=4.0 key="continuo/demo/actor/traffic2/pose" x=190.87 y=-3.50 yaw_deg=0.0
 ...
 done: world 'demo' reached sim time 30.0 in 3031 ticks (free-run)
-actual time: 0.246 s (122x real-time), world hash 29b27762a793f916
+actual time: 0.601 s (50x real-time), world hash 7c4cbf0d148d9621
 ```
+
+The ego holds the centre lane at 30 m/s; traffic runs 16–22 m/s in the lanes
+either side, so the ego spends the run overtaking. Nothing here models a
+collision, which is why traffic never shares the ego's lane. A car is
+retired once it falls 60 m behind, and a replacement spawns ahead — over
+30 sim-seconds fourteen different cars pass through a world that holds six
+at a time, eight of them retired along the way.
 
 The world hash is the run's determinism fingerprint: identical for every
 run of the same seeded scenario, on every platform CI tests.
