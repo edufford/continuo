@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use continuo_core::{
     Component, ComponentPath, HashFnv1a64, Message, SimDuration, SimTime, StepCtx, TickDone,
@@ -18,7 +18,7 @@ use crate::record::{
 };
 use crate::registry::Registry;
 use crate::schedule::Schedule;
-use crate::timing::{OnTimeout, diagnostic_millis};
+use crate::timing::{OnTimeout, StepTiming, diagnostic_millis};
 
 type TickCallback = Box<dyn FnMut(&TickFingerprint) + Send>;
 type MembershipCallback = Box<dyn FnMut(&MembershipChange) + Send>;
@@ -139,7 +139,8 @@ impl<T: Transport> Conductor<T> {
         }
     }
 
-    /// Reports a wall-clock observation to the observer, if any.
+    /// Reports an observation to the observer, if any — something worth
+    /// noting about the run rather than a part of it.
     fn emit_observation(&mut self, observation: RecordedObservation) {
         if let Some(callback) = self.observation_callback.as_mut() {
             callback(&observation);
@@ -267,21 +268,21 @@ impl<T: Transport> Conductor<T> {
         component: Box<dyn Component>,
     ) -> Result<ComponentPath, ConductorError> {
         let join = join.into();
-        let parent = ComponentPath::parse(&join.parent)?;
+        let parent_path = ComponentPath::parse(&join.parent_path)?;
 
         // Validate before touching anything, so a rejected join leaves no
         // trace: no half-registered entry, no stray subscriptions.
         let earliest_open = self.earliest_open_instant();
         if join.first_due < earliest_open {
             return Err(ConductorError::JoinInThePast {
-                path: parent.join(component.id()),
+                path: parent_path.join(component.id()),
                 first_due: join.first_due,
                 earliest_open,
             });
         }
         if let Some((budget, timeout)) = join.timing.unreachable_budget() {
             return Err(ConductorError::UnreachableStepBudget {
-                path: parent.join(component.id()),
+                path: parent_path.join(component.id()),
                 budget,
                 timeout,
             });
@@ -290,7 +291,7 @@ impl<T: Transport> Conductor<T> {
         let subscriptions = component.subscriptions();
         let (index, path) =
             self.registry
-                .add(&parent, component, self.config.world_seed, join.timing)?;
+                .add(&parent_path, component, self.config.world_seed, join.timing)?;
         for key in subscriptions {
             self.transport.subscribe(path.clone(), key);
         }
@@ -391,7 +392,7 @@ impl<T: Transport> Conductor<T> {
         let departing = if self.registry.index_of(&path).is_some() {
             vec![path]
         } else {
-            let subtree = self.registry.leaves_under(&path);
+            let subtree = self.registry.components_under(&path);
             if subtree.is_empty() {
                 return Err(ConductorError::UnknownPath(path));
             }
@@ -610,88 +611,16 @@ impl<T: Transport> Conductor<T> {
                 "tick done"
             );
 
-            // Per-component timing (PLAN.md, "Per-component timing"). The
-            // step has already happened and everything above stands: a
-            // verdict on how long it took never edits the tick it was
-            // measured in, so this tick is exactly the tick it would have
-            // been. What a verdict can do is end the run, or take the
-            // component out of the next one.
-            //
-            // Both levels are judged, not just the worse one. They read
+            // Per-component timing (PLAN.md, "Per-component timing"). Both
+            // levels are judged, not just the worse one: they read
             // different quantities — the step itself, and how long the
-            // conductor waited to hear about it — which happen to be one
-            // number in-process, and are two the moment a transport gets
-            // between them. The soft one goes first so a run that is about
-            // to halt still records what it observed.
-            if timing.over_budget(step_wall) {
-                // Soft: observe and carry on. The run is untouched, so this
-                // cannot move the world hash.
-                let budget = timing.budget.expect("over a budget, so one was set");
-                let entry = self
-                    .registry
-                    .entry_mut(index)
-                    .expect("stepped above, and membership is frozen mid-tick");
-                entry.budget_misses += 1;
-                warn!(
-                    target: "continuo::timing",
-                    component = %path,
-                    sim_time = %now,
-                    step_ms = diagnostic_millis(step_wall),
-                    budget_ms = diagnostic_millis(budget),
-                    misses = entry.budget_misses,
-                    "step over its budget (diagnostic only; the run is unaffected)"
-                );
-                self.emit_observation(RecordedObservation::BudgetMissed(RecordedBudgetMiss {
-                    path: path.to_string(),
-                    sim_time: now,
-                    step_ms: diagnostic_millis(step_wall),
-                    budget_ms: diagnostic_millis(budget),
-                }));
-            }
-            if timing.over_timeout(step_wall) {
-                let timeout = timing.timeout.expect("over a timeout, so one was set");
-                warn!(
-                    target: "continuo::timing",
-                    component = %path,
-                    sim_time = %now,
-                    waited_ms = diagnostic_millis(step_wall),
-                    timeout_ms = diagnostic_millis(timeout),
-                    policy = ?timing.on_timeout,
-                    "timed out waiting for its step"
-                );
-                // Record *why*, before the policy is applied. The leave a
-                // removal produces is deliberately indistinguishable from a
-                // scripted one, so that a replay which asks for the same
-                // leave matches; this observation is what carries the
-                // reason, and for a halt it is the only trace the log gets.
-                self.emit_observation(RecordedObservation::TimedOut(RecordedTimeout {
-                    path: path.to_string(),
-                    sim_time: now,
-                    waited_ms: diagnostic_millis(step_wall),
-                    timeout_ms: diagnostic_millis(timeout),
-                    policy: timing.on_timeout,
-                }));
-                match timing.on_timeout {
-                    OnTimeout::Halt => {
-                        return Err(ConductorError::StepTimeout {
-                            path,
-                            now,
-                            elapsed: step_wall,
-                            timeout,
-                        });
-                    }
-                    OnTimeout::Remove => {
-                        // Queue it exactly as a leave declared for the next
-                        // open instant, so it goes out through the one path
-                        // that removes a component: applied at the coming
-                        // tick boundary, and recorded like any other leave.
-                        // It keeps the tick it timed out in, because
-                        // membership is frozen for the whole of a tick.
-                        let leaves_at = self.earliest_open_instant();
-                        self.pending_leaves.entry(leaves_at).or_default().push(path);
-                    }
-                }
-            }
+            // conductor waited to hear about it — which happen to be the
+            // one measurement in-process, and are two the moment a
+            // transport gets between them. Hence one call each, with
+            // `step_wall` standing in for both. The soft one goes first so
+            // a run that is about to halt still records what it observed.
+            self.judge_step_budget(&path, now, step_wall, &timing);
+            self.judge_step_timeout(&path, now, step_wall, &timing)?;
         }
 
         // Chain this tick into the running world hash and emit the
@@ -711,6 +640,117 @@ impl<T: Transport> Conductor<T> {
 
         // Return true: a tick was executed (more may be scheduled).
         Ok(true)
+    }
+
+    /// Judges how long a component's own `step` took against the **budget**
+    /// it declared (PLAN.md, "Per-component timing").
+    ///
+    /// Soft, permanently: it counts the miss, says so, and returns. Nothing
+    /// about the run changes, which is what makes the level safe to measure
+    /// on whichever machine the step ran on — and so what keeps it harmless
+    /// once components are distributed and `step` no longer runs here.
+    /// Returns nothing because there is no verdict to act on.
+    fn judge_step_budget(
+        &mut self,
+        path: &ComponentPath,
+        now: SimTime,
+        step: Duration,
+        timing: &StepTiming,
+    ) {
+        if !timing.over_budget(step) {
+            return;
+        }
+        let budget = timing.budget.expect("over a budget, so one was set");
+        // Found by path rather than by an index threaded in from the caller.
+        // The lookup only happens on a miss, which is the diagnostic path.
+        let entry = self
+            .registry
+            .entry_mut_by_path(path)
+            .expect("just stepped, and membership is frozen mid-tick");
+        entry.budget_misses += 1;
+        warn!(
+            target: "continuo::timing",
+            component = %path,
+            sim_time = %now,
+            step_ms = diagnostic_millis(step),
+            budget_ms = diagnostic_millis(budget),
+            misses = entry.budget_misses,
+            "step over its budget (diagnostic only; the run is unaffected)"
+        );
+        self.emit_observation(RecordedObservation::BudgetMissed(RecordedBudgetMiss {
+            path: path.to_string(),
+            sim_time: now,
+            step_ms: diagnostic_millis(step),
+            budget_ms: diagnostic_millis(budget),
+        }));
+    }
+
+    /// Judges how long the conductor **waited** to hear that a component
+    /// had stepped against the **timeout** it declared (PLAN.md,
+    /// "Per-component timing").
+    ///
+    /// Hard: the declared policy either ends the run or takes the component
+    /// out of the next tick. Neither touches this one — the step has
+    /// already happened and everything it did stands, so the tick
+    /// fingerprints exactly as it would have anyway.
+    fn judge_step_timeout(
+        &mut self,
+        path: &ComponentPath,
+        now: SimTime,
+        waited: Duration,
+        timing: &StepTiming,
+    ) -> Result<(), ConductorError> {
+        if timing.over_timeout(waited) {
+            let timeout = timing.timeout.expect("over a timeout, so one was set");
+            warn!(
+                target: "continuo::timing",
+                component = %path,
+                sim_time = %now,
+                waited_ms = diagnostic_millis(waited),
+                timeout_ms = diagnostic_millis(timeout),
+                policy = ?timing.on_timeout,
+                "timed out waiting for its step"
+            );
+            // Record *why*, before the policy is applied. The leave a
+            // removal produces is deliberately indistinguishable from a
+            // scripted one, so that a replay which asks for the same leave
+            // matches; this observation is what carries the reason, and for
+            // a halt it is the only trace the log gets.
+            self.emit_observation(RecordedObservation::TimedOut(RecordedTimeout {
+                path: path.to_string(),
+                sim_time: now,
+                waited_ms: diagnostic_millis(waited),
+                timeout_ms: diagnostic_millis(timeout),
+                policy: timing.on_timeout,
+            }));
+            match timing.on_timeout {
+                OnTimeout::Halt => {
+                    return Err(ConductorError::StepTimeout {
+                        path: path.clone(),
+                        now,
+                        elapsed: waited,
+                        timeout,
+                    });
+                }
+                OnTimeout::Remove => {
+                    // Queue it exactly as a leave declared for the next open
+                    // instant, so it goes out through the one path that
+                    // removes a component: applied at the coming tick
+                    // boundary, and recorded like any other leave. It keeps
+                    // the tick it timed out in, because membership is frozen
+                    // for the whole of a tick.
+                    let leaves_at = self.earliest_open_instant();
+                    self.pending_leaves
+                        .entry(leaves_at)
+                        .or_default()
+                        .push(path.clone());
+                }
+            }
+        }
+
+        // Return Ok when the wait was within the timeout, or when the policy
+        // was to remove rather than halt: either way the run continues.
+        Ok(())
     }
 
     /// Runs until the earliest scheduled instant would exceed `end`

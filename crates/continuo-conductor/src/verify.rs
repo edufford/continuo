@@ -29,10 +29,12 @@ impl fmt::Display for Divergence {
     }
 }
 
-/// The lines of a log that verification is *about*: everything except the
-/// observations, which record what the machine did rather than what the run
-/// did and which a faithful re-run is free to differ on (see
-/// [`RecordedObservation`]).
+/// The expectations in a log: the lines a re-run has to reproduce to be
+/// called deterministic.
+///
+/// Everything except the observations, which record what the machine did
+/// rather than what the run did, and which a faithful re-run is free to
+/// differ on (see [`RecordedObservation`]).
 ///
 /// Indexes are kept alongside, so a divergence still points at the line it
 /// is in rather than at a position in some filtered stream.

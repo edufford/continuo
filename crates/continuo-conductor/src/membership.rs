@@ -26,7 +26,7 @@ use crate::timing::StepTiming;
 pub struct JoinMetadata {
     /// `""` for a world-level actor, or a composite's path to join it. The
     /// component's own id completes the path.
-    pub parent: String,
+    pub parent_path: String,
     /// Sim time of the component's first step.
     ///
     /// Declared, never inferred: only the joiner knows its own phase. The
@@ -55,20 +55,20 @@ impl JoinMetadata {
     /// This is what you get by passing just the parent path where a join is
     /// expected: `add_component("car1", component)` is shorthand for
     /// `add_component(JoinMetadata::at_start("car1"), component)`.
-    pub fn at_start(parent: impl Into<String>) -> Self {
+    pub fn at_start(parent_path: impl Into<String>) -> Self {
         // Return a join for the world's opening instant.
         JoinMetadata {
-            parent: parent.into(),
+            parent_path: parent_path.into(),
             first_due: SimTime::ZERO,
             timing: StepTiming::unlimited(),
         }
     }
 
     /// Joins a run already in progress, first stepping at `first_due`.
-    pub fn at(parent: impl Into<String>, first_due: SimTime) -> Self {
+    pub fn at(parent_path: impl Into<String>, first_due: SimTime) -> Self {
         // Return a join scheduled for a specific instant.
         JoinMetadata {
-            parent: parent.into(),
+            parent_path: parent_path.into(),
             first_due,
             timing: StepTiming::unlimited(),
         }
@@ -158,19 +158,19 @@ impl From<&String> for LeaveMetadata {
 /// zero — long closed — and the join is rejected rather than quietly
 /// landing at some instant the caller never chose.
 impl From<&str> for JoinMetadata {
-    fn from(parent: &str) -> Self {
-        JoinMetadata::at_start(parent)
+    fn from(parent_path: &str) -> Self {
+        JoinMetadata::at_start(parent_path)
     }
 }
 
 impl From<String> for JoinMetadata {
-    fn from(parent: String) -> Self {
-        JoinMetadata::at_start(parent)
+    fn from(parent_path: String) -> Self {
+        JoinMetadata::at_start(parent_path)
     }
 }
 
 impl From<&String> for JoinMetadata {
-    fn from(parent: &String) -> Self {
-        JoinMetadata::at_start(parent.clone())
+    fn from(parent_path: &String) -> Self {
+        JoinMetadata::at_start(parent_path.clone())
     }
 }

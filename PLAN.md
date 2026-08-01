@@ -925,6 +925,17 @@ the mix. They are independent and can swap if priorities shift.
   building for a scripted actor that finishes its own work — and then only
   at *component* scope, never on behalf of an actor.
 
+- **Reclaiming vacated registry slots**: `Registry::entries` never shrinks,
+  so a long run with heavy turnover accumulates one dead slot per departed
+  component, and the due loop skips past them for the rest of the run. Fine
+  at demo scale — thirty sim-seconds of traffic leaves eight holes — and the
+  cost is bounded by *total* joins rather than by live components, so it
+  only bites where a scenario churns many actors over a long run. Not
+  fixable by compacting: an index **is** the execution order within an
+  instant, so shifting one silently reorders components that had nothing to
+  do with the departure. It needs a free list plus a generation counter on
+  each slot, so a reused index cannot be mistaken for its predecessor.
+
 - **Road-network importer**: which format (OpenDRIVE, Lanelet2, other) lowers
   into the world spec — decide when realistic road scenarios are needed.
 - **Snapshot/restore**: via FMI 3.0 `SerializeFMUState` for FMUs plus a

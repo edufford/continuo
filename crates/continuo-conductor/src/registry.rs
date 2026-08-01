@@ -19,10 +19,10 @@ pub(crate) struct Tree {
 }
 
 impl Tree {
-    fn note_child(&mut self, parent: &ComponentPath, child: &ComponentId) {
-        let children = self.children.entry(parent.clone()).or_default();
-        if !children.contains(child) {
-            children.push(child.clone());
+    fn note_child(&mut self, parent_path: &ComponentPath, child_name: &ComponentId) {
+        let children = self.children.entry(parent_path.clone()).or_default();
+        if !children.contains(child_name) {
+            children.push(child_name.clone());
         }
     }
 
@@ -39,17 +39,17 @@ impl Tree {
     /// empty, and an empty node is not a node: it has to be forgotten from
     /// *its* parent in turn, on up until a node still has survivors or the
     /// world root is reached. So removing one leaf can retire a whole spine
-    /// of composites that existed only to hold it, and `child` is not
+    /// of composites that existed only to hold it, and `child_name` is not
     /// always a leaf — above the first step it is whatever branch just
     /// emptied.
-    fn forget_child(&mut self, parent: &ComponentPath, child: &ComponentId) {
-        let Some(children) = self.children.get_mut(parent) else {
+    fn forget_child(&mut self, parent_path: &ComponentPath, child_name: &ComponentId) {
+        let Some(children) = self.children.get_mut(parent_path) else {
             return;
         };
         // The forgetting itself. `retain` is a keep-filter, so the condition
         // is the survivors rather than the departure: everything that is
-        // *not* `child` stays, in the order it was already in.
-        children.retain(|c| c != child);
+        // *not* `child_name` stays, in the order it was already in.
+        children.retain(|c| c != child_name);
         // Survivors keep this node internal, and keep it a declared sibling
         // of its own siblings, so nothing above it changes. This is where
         // the walk up stops — and for the ordinary case, one leaf leaving a
@@ -64,13 +64,15 @@ impl Tree {
         // its old position instead, which is the disagreement between
         // arrival order and tree order that vacating slots exists to
         // prevent.
-        self.children.remove(parent);
+        self.children.remove(parent_path);
         // The pattern doubles as the other stopping condition: the world
         // root has no parent and no last segment, so the walk ends there
         // rather than trying to forget the root from something above it.
-        if let (Some(grandparent), Some(id)) = (parent.parent(), parent.segments().last()) {
-            let id = id.clone();
-            self.forget_child(&grandparent, &id);
+        if let (Some(grandparent_path), Some(child_name)) =
+            (parent_path.parent(), parent_path.segments().last())
+        {
+            let child_name = child_name.clone();
+            self.forget_child(&grandparent_path, &child_name);
         }
     }
 
@@ -135,6 +137,10 @@ pub(crate) struct Entry {
 /// removing is what keeps every surviving index stable: indexes are the
 /// execution order within an instant, so shifting them would silently
 /// reorder components that had nothing to do with the departure.
+// TODO(PLAN "Deferred"): vacated slots are never reclaimed, so this grows
+// with *total* joins rather than with live components, and the due loop
+// steps over the holes for the rest of the run. Harmless at demo scale;
+// revisit for a long run that churns many actors.
 #[derive(Default)]
 pub(crate) struct Registry {
     pub(crate) entries: Vec<Option<Entry>>,
@@ -161,6 +167,18 @@ impl Registry {
         self.by_path.get(path).copied()
     }
 
+    /// Mutable access to the component registered at `path`; `None` if
+    /// nothing is. A map lookup rather than the direct indexing of
+    /// [`Self::entry_mut`], for callers that hold the path and would
+    /// otherwise have to carry an index alongside it.
+    pub(crate) fn entry_mut_by_path(&mut self, path: &ComponentPath) -> Option<&mut Entry> {
+        let index = self.index_of(path)?;
+
+        // Return the entry at that slot; the index came from `by_path`, so
+        // it is in range and live.
+        self.entry_mut(index)
+    }
+
     /// Every registered leaf strictly beneath `path`, in declaration order —
     /// what a composite means, given only leaves are ever registered.
     ///
@@ -169,8 +187,8 @@ impl Registry {
     ///
     /// Declaration order, not path order, because that is the order the
     /// removals must happen in to be reproducible: it is the order the
-    /// components step in, and the order their leaves reach the log.
-    pub(crate) fn leaves_under(&self, path: &ComponentPath) -> Vec<ComponentPath> {
+    /// components step in, and the order their departures reach the log.
+    pub(crate) fn components_under(&self, path: &ComponentPath) -> Vec<ComponentPath> {
         let depth = path.segments().len();
         let mut found: Vec<(usize, ComponentPath)> = self
             .by_path
@@ -182,7 +200,7 @@ impl Registry {
             .collect();
         found.sort_unstable_by_key(|(index, _)| *index);
 
-        // Return the subtree's leaves, earliest-declared first.
+        // Return the subtree's components, earliest-declared first.
         found.into_iter().map(|(_, path)| path).collect()
     }
 
@@ -201,24 +219,24 @@ impl Registry {
         self.entries[index] = None;
         // Registered paths are always leaves, so both of these hold; the
         // pattern just avoids asserting it.
-        if let (Some(parent), Some(id)) = (path.parent(), path.segments().last()) {
-            self.tree.forget_child(&parent, id);
+        if let (Some(parent_path), Some(child_name)) = (path.parent(), path.segments().last()) {
+            self.tree.forget_child(&parent_path, child_name);
         }
 
         // Return the vacated index; its schedule entries are now stale.
         Some(index)
     }
 
-    /// Registers a leaf under `parent`, creating intermediate tree nodes as
-    /// needed. Returns the declaration index and full path.
+    /// Registers a leaf under `parent_path`, creating intermediate tree nodes
+    /// as needed. Returns the declaration index and full path.
     pub(crate) fn add(
         &mut self,
-        parent: &ComponentPath,
+        parent_path: &ComponentPath,
         component: Box<dyn Component>,
         world_seed: u64,
         timing: StepTiming,
     ) -> Result<(usize, ComponentPath), ConductorError> {
-        let path = parent.join(component.id());
+        let path = parent_path.join(component.id());
 
         if self.by_path.contains_key(&path) {
             return Err(ConductorError::DuplicatePath(path));
@@ -247,9 +265,9 @@ impl Registry {
         // (including the leaf itself, at depth == len) must be recorded as a
         // child of the node above it.
         for depth in 1..=path.segments().len() {
-            let node_parent = path.prefix(depth - 1);
+            let node_parent_path = path.prefix(depth - 1);
             self.tree
-                .note_child(&node_parent, &path.segments()[depth - 1]);
+                .note_child(&node_parent_path, &path.segments()[depth - 1]);
         }
 
         let index = self.entries.len();
@@ -459,11 +477,11 @@ mod tests {
         ));
     }
 
-    /// Registers `id` under `parent`, returning the full path.
-    fn add(reg: &mut Registry, parent: &str, id: &'static str) -> ComponentPath {
+    /// Registers `id` under `parent_path`, returning the full path.
+    fn add(reg: &mut Registry, parent_path: &str, id: &'static str) -> ComponentPath {
         let (_, path) = reg
             .add(
-                &path(parent),
+                &path(parent_path),
                 Box::new(Dummy(id)),
                 TEST_WORLD_SEED,
                 NO_LIMITS,
@@ -485,12 +503,12 @@ mod tests {
         add(&mut reg, "car2", "physics");
 
         assert_eq!(
-            reg.leaves_under(&path("car1")),
+            reg.components_under(&path("car1")),
             vec![path("car1/z"), path("car1/a")],
             "declaration order, not alphabetical"
         );
         assert_eq!(
-            reg.leaves_under(&path("car2")),
+            reg.components_under(&path("car2")),
             vec![path("car2/physics")],
             "and only the subtree named"
         );
@@ -504,8 +522,8 @@ mod tests {
         // Strict descendants only: a leaf is not under itself, which is
         // what lets a caller tell "this is a leaf" from "this is a
         // composite" by asking both questions.
-        assert!(reg.leaves_under(&physics).is_empty());
-        assert!(reg.leaves_under(&path("nobody")).is_empty());
+        assert!(reg.components_under(&physics).is_empty());
+        assert!(reg.components_under(&path("nobody")).is_empty());
     }
 
     #[test]
@@ -515,12 +533,12 @@ mod tests {
         add(&mut reg, "car1", "physics");
 
         assert_eq!(
-            reg.leaves_under(&path("car1")),
+            reg.components_under(&path("car1")),
             vec![path("car1/sensors/imu"), path("car1/physics")],
             "depth is irrelevant; declaration order still decides"
         );
         assert_eq!(
-            reg.leaves_under(&path("car1/sensors")),
+            reg.components_under(&path("car1/sensors")),
             vec![path("car1/sensors/imu")]
         );
     }
