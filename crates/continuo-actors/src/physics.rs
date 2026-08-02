@@ -8,7 +8,7 @@ use crate::controller::Cmd;
 /// (sample-and-hold) and publishes the pose. Publishes `z = 0` and yaw-only
 /// quaternions per the pose convention.
 pub struct UnicyclePhysics {
-    actor: String,
+    actor_name: String,
     period: SimDuration,
     x: f64,
     y: f64,
@@ -17,9 +17,9 @@ pub struct UnicyclePhysics {
 }
 
 impl UnicyclePhysics {
-    pub fn new(actor: impl Into<String>, period: SimDuration, initial_pose: Pose) -> Self {
+    pub fn new(actor_name: impl Into<String>, period: SimDuration, initial_pose: Pose) -> Self {
         UnicyclePhysics {
-            actor: actor.into(),
+            actor_name: actor_name.into(),
             period,
             x: initial_pose.position.x,
             y: initial_pose.position.y,
@@ -42,7 +42,7 @@ impl Component for UnicyclePhysics {
     }
 
     fn subscriptions(&self) -> Vec<KeyExpr> {
-        vec![KeyExpr::new(format!("continuo/*/actor/{}/cmd", self.actor)).expect("valid key")]
+        vec![KeyExpr::new(format!("continuo/*/actor/{}/cmd", self.actor_name)).expect("valid key")]
     }
 
     fn step(&mut self, ctx: &mut StepCtx) -> SimTime {
@@ -62,7 +62,7 @@ impl Component for UnicyclePhysics {
             self.yaw = (self.yaw + self.cmd.yaw_rate * dt).rem_euclid(std::f64::consts::TAU);
         }
 
-        let key = crate::pose_key(ctx.world_name(), &self.actor);
+        let key = crate::pose_key(ctx.world_name(), &self.actor_name);
         ctx.publish(key, &self.pose()).expect("pose serializes");
 
         // Return the next due time, one physics period from now.
