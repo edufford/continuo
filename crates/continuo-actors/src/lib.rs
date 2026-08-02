@@ -35,13 +35,13 @@ pub use traffic_spawner::{
 };
 
 /// Key for an actor's pose in `world`.
-pub fn pose_key(world_name: &str, actor: &str) -> continuo_core::KeyExpr {
-    continuo_core::KeyExpr::new(format!("continuo/{world_name}/actor/{actor}/pose"))
+pub fn pose_key(world_name: &str, actor_name: &str) -> continuo_core::KeyExpr {
+    continuo_core::KeyExpr::new(format!("continuo/{world_name}/actor/{actor_name}/pose"))
         .expect("valid pose key")
 }
 
 /// Key for an actor's drive command in `world`.
-pub fn cmd_key(world_name: &str, actor: &str) -> continuo_core::KeyExpr {
-    continuo_core::KeyExpr::new(format!("continuo/{world_name}/actor/{actor}/cmd"))
+pub fn cmd_key(world_name: &str, actor_name: &str) -> continuo_core::KeyExpr {
+    continuo_core::KeyExpr::new(format!("continuo/{world_name}/actor/{actor_name}/cmd"))
         .expect("valid cmd key")
 }

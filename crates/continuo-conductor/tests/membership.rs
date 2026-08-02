@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use continuo_conductor::record::LogEvent;
 use continuo_conductor::{
     Conductor, ConductorConfig, ConductorError, JoinMetadata, LeaveMetadata, MembershipChange,
-    Pacing, RecordedJoin, RecordedLeave, Recorder, Verifier,
+    Pacing, RecordedJoin, RecordedLeave, Recorder, Verifier, WORLD_LEVEL,
 };
 use continuo_core::{Component, ComponentId, KeyExpr, SimDuration, SimTime, StepCtx};
 use continuo_transport::{InProcTransport, MonitorTransport};
@@ -75,7 +75,7 @@ fn run_with_departure(steps: &StepLog) -> Conductor<InProcTransport> {
     for id in ["a", "b"] {
         conductor
             .add_component(
-                "",
+                WORLD_LEVEL,
                 Box::new(Ticker {
                     id,
                     period: dur_ms(10),
@@ -152,12 +152,15 @@ fn a_component_admitted_mid_run_first_steps_at_its_declared_time() {
     let steps: StepLog = Default::default();
     let mut conductor = new_conductor();
     conductor
-        .add_component("", ticker("a", &steps))
+        .add_component(WORLD_LEVEL, ticker("a", &steps))
         .expect("registration succeeds");
     conductor.run_until(t_sim_ms(10)).expect("steps succeed");
 
     conductor
-        .add_component(JoinMetadata::at("", t_sim_ms(25)), ticker("b", &steps))
+        .add_component(
+            JoinMetadata::at(WORLD_LEVEL, t_sim_ms(25)),
+            ticker("b", &steps),
+        )
         .expect("25 ms is still ahead");
     conductor.run_until(t_sim_ms(40)).expect("steps succeed");
 
@@ -189,7 +192,7 @@ fn a_joining_component_is_scheduled_before_its_instant_arrives() {
     let steps: StepLog = Default::default();
     let mut conductor = new_conductor();
     conductor
-        .add_component("", ticker("a", &steps))
+        .add_component(WORLD_LEVEL, ticker("a", &steps))
         .expect("registration succeeds");
     conductor.run_until(t_sim_ms(10)).expect("steps succeed");
     assert_eq!(
@@ -199,7 +202,10 @@ fn a_joining_component_is_scheduled_before_its_instant_arrives() {
     );
 
     conductor
-        .add_component(JoinMetadata::at("", t_sim_ms(15)), ticker("b", &steps))
+        .add_component(
+            JoinMetadata::at(WORLD_LEVEL, t_sim_ms(15)),
+            ticker("b", &steps),
+        )
         .expect("15 ms is still ahead");
 
     assert_eq!(
@@ -215,25 +221,31 @@ fn joining_an_instant_that_has_already_happened_is_an_error() {
     let steps: StepLog = Default::default();
     let mut conductor = new_conductor();
     conductor
-        .add_component("", ticker("a", &steps))
+        .add_component(WORLD_LEVEL, ticker("a", &steps))
         .expect("registration succeeds");
     conductor.run_until(t_sim_ms(10)).expect("steps succeed");
 
     // Well behind the run.
     assert!(matches!(
-        conductor.add_component(JoinMetadata::at("", t_sim_ms(5)), ticker("late", &steps)),
+        conductor.add_component(
+            JoinMetadata::at(WORLD_LEVEL, t_sim_ms(5)),
+            ticker("late", &steps)
+        ),
         Err(ConductorError::JoinInThePast { .. })
     ));
     // And the instant just stepped is closed too: joining it would step
     // t=10 ms a second time.
     assert!(matches!(
-        conductor.add_component(JoinMetadata::at("", t_sim_ms(10)), ticker("late", &steps)),
+        conductor.add_component(
+            JoinMetadata::at(WORLD_LEVEL, t_sim_ms(10)),
+            ticker("late", &steps)
+        ),
         Err(ConductorError::JoinInThePast { .. })
     ));
     // One nanosecond later is open.
     conductor
         .add_component(
-            JoinMetadata::at("", t_sim_ms(10) + SimDuration::from_nanos(1)),
+            JoinMetadata::at(WORLD_LEVEL, t_sim_ms(10) + SimDuration::from_nanos(1)),
             ticker("just_in_time", &steps),
         )
         .expect("the next instant has not happened yet");
@@ -253,7 +265,7 @@ fn the_parent_path_shorthand_only_works_before_the_run_starts() {
     // Passing just the parent path means `JoinMetadata::at_start`, so before
     // anything has stepped it lands on the world's opening instant.
     conductor
-        .add_component("", ticker("a", &steps))
+        .add_component(WORLD_LEVEL, ticker("a", &steps))
         .expect("nothing has stepped yet");
     conductor.run_until(t_sim_ms(10)).expect("steps succeed");
 
@@ -262,7 +274,7 @@ fn the_parent_path_shorthand_only_works_before_the_run_starts() {
     // an instant the caller never chose. Joining a running world is
     // something you have to say the time for.
     assert!(matches!(
-        conductor.add_component("", ticker("b", &steps)),
+        conductor.add_component(WORLD_LEVEL, ticker("b", &steps)),
         Err(ConductorError::JoinInThePast { .. })
     ));
 }
@@ -279,11 +291,14 @@ fn record_a_dynamic_run(config: &ConductorConfig) -> continuo_conductor::EventLo
     conductor.set_membership_callback(recorder.membership_callback());
 
     conductor
-        .add_component("", ticker("a", &steps))
+        .add_component(WORLD_LEVEL, ticker("a", &steps))
         .expect("registration succeeds");
     conductor.run_until(t_sim_ms(10)).expect("steps succeed");
     conductor
-        .add_component(JoinMetadata::at("", t_sim_ms(25)), ticker("b", &steps))
+        .add_component(
+            JoinMetadata::at(WORLD_LEVEL, t_sim_ms(25)),
+            ticker("b", &steps),
+        )
         .expect("25 ms is still ahead");
     conductor.run_until(t_sim_ms(30)).expect("steps succeed");
     conductor.remove_component("a").expect("`a` is registered");
@@ -368,11 +383,14 @@ fn a_recorded_dynamic_run_verifies_against_a_faithful_re_run() {
     conductor.set_membership_callback(verifier.membership_callback());
 
     conductor
-        .add_component("", ticker("a", &steps))
+        .add_component(WORLD_LEVEL, ticker("a", &steps))
         .expect("registration succeeds");
     conductor.run_until(t_sim_ms(10)).expect("steps succeed");
     conductor
-        .add_component(JoinMetadata::at("", t_sim_ms(25)), ticker("b", &steps))
+        .add_component(
+            JoinMetadata::at(WORLD_LEVEL, t_sim_ms(25)),
+            ticker("b", &steps),
+        )
         .expect("25 ms is still ahead");
     conductor.run_until(t_sim_ms(30)).expect("steps succeed");
     conductor.remove_component("a").expect("`a` is registered");
@@ -396,11 +414,14 @@ fn a_re_run_that_skips_a_departure_is_caught() {
     conductor.set_membership_callback(verifier.membership_callback());
 
     conductor
-        .add_component("", ticker("a", &steps))
+        .add_component(WORLD_LEVEL, ticker("a", &steps))
         .expect("registration succeeds");
     conductor.run_until(t_sim_ms(10)).expect("steps succeed");
     conductor
-        .add_component(JoinMetadata::at("", t_sim_ms(25)), ticker("b", &steps))
+        .add_component(
+            JoinMetadata::at(WORLD_LEVEL, t_sim_ms(25)),
+            ticker("b", &steps),
+        )
         .expect("25 ms is still ahead");
 
     let end = t_sim_ms(50);
@@ -418,10 +439,10 @@ fn a_scheduled_departure_stops_the_component_at_the_declared_instant() {
     let steps: StepLog = Default::default();
     let mut conductor = new_conductor();
     conductor
-        .add_component("", ticker("a", &steps))
+        .add_component(WORLD_LEVEL, ticker("a", &steps))
         .expect("registration succeeds");
     conductor
-        .add_component("", ticker("b", &steps))
+        .add_component(WORLD_LEVEL, ticker("b", &steps))
         .expect("registration succeeds");
 
     // Declared up front, long before it takes effect.
@@ -458,10 +479,10 @@ fn a_scheduled_departure_does_not_depend_on_when_it_was_requested() {
         let steps: StepLog = Default::default();
         let mut conductor = new_conductor();
         conductor
-            .add_component("", ticker("a", &steps))
+            .add_component(WORLD_LEVEL, ticker("a", &steps))
             .expect("registration succeeds");
         conductor
-            .add_component("", ticker("b", &steps))
+            .add_component(WORLD_LEVEL, ticker("b", &steps))
             .expect("registration succeeds");
 
         conductor.run_until(request_after).expect("steps succeed");
@@ -496,11 +517,11 @@ fn an_instant_left_empty_by_a_leave_produces_no_tick_at_all() {
     let steps: StepLog = Default::default();
     let mut conductor = new_conductor();
     conductor
-        .add_component("", ticker("a", &steps))
+        .add_component(WORLD_LEVEL, ticker("a", &steps))
         .expect("registration succeeds");
     conductor
         .add_component(
-            "",
+            WORLD_LEVEL,
             Box::new(Ticker {
                 id: "b",
                 period: dur_ms(30),
@@ -529,7 +550,7 @@ fn a_departure_scheduled_for_an_instant_that_has_passed_is_an_error() {
     let steps: StepLog = Default::default();
     let mut conductor = new_conductor();
     conductor
-        .add_component("", ticker("a", &steps))
+        .add_component(WORLD_LEVEL, ticker("a", &steps))
         .expect("registration succeeds");
     conductor.run_until(t_sim_ms(20)).expect("steps succeed");
 
@@ -557,7 +578,7 @@ fn a_scheduled_departure_is_recorded_with_the_instant_it_takes_effect() {
     conductor.set_membership_callback(recorder.membership_callback());
 
     conductor
-        .add_component("", ticker("a", &steps))
+        .add_component(WORLD_LEVEL, ticker("a", &steps))
         .expect("registration succeeds");
     conductor
         .remove_component(LeaveMetadata::at("a", t_sim_ms(30)))
@@ -589,11 +610,14 @@ fn the_same_mid_run_join_reproduces_the_same_world_hash() {
         let steps: StepLog = Default::default();
         let mut conductor = new_conductor();
         conductor
-            .add_component("", ticker("a", &steps))
+            .add_component(WORLD_LEVEL, ticker("a", &steps))
             .expect("registration succeeds");
         conductor.run_until(t_sim_ms(10)).expect("steps succeed");
         conductor
-            .add_component(JoinMetadata::at("", t_sim_ms(25)), ticker("b", &steps))
+            .add_component(
+                JoinMetadata::at(WORLD_LEVEL, t_sim_ms(25)),
+                ticker("b", &steps),
+            )
             .expect("25 ms is still ahead");
         conductor.run_until(t_sim_ms(40)).expect("steps succeed");
 
@@ -625,7 +649,7 @@ fn removing_a_composite_takes_every_leaf_under_it() {
             .expect("registration succeeds");
     }
     conductor
-        .add_component("", ticker("bystander", &steps))
+        .add_component(WORLD_LEVEL, ticker("bystander", &steps))
         .expect("registration succeeds");
     conductor.run_until(t_sim_ms(10)).expect("steps succeed");
 
@@ -670,7 +694,7 @@ fn a_composite_leave_can_be_scheduled_like_any_other() {
             .expect("registration succeeds");
     }
     conductor
-        .add_component("", ticker("bystander", &steps))
+        .add_component(WORLD_LEVEL, ticker("bystander", &steps))
         .expect("registration succeeds");
 
     conductor

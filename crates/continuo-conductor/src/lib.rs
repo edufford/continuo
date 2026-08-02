@@ -20,7 +20,7 @@ mod verify;
 pub use conductor::Conductor;
 pub use config::ConductorConfig;
 pub use error::ConductorError;
-pub use membership::{JoinMetadata, LeaveMetadata};
+pub use membership::{JoinMetadata, LeaveMetadata, WORLD_LEVEL};
 pub use pacing::Pacing;
 pub use playback::PlaybackComponent;
 pub use record::{

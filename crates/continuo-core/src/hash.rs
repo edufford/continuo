@@ -26,7 +26,8 @@
 //! regression fingerprinting), swapping the algorithm is a versioned
 //! event-log change, not an architectural one.
 
-/// FNV-1a, 64-bit. Reference: Fowler/Noll/Vo, http://www.isthe.com/chongo/tech/comp/fnv/
+/// FNV-1a, 64-bit. Reference: Fowler/Noll/Vo,
+/// <http://www.isthe.com/chongo/tech/comp/fnv/>
 #[derive(Debug, Clone, Copy)]
 pub struct HashFnv1a64(u64);
 

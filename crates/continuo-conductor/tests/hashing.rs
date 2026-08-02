@@ -4,6 +4,7 @@
 use continuo_conductor::record::LogEvent;
 use continuo_conductor::{
     Conductor, ConductorConfig, EventLog, Pacing, PlaybackComponent, Recorder, Verifier,
+    WORLD_LEVEL,
 };
 use continuo_core::{
     Component, ComponentId, KeyExpr, RandomSplitMix64, SimDuration, SimTime, StepCtx,
@@ -88,7 +89,7 @@ fn run_noise_world(world_seed: u64) -> EventLog {
 
     conductor
         .add_component(
-            "",
+            WORLD_LEVEL,
             Box::new(NoiseSource {
                 id: "noise",
                 random: None,
@@ -137,7 +138,7 @@ fn run_hidden_world(initial: u64, expose_state: bool) -> u64 {
     .expect("free-run config is always accepted");
     conductor
         .add_component(
-            "",
+            WORLD_LEVEL,
             Box::new(HiddenCounter {
                 count: initial,
                 expose_state,
@@ -187,7 +188,7 @@ fn live_verification_stops_at_the_first_divergence() {
     conductor.set_tick_callback(checker.tick_callback());
     conductor
         .add_component(
-            "",
+            WORLD_LEVEL,
             Box::new(NoiseSource {
                 id: "noise",
                 random: None,
@@ -221,7 +222,7 @@ fn playback_double_reproduces_the_recorded_messages() {
     conductor.set_tick_callback(recorder.tick_callback());
     conductor
         .add_component(
-            "",
+            WORLD_LEVEL,
             Box::new(PlaybackComponent::from_log(
                 ComponentId::new("noise").expect("valid id"),
                 &original,

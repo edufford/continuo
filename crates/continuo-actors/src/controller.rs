@@ -25,7 +25,7 @@ pub struct Cmd {
 /// Declared *before* its physics sibling in the car composite, so its
 /// command is delivered same-instant when both are due.
 pub struct PathFollowController {
-    actor: String,
+    actor_name: String,
     road: Arc<Waypoints>,
     /// Meters left of the road's centerline to hold — the Frenet `d`.
     lateral: f64,
@@ -40,7 +40,7 @@ pub struct PathFollowController {
 impl PathFollowController {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        actor: impl Into<String>,
+        actor_name: impl Into<String>,
         road: Arc<Waypoints>,
         lateral: f64,
         period: SimDuration,
@@ -51,7 +51,7 @@ impl PathFollowController {
         initial_pose: Pose,
     ) -> Self {
         PathFollowController {
-            actor: actor.into(),
+            actor_name: actor_name.into(),
             road,
             lateral,
             period,
@@ -85,7 +85,7 @@ impl Component for PathFollowController {
         // TODO(PLAN "Scenario configuration"): once scenarios instantiate
         // components, pass the world name at construction and subscribe
         // precisely (same in UnicyclePhysics).
-        vec![KeyExpr::new(format!("continuo/*/actor/{}/pose", self.actor)).expect("valid key")]
+        vec![KeyExpr::new(format!("continuo/*/actor/{}/pose", self.actor_name)).expect("valid key")]
     }
 
     fn step(&mut self, ctx: &mut StepCtx) -> SimTime {
@@ -107,7 +107,7 @@ impl Component for PathFollowController {
             yaw_rate: (self.gain * heading_error).clamp(-self.max_yaw_rate, self.max_yaw_rate),
         };
 
-        let key = crate::cmd_key(ctx.world_name(), &self.actor);
+        let key = crate::cmd_key(ctx.world_name(), &self.actor_name);
         ctx.publish(key, &cmd).expect("cmd serializes");
 
         // Return the next due time, one control period from now.

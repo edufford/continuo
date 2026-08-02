@@ -235,8 +235,9 @@ impl<T: Transport> Conductor<T> {
 
     /// Admits a component. Pass a [`JoinMetadata`] to say when a newcomer to
     /// a running world first steps, or — before the run starts — just the
-    /// parent path (`""` for a world-level actor, `"car1"` to join that
-    /// composite), which is shorthand for first stepping at sim time zero.
+    /// parent path ([`WORLD_LEVEL`](crate::WORLD_LEVEL) for a world-level
+    /// actor, `"car1"` to join that composite), which is shorthand for first
+    /// stepping at sim time zero.
     ///
     /// Sibling order is arrival order, which fixes both the execution order
     /// within an instant and the "earlier sibling" of the visibility rule.

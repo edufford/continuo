@@ -37,7 +37,7 @@
 /// SplitMix64. Reference: Steele, Lea, Flood — "Fast Splittable
 /// Pseudorandom Number Generators" (OOPSLA 2014); constants as in the
 /// public-domain reference implementation by Sebastiano Vigna
-/// (https://prng.di.unimi.it/splitmix64.c).
+/// (<https://prng.di.unimi.it/splitmix64.c>).
 #[derive(Debug, Clone)]
 pub struct RandomSplitMix64 {
     state: u64,
