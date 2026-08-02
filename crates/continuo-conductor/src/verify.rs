@@ -92,7 +92,7 @@ fn event_mismatch(a: &LogEvent, b: &LogEvent) -> Option<String> {
 // Comparison lives here rather than beside the log format: recording
 // writes logs; verification is what reads two of them against each other.
 impl EventLog {
-    /// Compares two runs event by event, returning the earliest mismatch -
+    /// Compares two runs event by event, returning the earliest mismatch:
     /// `None` means the runs are identical.
     pub fn first_divergence(&self, other: &EventLog) -> Option<Divergence> {
         if self.header != other.header {
@@ -128,7 +128,7 @@ impl EventLog {
 /// Live replay verification: attach these callbacks to a re-run (message
 /// callback on the `MonitorTransport`, tick callback on the conductor) and
 /// every event is compared, in order, against the recorded log as it
-/// happens - so the driving loop can stop at the first divergence instead
+/// happens, so the driving loop can stop at the first divergence instead
 /// of running to completion:
 ///
 /// ```text
@@ -167,7 +167,7 @@ impl Verifier {
     /// `recorded` log. The world name and seed come from the *re-run*, never
     /// from the log: they are the actual side of the comparison, and taking
     /// them from the config the conductor is built with is what makes the
-    /// header check meaningful - a log recorded for another scenario is
+    /// header check meaningful, since a log recorded for another scenario is
     /// diverged before the first event rather than silently verified
     /// against the wrong run.
     pub fn new(recorded: EventLog, config: &ConductorConfig) -> Self {
@@ -265,7 +265,7 @@ impl Verifier {
         }
     }
 
-    /// Whether a divergence has been found - the driving loop's stop signal.
+    /// Whether a divergence has been found: the driving loop's stop signal.
     pub fn diverged(&self) -> bool {
         self.inner
             .lock()

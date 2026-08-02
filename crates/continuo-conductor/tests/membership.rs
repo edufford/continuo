@@ -1,8 +1,8 @@
 //! Runtime membership (milestone 4): components joining and leaving a
 //! running world, and the event log that records them doing so.
 //!
-//! Every membership change here is one somebody asked for. The other kind -
-//! a component the conductor removes itself after a timeout - goes out
+//! Every membership change here is one somebody asked for. The other kind,
+//! a component the conductor removes itself after a timeout, goes out
 //! through this same path, but what triggers it is a wall-clock measurement,
 //! so it is tested in `timing.rs`.
 
@@ -269,8 +269,8 @@ fn the_parent_path_shorthand_only_works_before_the_run_starts() {
         .expect("nothing has stepped yet");
     conductor.run_until(t_sim_ms(10)).expect("steps succeed");
 
-    // It still means sim time zero once the run is under way - now long
-    // closed - so the shorthand is rejected rather than quietly resolving to
+    // It still means sim time zero once the run is under way, now long
+    // closed, so the shorthand is rejected rather than quietly resolving to
     // an instant the caller never chose. Joining a running world is
     // something you have to say the time for.
     assert!(matches!(
@@ -372,8 +372,8 @@ fn a_recorded_dynamic_run_verifies_against_a_faithful_re_run() {
     let expected = record_a_dynamic_run(&config);
     let total_events = expected.events.len();
 
-    // Re-run the same scenario live, checking every event - messages, tick
-    // fingerprints, and membership changes alike - as it happens.
+    // Re-run the same scenario live, checking every event as it happens:
+    // messages, tick fingerprints, and membership changes alike.
     let steps: StepLog = Default::default();
     let verifier = Verifier::new(expected, &config);
     let transport = MonitorTransport::new(InProcTransport::new(), verifier.message_callback());
@@ -404,7 +404,7 @@ fn a_re_run_that_skips_a_departure_is_caught() {
     let config = membership_config();
     let expected = record_a_dynamic_run(&config);
 
-    // Same world, same join - but `a` never leaves.
+    // Same world, same join, but `a` never leaves.
     let steps: StepLog = Default::default();
     let verifier = Verifier::new(expected, &config);
     let transport = MonitorTransport::new(InProcTransport::new(), verifier.message_callback());
@@ -736,7 +736,7 @@ fn a_path_naming_neither_a_leaf_nor_a_composite_is_an_error() {
 fn an_emptied_composite_rejoins_as_the_newest_sibling() {
     // The arrival rule reaches branches too, not just leaves. A composite
     // whose last leaf left is forgotten by its parent, so rebuilding it
-    // later puts it at the end of the child list - where its fresh
+    // later puts it at the end of the child list, where its fresh
     // declaration indexes say it belongs. Leaving it in place would restore
     // its old position and let tree order and index order disagree.
     let steps: StepLog = Default::default();
@@ -754,7 +754,7 @@ fn an_emptied_composite_rejoins_as_the_newest_sibling() {
         .expect("the path is free again");
 
     // Nothing observable changes at the world level, where actors never see
-    // each other same-instant - but the tree is what a nested composite
+    // each other same-instant, but the tree is what a nested composite
     // would read, so it has to be right before anything nests.
     conductor.run_until(t_sim_ms(10)).expect("steps succeed");
     assert_eq!(

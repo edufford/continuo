@@ -48,7 +48,7 @@ fn sample_fingerprint() -> TickFingerprint {
 }
 
 /// Three JSON lines: the `("test", seed 7)` header, then the two events of
-/// a single tick at t=0 - one message (`sample_message`, published on `w/a`
+/// a single tick at t=0: one message (`sample_message`, published on `w/a`
 /// by `p`) followed by that tick's fingerprint (`sample_fingerprint`). A
 /// verifier fed exactly those two events in that order must agree with it.
 fn sample_log() -> EventLog {

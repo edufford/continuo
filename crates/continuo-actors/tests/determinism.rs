@@ -1,5 +1,5 @@
 //! Determinism tests over the full traffic world: two identical runs must
-//! produce identical event logs - every message byte and every tick fingerprint
+//! produce identical event logs, every message byte and every tick fingerprint
 //! (the milestone 2 hash stream).
 
 use std::sync::Arc;
@@ -21,7 +21,7 @@ fn run_world(sim_seconds: i64, world_seed: u64) -> EventLog {
 
     // 72 samples = one point per 5 degrees of arc; on the 40 m semi-axis the
     // worst-case chord deviation is ~4 cm, smooth enough for the
-    // controller's 6 m lookahead. Any fixed count is equally deterministic -
+    // controller's 6 m lookahead. Any fixed count is equally deterministic,
     // this one just keeps the polyline visually round.
     let path = Arc::new(Waypoints::ellipse((0.0, 0.0), 40.0, 25.0, 72));
     let mut conductor =

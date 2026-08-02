@@ -6,7 +6,7 @@ use crate::Transport;
 /// it is routed.
 ///
 /// This is the out-of-band observation mechanism: the callback sees **all**
-/// traffic at publish time - regardless of subscriptions (including messages
+/// traffic at publish time, regardless of subscriptions (including messages
 /// nobody subscribes to), with no visibility delay and no presence in the
 /// schedule. Use it for logging, debugging, and recording (the milestone 2
 /// event log builds on this).

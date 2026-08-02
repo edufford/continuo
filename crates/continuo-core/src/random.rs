@@ -1,7 +1,7 @@
 //! Deterministic pseudo-random numbers for sim logic (milestone 2).
 //!
 //! Owned implementation for the same reason as the hash: bit identical on
-//! every platform, toolchain, and version, forever - external RNG crates
+//! every platform, toolchain, and version, forever. External RNG crates
 //! explicitly do not promise stream stability across releases (e.g.
 //! `rand`'s `SmallRng` documents that its algorithm may change).
 //!
@@ -9,7 +9,7 @@
 //!
 //! - **Any seed is a good seed.** Its output is a one-to-one scramble of a
 //!   simple counter (distinct states can never collapse into one), so there
-//!   are no weak seeds, no zero-state lockup, and no warm-up draws needed -
+//!   are no weak seeds, no zero-state lockup, and no warm-up draws needed,
 //!   unlike the xorshift/xoshiro family, whose
 //!   own authors recommend seeding *via SplitMix64* for exactly that
 //!   reason. That matters here because seeds arrive from structured,
@@ -17,7 +17,7 @@
 //!   arithmetic), and consecutive-ish seeds must still yield unrelated
 //!   streams. The same property makes it the scrambling primitive behind
 //!   [`crate::seed`]'s derivation of child seeds from `(world_seed, path)`
-//!   and `(component_seed, time)` - one algorithm serves both roles.
+//!   and `(component_seed, time)`, so one algorithm serves both roles.
 //! - **Stateless-friendly**: a single u64 of state, so
 //!   `StepCtx::step_random()`'s fresh-per-step streams cost nothing to
 //!   construct and components that persist a stream store 8 bytes.
@@ -31,10 +31,10 @@
 //!   upgrade (a versioned change, like the hash).
 //!
 //! Seeding rules (PLAN.md, Determinism): every component's randomness
-//! derives from `(world_seed, component_path)` - never OS entropy, never
+//! derives from `(world_seed, component_path)`, never OS entropy, never
 //! wall time. See [`crate::seed`] for the derivation itself.
 
-/// SplitMix64. Reference: Steele, Lea, Flood - "Fast Splittable
+/// SplitMix64. Reference: Steele, Lea, and Flood, "Fast Splittable
 /// Pseudorandom Number Generators" (OOPSLA 2014); constants as in the
 /// public-domain reference implementation by Sebastiano Vigna
 /// (<https://prng.di.unimi.it/splitmix64.c>).

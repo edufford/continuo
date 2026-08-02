@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 /// A request to put one traffic car on the road.
 ///
 /// Deliberately specific to this scenario: lanes and speeds are what a
-/// freeway demo needs, and the framework never sees this type - the driver
+/// freeway demo needs, and the framework never sees this type. The driver
 /// decodes it and hands the conductor an ordinary component.
 // TODO(PLAN "Scenario configuration"): the general form of this is a
 // request naming a component *type* plus opaque parameters, resolved by a
@@ -39,11 +39,11 @@ pub struct SpawnTrafficRequest {
     /// Constant speed to hold, m/s.
     pub speed: f64,
     /// Where to appear, as an arc length along the road the spawner
-    /// measures against - not a coordinate, so it survives the road
+    /// measures against, not a coordinate, so it survives the road
     /// bending.
     pub start_s: f64,
     /// The instant the car should first step. Declared here, so the run is
-    /// the same whenever the driver gets round to applying the request -
+    /// the same whenever the driver gets round to applying the request,
     /// as long as it lands before this arrives.
     pub first_due: SimTime,
 }
@@ -78,7 +78,7 @@ pub struct TrafficSpawner {
     period: SimDuration,
     /// The road everyone is measured along. Poses are projected onto it,
     /// so every distance here is an arc length on one shared reference
-    /// path rather than a raw coordinate - which is what lets cars in
+    /// path rather than a raw coordinate, which is what lets cars in
     /// different lanes be compared, and what keeps this working if the
     /// road ever bends.
     road: Arc<crate::Waypoints>,
@@ -112,7 +112,7 @@ pub struct TrafficSpawner {
     frontier_s: f64,
     /// How many cars have been created, ever, which is what makes their
     /// names unique. Never decremented, so a retired `traffic3` never
-    /// returns as `traffic3` - reoccupying a path is legal but arrives as a
+    /// returns as `traffic3`. Reoccupying a path is legal but arrives as a
     /// fresh sibling, and there is nothing to gain here by inviting it.
     cars_spawned: u64,
 }
@@ -273,8 +273,8 @@ pub fn road_pose(road: &crate::Waypoints, s: f64, lateral: f64) -> Pose {
 /// Open rather than closed, which is what makes "ahead" and "behind" mean
 /// something absolute: arc lengths only ever increase, so a spawner can
 /// compare two cars and a retirement is final. The cost is that the road
-/// runs out - past the end a car's arc length clamps and it stops making
-/// progress - so `length` has to outlast the run it is built for.
+/// runs out: past the end a car's arc length clamps and it stops making
+/// progress, so `length` has to outlast the run it is built for.
 // TODO(PLAN "World and map"): road geometry belongs in the world spec's
 // scene graph, referenced by name rather than built here.
 pub fn straight_road(length: f64) -> crate::Waypoints {

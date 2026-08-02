@@ -2,15 +2,15 @@
 //! but each instant waits for its wall-clock time instead of free-running.
 //! The run takes about as many wall-seconds as it simulates, and prints how
 //! far (if at all) it fell behind. The world hash is identical to the
-//! free-run demo - pacing changes timing, never content.
+//! free-run demo, because pacing changes timing, never content.
 //!
 //! Run with (a short duration, since it runs in real time):
 //!   cargo run -p continuo-examples --example traffic_realtime -- 3
 //!   cargo run -p continuo-examples --example traffic_realtime -- 3 precise
 //!
 //! First optional argument is sim-seconds to run (default 5); a second
-//! argument `precise` selects `Pacing::real_time_precise` - sleep-then-spin
-//! for sub-millisecond accuracy - instead of the default OS-timer
+//! argument `precise` selects `Pacing::real_time_precise`, sleep-then-spin
+//! for sub-millisecond accuracy, instead of the default OS-timer
 //! `Pacing::real_time`.
 
 use continuo_conductor::{Conductor, Pacing};

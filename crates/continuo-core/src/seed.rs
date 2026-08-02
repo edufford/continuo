@@ -6,7 +6,7 @@
 //! neither: it uses the hash to fold variable-length names (component
 //! paths) down to 64 bits, and the generator's scrambler to combine two
 //! 64-bit values into one that is unrelated to both. The result is a seed,
-//! not a fingerprint - nothing here feeds the determinism check, and
+//! not a fingerprint. Nothing here feeds the determinism check, and
 //! nothing in the determinism check feeds these.
 //!
 //! Why derive at all rather than hand every component the world seed:

@@ -128,7 +128,7 @@ fn the_dynamic_world_reproduces_exactly() {
 }
 
 /// Re-runs the demo world live against `recorded`, checking events as they
-/// happen. Returns how far the run got and the verifier's verdict - the
+/// happen. Returns how far the run got and the verifier's verdict, the
 /// pair is the point, since a divergence is supposed to stop the run rather
 /// than merely be reported at the end of it.
 fn verify_highway(recorded: EventLog, seconds: i64) -> (SimTime, Result<usize, Divergence>) {

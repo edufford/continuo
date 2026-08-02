@@ -1,16 +1,17 @@
 //! The determinism harness's event log (milestone 2): tick fingerprints and
 //! published messages, recorded as human-readable JSON lines.
 //!
-//! Recording taps the conductor's observation points - a `MonitorTransport`
+//! Recording taps the conductor's observation points: a `MonitorTransport`
 //! callback for messages, and conductor callbacks for tick fingerprints,
-//! membership changes, and over-budget steps - so the sim itself is
-//! untouched by being recorded.
+//! membership changes, and over-budget steps. The sim itself is untouched
+//! by being recorded.
 //!
 //! Lines come in two categories: **expectations** are what the run did, and
 //! a faithful re-run must produce them again; **observations** are what the
 //! machine did, and a re-run is free to differ. Only the first kind is ever
 //! compared. Every observation sits under [`LogEvent::Observed`], so which
-//! category a line is in is read off its variant - see [`RecordedObservation`].
+//! category a line is in is read off its variant. See
+//! [`RecordedObservation`].
 //!
 //! A recorded log has two distinct consumers, near-opposite in how the
 //! log's data flows relative to the simulation, one module each:
@@ -18,7 +19,7 @@
 //! - **Verification** ([`crate::Verifier`]): the log is an *expected-output
 //!   ledger* and nothing flows into the sim. Every component re-runs live;
 //!   each event is checked against the log as it happens, and the driving
-//!   loop stops at the first divergence - which means "determinism is
+//!   loop stops at the first divergence, which means "determinism is
 //!   broken" (or the log was modified). Comparing two already-recorded
 //!   logs lives there too.
 //! - **Open-loop resimulation** ([`crate::PlaybackComponent`]): the log is an
@@ -26,8 +27,8 @@
 //!   playback doubles that re-publish their recorded messages into the
 //!   sim, while changed components run live against them. Nothing is
 //!   compared; the new behavior diverging from the recording is the result
-//!   being studied. (The played-back actors do not react to the live ones
-//!   - that is what "open-loop" means.)
+//!   being studied. (The played-back actors do not react to the live
+//!   ones, which is what "open-loop" means.)
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -72,7 +73,7 @@ pub struct RecordedMessage {
 ///
 /// Deliberately *not* recorded: the sim time the join was applied at. It is
 /// already implied by where this event sits between tick fingerprints, and
-/// it is the part that may legitimately vary - once joins arrive over the
+/// it is the part that may legitimately vary. Once joins arrive over the
 /// transport (milestone 7) the boundary that admits one depends on
 /// delivery. What shapes the run is `first_due`, which the joiner declares,
 /// so a run stays deterministically reproducible as long as that is
@@ -89,7 +90,7 @@ pub struct RecordedJoin {
 /// Carries the declared instant for the same reason a join carries
 /// `first_due`: it is chosen by whoever asked, so it is stable however
 /// early or late the request was made, and it is what decides where this
-/// component's output stops. What is *not* recorded - here as on a join -
+/// component's output stops. What is *not* recorded, here as on a join,
 /// is the moment the request was applied, which says nothing extra and is
 /// the part that varies with delivery.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -127,8 +128,8 @@ pub struct RecordedBudgetMiss {
 ///
 /// This is what says *why* a component left. The [`RecordedLeave`] that
 /// follows a [`OnTimeout::Remove`] is deliberately identical to a scripted
-/// one - the run behaved the same way, so replaying it by asking for that
-/// leave at that instant must produce a matching log - and the reason lives
+/// one, because the run behaved the same way, so replaying it by asking for
+/// that leave at that instant must produce a matching log. The reason lives
 /// here, outside what verification compares. It is also the only record of a
 /// [`OnTimeout::Halt`], which produces no leave at all: without this line a
 /// halted run's log simply stops, saying nothing about why.
@@ -141,7 +142,7 @@ pub struct RecordedTimeout {
     /// wall-clock milliseconds.
     pub waited_ms: f64,
     pub timeout_ms: f64,
-    /// What this did to the run - so a reader knows whether to expect a
+    /// What this did to the run, so a reader knows whether to expect a
     /// leave next or the log to end here.
     pub policy: OnTimeout,
 }
@@ -194,7 +195,7 @@ pub enum LogEvent {
     Join(RecordedJoin),
     #[serde(rename = "leave")]
     Leave(RecordedLeave),
-    /// Anything the machine did rather than the run - a log line reads
+    /// Anything the machine did rather than the run. A log line reads
     /// `{"observed":{"budget":{...}}}`.
     #[serde(rename = "observed")]
     Observed(RecordedObservation),
@@ -401,8 +402,8 @@ impl Recorder {
         }
     }
 
-    /// Records what the machine did - over-budget steps, and the timeouts
-    /// that say why a component left or a run stopped - so a run's
+    /// Records what the machine did: over-budget steps, and the timeouts
+    /// that say why a component left or a run stopped, so a run's
     /// conditions end up in one file rather than in whichever process each
     /// step ran in. These lines are never compared; see [`RecordedObservation`].
     pub fn observation_callback(&self) -> impl FnMut(&RecordedObservation) + Send + 'static {
