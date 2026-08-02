@@ -1,11 +1,11 @@
 //! Traffic population management (milestone 4): the component that decides
 //! which cars exist, and when.
 //!
-//! It decides but does not act. A component cannot build another component
-//! — `StepCtx` offers no way back to the conductor, and a
-//! `Box<dyn Component>` could not cross a transport even if it did — so the
-//! spawner publishes *requests* and whoever is driving the run turns them
-//! into `add_component` and `remove_component` calls.
+//! It decides but does not act. A component cannot build another component:
+//! `StepCtx` offers no way back to the conductor, and a `Box<dyn Component>`
+//! could not cross a transport even if it did. So the spawner publishes
+//! *requests*, and whoever is driving the run turns them into
+//! `add_component` and `remove_component` calls.
 //!
 //! That split is the point rather than a workaround. Deciding inside the
 //! sim keeps the traffic pattern inside the determinism guarantee: the
@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 /// A request to put one traffic car on the road.
 ///
 /// Deliberately specific to this scenario: lanes and speeds are what a
-/// freeway demo needs, and the framework never sees this type — the driver
+/// freeway demo needs, and the framework never sees this type - the driver
 /// decodes it and hands the conductor an ordinary component.
 // TODO(PLAN "Scenario configuration"): the general form of this is a
 // request naming a component *type* plus opaque parameters, resolved by a
@@ -39,11 +39,11 @@ pub struct SpawnTrafficRequest {
     /// Constant speed to hold, m/s.
     pub speed: f64,
     /// Where to appear, as an arc length along the road the spawner
-    /// measures against — not a coordinate, so it survives the road
+    /// measures against - not a coordinate, so it survives the road
     /// bending.
     pub start_s: f64,
     /// The instant the car should first step. Declared here, so the run is
-    /// the same whenever the driver gets round to applying the request —
+    /// the same whenever the driver gets round to applying the request -
     /// as long as it lands before this arrives.
     pub first_due: SimTime,
 }
@@ -112,7 +112,7 @@ pub struct TrafficSpawner {
     frontier_s: f64,
     /// How many cars have been created, ever, which is what makes their
     /// names unique. Never decremented, so a retired `traffic3` never
-    /// returns as `traffic3` — reoccupying a path is legal but arrives as a
+    /// returns as `traffic3` - reoccupying a path is legal but arrives as a
     /// fresh sibling, and there is nothing to gain here by inviting it.
     cars_spawned: u64,
 }
@@ -273,8 +273,8 @@ pub fn road_pose(road: &crate::Waypoints, s: f64, lateral: f64) -> Pose {
 /// Open rather than closed, which is what makes "ahead" and "behind" mean
 /// something absolute: arc lengths only ever increase, so a spawner can
 /// compare two cars and a retirement is final. The cost is that the road
-/// runs out — past the end a car's arc length clamps and it stops making
-/// progress — so `length` has to outlast the run it is built for.
+/// runs out - past the end a car's arc length clamps and it stops making
+/// progress - so `length` has to outlast the run it is built for.
 // TODO(PLAN "World and map"): road geometry belongs in the world spec's
 // scene graph, referenced by name rather than built here.
 pub fn straight_road(length: f64) -> crate::Waypoints {

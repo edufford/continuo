@@ -23,7 +23,7 @@ pub trait Component: Send {
     fn subscriptions(&self) -> Vec<KeyExpr>;
 
     /// Advance internal state to `ctx.now()`. Returns the next sim time this
-    /// component should step — must be strictly greater than `ctx.now()`
+    /// component should step - must be strictly greater than `ctx.now()`
     /// (the conductor enforces this to prevent zero-time livelock).
     fn step(&mut self, ctx: &mut StepCtx) -> SimTime;
 
@@ -32,18 +32,18 @@ pub trait Component: Send {
     ///
     /// Components returning `Some` join the per-tick hash in *state-hash*
     /// mode: hidden internal state is fingerprinted directly, so divergence
-    /// is caught when it happens — even state that would only influence
+    /// is caught when it happens - even state that would only influence
     /// outputs many steps later (integrators, counters, stored RNG
     /// streams), or state in components that publish less often than they
-    /// step. Components returning `None` are covered in *output-hash* mode
-    /// — everything they publish is hashed anyway (the only option for
-    /// opaque black boxes like FMUs without `SerializeFMUState`; see
-    /// PLAN.md, Determinism rules). For a component that publishes its
-    /// whole state every step, the two modes catch divergence at
-    /// essentially the same tick.
+    /// step. Components returning `None` are covered in *output-hash* mode,
+    /// since everything they publish is hashed anyway (the only option for
+    /// opaque black boxes like FMUs without `SerializeFMUState`; see PLAN.md,
+    /// Determinism rules). For a component that publishes its whole state
+    /// every step, the two modes catch divergence at essentially the same
+    /// tick.
     ///
     /// Implementations must follow the canonical JSON rules (serde_json,
-    /// declaration-order fields, no `HashMap`) — typically
+    /// declaration-order fields, no `HashMap`) - typically
     /// `serde_json::to_vec` of a state struct. Called by the conductor after
     /// `step`, at most once per step.
     fn state_bytes(&self) -> Option<Vec<u8>> {
@@ -64,7 +64,7 @@ pub struct StepCtx<'a> {
 impl<'a> StepCtx<'a> {
     /// Constructed by the conductor (or by tests driving a component
     /// directly). `component_seed` derives from
-    /// `(world_seed, component_path)` — see [`crate::derive_component_seed`].
+    /// `(world_seed, component_path)` - see [`crate::derive_component_seed`].
     pub fn new(
         now: SimTime,
         dt: Option<SimDuration>,
@@ -91,7 +91,7 @@ impl<'a> StepCtx<'a> {
     }
 
     /// A fresh deterministic random stream for this `(component, step)`
-    /// pair — the zero-state-to-carry way to add noise. The stream depends
+    /// pair - the zero-state-to-carry way to add noise. The stream depends
     /// only on the component seed and the current sim time, so replays
     /// reproduce it exactly; draws are independent between steps. For a
     /// stream that is continuous *across* steps, store

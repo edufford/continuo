@@ -11,7 +11,7 @@ pub struct ConductorConfig {
     /// the starting point of the running world hash. Same seed + same
     /// scenario => identical runs.
     pub world_seed: u64,
-    /// Free-run (default) or 1× real time — see [`Pacing`].
+    /// Free-run (default) or 1× real time - see [`Pacing`].
     pub pacing: Pacing,
 }
 

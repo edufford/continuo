@@ -10,8 +10,8 @@
 //! [`TrafficSpawner`] is what makes a world of those cars *dynamic*. It
 //! watches poses and publishes requests to add and remove cars, deciding
 //! from sim state so the population it produces is as reproducible as
-//! anything else in the run. It cannot act on its own decisions — building
-//! a component is not something a component can do — so whoever drives the
+//! anything else in the run. It cannot act on its own decisions - building
+//! a component is not something a component can do - so whoever drives the
 //! run applies the requests; see `continuo-examples`.
 //!
 //! Everything here is demo furniture rather than framework. The path is

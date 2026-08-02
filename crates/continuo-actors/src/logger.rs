@@ -5,7 +5,7 @@ use tracing::info;
 
 /// World-level observer: samples the latest pose per actor and logs it.
 ///
-/// Being a world-level actor, it sees poses with next-step visibility — an
+/// Being a world-level actor, it sees poses with next-step visibility - an
 /// observer receives time-T data strictly after T. Log lines therefore carry
 /// the *message's* sim time, not the logger's step time. When an actor is
 /// seen for the first time, its earliest received pose (the spawn pose,
@@ -14,7 +14,7 @@ use tracing::info;
 /// After its first step, the logger phase-shifts its schedule by `offset`
 /// past the period boundaries (steps at `offset`, `period + offset`, …).
 /// With an offset of one publisher period, poses published exactly on a
-/// boundary — which same-instant visibility would defer — are already
+/// boundary - which same-instant visibility would defer - are already
 /// visible when the logger samples.
 pub struct PoseLogger {
     period: SimDuration,

@@ -34,8 +34,8 @@ jobs:
 
       # `--lib` and `--test '*'` partition the suite: the first runs the unit
       # tests inside each lib, the second the integration targets in tests/.
-      # Note `--tests` would *not* work as the second half — it includes lib
-      # unit tests too, so the two steps would re-run them.
+      # Note `--tests` would *not* work as the second half, because it
+      # includes lib unit tests too, so the two steps would re-run them.
       - name: "Test: unit"
         run: cargo test --workspace --lib
 
@@ -45,9 +45,9 @@ jobs:
       # Smoke steps run the shipped examples end to end, covering what the
       # test suites cannot: that the examples themselves build and run, and
       # that the artefacts one produces are what the next consumes. They are
-      # ordered and share state — the log recorded below is read by both
-      # steps after it — and a failure aborts the rest of the job, since
-      # steps only run when every earlier one succeeded.
+      # ordered and share state, since the log recorded below is read by both
+      # steps after it. A failure aborts the rest of the job, because steps
+      # only run when every earlier one succeeded.
       #
       # New end-to-end checks belong here, with the same "Smoke:" prefix.
       - name: "Smoke: traffic demo"
@@ -62,22 +62,22 @@ jobs:
       - name: "Smoke: verification detects a modified log"
         shell: bash
         run: |
-          # Corrupt one pose x-coordinate mid-run — the first match at or
-          # after line 6000, roughly sim time 14 s of 30 — keeping the JSON
+          # Corrupt one pose x-coordinate mid-run, at the first match on or
+          # after line 6000 (roughly sim time 14 s of 30), keeping the JSON
           # valid, so verification checks a long clean prefix before
           # diverging (and stops there rather than running to completion).
           awk 'NR>=6000 && !done && /"x":/ { sub(/"x":[-0-9.eE]*/, "\"x\":99.9"); done=1 } { print }' \
             ci-run.jsonl > ci-tampered.jsonl
           if cmp -s ci-run.jsonl ci-tampered.jsonl; then
-            echo "ERROR: awk matched nothing, log was NOT modified - this check would be vacuous"
+            echo "ERROR: awk matched nothing, log was NOT modified; this check would be vacuous"
             exit 1
           fi
           echo "OK: log modified (one pose x-coordinate corrupted to 99.9)"
           if cargo run -q -p continuo-examples --example traffic_verify -- ci-tampered.jsonl; then
-            echo "ERROR: verification PASSED on the modified log - divergence was NOT detected"
+            echo "ERROR: verification PASSED on the modified log; divergence was NOT detected"
             exit 1
           fi
-          echo "OK: verification failed with nonzero exit - divergence detected as expected"
+          echo "OK: verification failed with nonzero exit; divergence detected as expected"
 
       - name: "Smoke: open-loop resimulation from the recorded log"
         shell: bash

@@ -17,7 +17,7 @@ pub struct Cmd {
 /// Pure-pursuit-flavored path follower: projects the latest pose onto the
 /// road, aims at a lookahead point, and commands a clamped yaw rate.
 ///
-/// Follows the road in **Frenet coordinates** — an arc length `s` found by
+/// Follows the road in **Frenet coordinates** - an arc length `s` found by
 /// projection, and a fixed lateral offset it holds. So every car on a road
 /// shares one [`Waypoints`], and a lane is a number rather than a curve of
 /// its own. Pass `0.0` to drive the road itself.
@@ -27,7 +27,7 @@ pub struct Cmd {
 pub struct PathFollowController {
     actor_name: String,
     road: Arc<Waypoints>,
-    /// Meters left of the road's centerline to hold — the Frenet `d`.
+    /// Meters left of the road's centerline to hold - the Frenet `d`.
     lateral: f64,
     period: SimDuration,
     speed: f64,

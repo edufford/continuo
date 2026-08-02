@@ -54,7 +54,7 @@ impl<T: Transport> Conductor<T> {
         // 1× real-time pacing (PLAN.md "Pacing") gates each instant to wall
         // time; free-run leaves the pacer off and advances immediately. The
         // spin padding only picks how the wait is spent (OS sleep vs.
-        // sleep-then-spin) — never what happens in the instant.
+        // sleep-then-spin) - never what happens in the instant.
         let pacer = match config.pacing {
             Pacing::FreeRun => None,
             Pacing::RealTime { spin_padding } => Some(Pacer::new(SystemClock::new(spin_padding))),
@@ -82,10 +82,10 @@ impl<T: Transport> Conductor<T> {
     }
 
     // TODO(M7): these three setters, plus the `MonitorTransport` wrap that
-    // catches published messages, are four hookups a caller has to remember
-    // — and forgetting one does not fail, it writes a log that quietly
-    // omits a channel. Every observation point added so far has needed
-    // every caller updated by hand.
+    // catches published messages, are four hookups a caller has to remember,
+    // and forgetting one does not fail; it writes a log that quietly omits a
+    // channel. Every observation point added so far has needed every caller
+    // updated by hand.
     //
     // Wanted: an `Observer` trait with default no-op methods and a single
     // `set_observer`, implemented by `Recorder` and `Verifier`, so a new
@@ -93,21 +93,21 @@ impl<T: Transport> Conductor<T> {
     //
     // Tagged M7 because it is not a rename. Messages are observed at the
     // *transport*, wrapped before the conductor exists, so construction
-    // order rules out one call today — and where that seam belongs is the
+    // order rules out one call today - and where that seam belongs is the
     // same question as the hash fold (PLAN.md, "What `step_once`
     // becomes"), since a distributed conductor no longer publishes remote
     // components' messages at all. Better to settle both together than to
     // move the seam twice. The three conductor-side callbacks could be
     // folded sooner if the churn is worth it on its own.
 
-    /// Installs a callback invoked with every tick's [`TickFingerprint`] — the hook
+    /// Installs a callback invoked with every tick's [`TickFingerprint`] - the hook
     /// for recording (see [`crate::Recorder::tick_callback`]) or live
     /// divergence checking.
     pub fn set_tick_callback(&mut self, callback: impl FnMut(&TickFingerprint) + Send + 'static) {
         self.tick_callback = Some(Box::new(callback));
     }
 
-    /// Installs a callback invoked whenever a component joins or leaves —
+    /// Installs a callback invoked whenever a component joins or leaves -
     /// the third observation point, alongside published messages and tick
     /// fingerprints, and the one that makes a dynamic run recordable
     /// (see [`crate::Recorder::membership_callback`]).
@@ -124,7 +124,7 @@ impl<T: Transport> Conductor<T> {
     /// [`crate::Recorder::observation_callback`]).
     ///
     /// The fourth observation point, and the one whose reports a re-run is
-    /// free to differ on — see [`RecordedObservation`].
+    /// free to differ on - see [`RecordedObservation`].
     pub fn set_observation_callback(
         &mut self,
         callback: impl FnMut(&RecordedObservation) + Send + 'static,
@@ -139,7 +139,7 @@ impl<T: Transport> Conductor<T> {
         }
     }
 
-    /// Reports an observation to the observer, if any — something worth
+    /// Reports an observation to the observer, if any - something worth
     /// noting about the run rather than a part of it.
     fn emit_observation(&mut self, observation: RecordedObservation) {
         if let Some(callback) = self.observation_callback.as_mut() {
@@ -162,7 +162,7 @@ impl<T: Transport> Conductor<T> {
         self.sim_time
     }
 
-    /// The earliest scheduled due time, if anything remains scheduled —
+    /// The earliest scheduled due time, if anything remains scheduled -
     /// lets callers drive `step_once` themselves (e.g. live replay checking
     /// that stops at the first divergence).
     pub fn next_scheduled(&self) -> Option<SimTime> {
@@ -179,13 +179,13 @@ impl<T: Transport> Conductor<T> {
     /// wall-clock anchor gave up and slipped, in 1× real-time mode; always
     /// 0 in free-run.
     ///
-    /// This measures **the schedule as a whole against the wall clock** —
+    /// This measures **the schedule as a whole against the wall clock** -
     /// not components. Zero does *not* mean every component finished
     /// quickly, or that anything met a deadline: lateness under the
     /// re-anchor threshold is deliberately absorbed, and a component that
     /// runs long stays invisible here as long as the run recovers before
     /// the threshold. [`Self::budget_misses`] answers the question this
-    /// metric cannot — did *this* component finish within its time.
+    /// metric cannot - did *this* component finish within its time.
     pub fn overrun_reanchor_count(&self) -> u64 {
         self.pacer.as_ref().map_or(0, Pacer::overrun_reanchor_count)
     }
@@ -194,14 +194,14 @@ impl<T: Transport> Conductor<T> {
     /// budget it declared when it joined; `None` if nothing is registered at
     /// `path`, and always 0 for a component that declared no budget.
     ///
-    /// Attributable by construction, which is the point of it — it counts
+    /// Attributable by construction, which is the point of it - it counts
     /// one component's own `step` calls, not lateness the schedule
     /// accumulated around it (see [`Self::overrun_reanchor_count`]). Purely
     /// diagnostic: missing a budget changes nothing about the run, so this
     /// can differ between two runs with the identical world hash.
     ///
     /// Counted against the live component, so it resets if a path is
-    /// vacated and reoccupied — the newcomer is a different component that
+    /// vacated and reoccupied - the newcomer is a different component that
     /// happens to share a name.
     pub fn budget_misses(&self, path: &ComponentPath) -> Option<u64> {
         // Return the live component's miss count, if one is registered here.
@@ -213,7 +213,7 @@ impl<T: Transport> Conductor<T> {
     /// time, summed over the slips counted by
     /// [`Self::overrun_reanchor_count`] (0 in free-run, or when 1× pacing
     /// kept up). Lateness that was absorbed rather than slipped is not
-    /// included — by definition it was recovered.
+    /// included - by definition it was recovered.
     pub fn total_slip(&self) -> std::time::Duration {
         self.pacer
             .as_ref()
@@ -234,7 +234,7 @@ impl<T: Transport> Conductor<T> {
     }
 
     /// Admits a component. Pass a [`JoinMetadata`] to say when a newcomer to
-    /// a running world first steps, or — before the run starts — just the
+    /// a running world first steps, or - before the run starts - just the
     /// parent path ([`WORLD_LEVEL`](crate::WORLD_LEVEL) for a world-level
     /// actor, `"car1"` to join that composite), which is shorthand for first
     /// stepping at sim time zero.
@@ -245,7 +245,7 @@ impl<T: Transport> Conductor<T> {
     /// whatever it joins.
     ///
     /// The first step is scheduled here, as the component is admitted,
-    /// rather than discovered when the instant arrives — so the barrier at
+    /// rather than discovered when the instant arrives - so the barrier at
     /// `first_due` already counts the newcomer among the components it
     /// waits for.
     ///
@@ -261,7 +261,7 @@ impl<T: Transport> Conductor<T> {
     // Remote(metadata), the conductor never holding a remote component's
     // box. Scheduling, the visibility rule, and seq assignment already work
     // off metadata alone, which is why `JoinMetadata` is a separate type
-    // from the component — the half that *can* cross a transport already
+    // from the component - the half that *can* cross a transport already
     // does not depend on the half that cannot.
     pub fn add_component(
         &mut self,
@@ -328,7 +328,7 @@ impl<T: Transport> Conductor<T> {
     /// Deregisters a component and tells observers. The one place a
     /// leave is applied, whichever route asked for it.
     ///
-    /// `leaves_at` is the instant recorded as the component's last — the
+    /// `leaves_at` is the instant recorded as the component's last - the
     /// declared one for a scheduled leave, or the earliest still-open
     /// instant for an immediate removal, which is when it stops either way.
     fn apply_leave(&mut self, path: &ComponentPath, leaves_at: SimTime) {
@@ -344,7 +344,7 @@ impl<T: Transport> Conductor<T> {
     }
 
     /// Removes a component. Pass a [`LeaveMetadata`] to name the instant it
-    /// stops at, or just its path to stop it immediately — at this tick
+    /// stops at, or just its path to stop it immediately - at this tick
     /// boundary, since membership never changes mid-tick.
     ///
     /// Prefer naming the instant for anything a run must reproduce: the
@@ -353,7 +353,7 @@ impl<T: Transport> Conductor<T> {
     /// instant gives the same run whenever the request was made.
     ///
     /// The component stops being scheduled, stops receiving messages, and
-    /// is dropped. Everything it published stays published — departing is
+    /// is dropped. Everything it published stays published - departing is
     /// not a rollback.
     ///
     /// Survivors are untouched. Their declaration indexes do not shift, so
@@ -364,8 +364,8 @@ impl<T: Transport> Conductor<T> {
     /// arrives as a new sibling, ordered by its arrival like any other.
     ///
     /// **A composite's path takes its whole subtree.** `"car1"` removes
-    /// every leaf under it — `car1/controller`, `car1/physics`, and anything
-    /// nested below — because an actor leaving a world leaves whole, and
+    /// every leaf under it - `car1/controller`, `car1/physics`, and anything
+    /// nested below - because an actor leaving a world leaves whole, and
     /// removing only some of its parts would leave a controller publishing
     /// at a physics model that is gone.
     ///
@@ -445,7 +445,7 @@ impl<T: Transport> Conductor<T> {
         // the instant with it, leaving the leave nothing to affect: the due
         // set would already list the departing component, and an instant
         // holding only that component could no longer be pruned, so it
-        // would still become a tick — numbered, fingerprinted, and chained
+        // would still become a tick - numbered, fingerprinted, and chained
         // into the world hash for an instant where nobody stepped.
         if let Some(next) = self.schedule.earliest() {
             self.apply_due_leaves(next);
@@ -483,7 +483,7 @@ impl<T: Transport> Conductor<T> {
         // What that does to this function is worked out in PLAN.md,
         // "What `step_once` becomes": no second loop and no per-component
         // Local/Remote branch, but the three lines below that drain, step,
-        // and publish become one value the host can supply instead — which
+        // and publish become one value the host can supply instead - which
         // needs this tick hash to be a fold of per-component sub-hashes
         // first, since the conductor never sees a remote component's
         // published bytes.
@@ -523,18 +523,18 @@ impl<T: Transport> Conductor<T> {
                 .expect("checked live above, and membership is frozen mid-tick");
             // Time the component's own step. In-process this one duration
             // answers both declared levels, because the conductor's wait for
-            // a synchronous call is the call — they part company only when a
+            // a synchronous call is the call - they part company only when a
             // transport gets between them (see `timing`). The verdict waits
-            // until the step's effects below have been applied — see the end
+            // until the step's effects below have been applied - see the end
             // of this loop body.
             let started = Instant::now();
             let next_due = entry.component.step(&mut ctx);
             let step_wall = started.elapsed();
 
             // A schedule violation always halts, whatever the timeout policy
-            // says. Unlike a timeout it does not depend on the wall clock —
+            // says. Unlike a timeout it does not depend on the wall clock -
             // it is a pure function of the component's logic and the sim
-            // state, so it reproduces exactly — and removing the component
+            // state, so it reproduces exactly - and removing the component
             // would trade a loud, reproducible bug for a silent scenario
             // change. There is no next due time to carry on from either.
             // TODO(M7): a component panicking is the third failure at the
@@ -550,8 +550,8 @@ impl<T: Transport> Conductor<T> {
             }
 
             // The conductor (not the component) turns outbox entries into
-            // published Messages so that the authoritative metadata —
-            // publisher identity, per-publisher seq, and timestamp — is
+            // published Messages so that the authoritative metadata -
+            // publisher identity, per-publisher seq, and timestamp - is
             // stamped centrally. Components stay transport-blind and cannot
             // misattribute or reorder their own traffic, which the
             // deterministic (publisher, seq) delivery order depends on. In
@@ -614,8 +614,8 @@ impl<T: Transport> Conductor<T> {
 
             // Per-component timing (PLAN.md, "Per-component timing"). Both
             // levels are judged, not just the worse one: they read
-            // different quantities — the step itself, and how long the
-            // conductor waited to hear about it — which happen to be the
+            // different quantities - the step itself, and how long the
+            // conductor waited to hear about it - which happen to be the
             // one measurement in-process, and are two the moment a
             // transport gets between them. Hence one call each, with
             // `step_wall` standing in for both. The soft one goes first so
@@ -648,7 +648,7 @@ impl<T: Transport> Conductor<T> {
     ///
     /// Soft, permanently: it counts the miss, says so, and returns. Nothing
     /// about the run changes, which is what makes the level safe to measure
-    /// on whichever machine the step ran on — and so what keeps it harmless
+    /// on whichever machine the step ran on - and so what keeps it harmless
     /// once components are distributed and `step` no longer runs here.
     /// Returns nothing because there is no verdict to act on.
     fn judge_step_budget(
@@ -691,7 +691,7 @@ impl<T: Transport> Conductor<T> {
     /// "Per-component timing").
     ///
     /// Hard: the declared policy either ends the run or takes the component
-    /// out of the next tick. Neither touches this one — the step has
+    /// out of the next tick. Neither touches this one - the step has
     /// already happened and everything it did stands, so the tick
     /// fingerprints exactly as it would have anyway.
     fn judge_step_timeout(

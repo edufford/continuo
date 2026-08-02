@@ -24,7 +24,7 @@ impl Schedule {
         self.queue.pop_first()
     }
 
-    /// Unschedules `index` everywhere it is due — called when a component
+    /// Unschedules `index` everywhere it is due - called when a component
     /// leaves, so a departed slot can never be stepped.
     pub(crate) fn remove_index(&mut self, index: usize) {
         self.queue.retain(|_, due| {

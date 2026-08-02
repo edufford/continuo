@@ -1,7 +1,7 @@
 //! Deterministic hashing for the per-tick determinism check (milestone 2).
 //!
 //! Implemented here rather than pulled in as a dependency so the hash
-//! function — like time formatting and the RNG — is fully owned: stable
+//! function - like time formatting and the RNG - is fully owned: stable
 //! constants, identical on every platform and toolchain, forever.
 //!
 //! Why FNV-1a 64 specifically:
@@ -13,7 +13,7 @@
 //!   per tick are tiny, so cryptographic strength (SHA-2) and
 //!   throughput-optimized designs (xxHash) buy nothing here.
 //! - **Small enough to be obviously correct and trivially portable**: two
-//!   constants and a byte loop — easy to audit against published test
+//!   constants and a byte loop - easy to audit against published test
 //!   vectors (below), impossible to get subtly platform-dependent, and
 //!   reimplementable in one line anywhere else that ever needs to check a
 //!   digest (e.g. Python tooling reading event logs).
@@ -39,7 +39,7 @@ impl HashFnv1a64 {
         HashFnv1a64(FNV_OFFSET_BASIS)
     }
 
-    /// Resumes hashing from a previous hash value — used to chain the
+    /// Resumes hashing from a previous hash value - used to chain the
     /// running world hash across ticks.
     pub const fn resume(hash: u64) -> Self {
         HashFnv1a64(hash)
@@ -83,7 +83,7 @@ pub fn hash_bytes(bytes: &[u8]) -> u64 {
 }
 
 /// Serde helpers serializing a `u64` hash as a fixed-width hex string
-/// (`"cbf29ce484222325"`) — human-scannable in logs and immune to any
+/// (`"cbf29ce484222325"`) - human-scannable in logs and immune to any
 /// reader that treats JSON numbers as f64.
 pub mod hex_u64 {
     use serde::{Deserialize, Deserializer, Serializer, de};

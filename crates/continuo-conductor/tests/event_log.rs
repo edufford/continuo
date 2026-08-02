@@ -48,7 +48,7 @@ fn sample_fingerprint() -> TickFingerprint {
 }
 
 /// Three JSON lines: the `("test", seed 7)` header, then the two events of
-/// a single tick at t=0 — one message (`sample_message`, published on `w/a`
+/// a single tick at t=0 - one message (`sample_message`, published on `w/a`
 /// by `p`) followed by that tick's fingerprint (`sample_fingerprint`). A
 /// verifier fed exactly those two events in that order must agree with it.
 fn sample_log() -> EventLog {
@@ -161,11 +161,11 @@ fn the_verifier_flags_a_truncated_rerun() {
 
 #[test]
 fn a_truncated_rerun_is_reported_at_the_expectation_it_stopped_short_of() {
-    // The log carries an observation between the last matched event and
-    // the first unmatched one. Only `check` steps the cursor over
-    // observations, so a re-run that stops early leaves it resting on one
-    // — and the reported index must still point at the expectation, which
-    // is the line a reader has to go and look at.
+    // The log carries an observation between the last matched event and the
+    // first unmatched one. Only `check` steps the cursor over observations,
+    // so a re-run that stops early leaves it resting on one, and the reported
+    // index must still point at the expectation, which is the line a reader
+    // has to go and look at.
     let mut log = sample_log();
     let tick = log.events.pop().expect("fixture ends with its fingerprint");
     log.events

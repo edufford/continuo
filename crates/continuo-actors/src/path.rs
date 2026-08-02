@@ -1,7 +1,7 @@
 use continuo_core::Vec3;
 
 /// A 2D polyline with arc-length parameterization, closed into a loop or
-/// open with two ends — the demo "map" until the world spec exists (see
+/// open with two ends - the demo "map" until the world spec exists (see
 /// PLAN.md, World and map).
 // TODO(PLAN "World and map"): replace with named paths from the world spec
 // scene graph (published on continuo/{world}/map) once it exists; actors
@@ -130,7 +130,7 @@ impl Waypoints {
         let s = self.resolve_arc_length(s);
         // partition_point: first segment whose end is beyond s. Capped
         // because `resolve_arc_length` can hand back the total, and at the
-        // path's end nothing is "beyond" — the answer would otherwise run
+        // path's end nothing is "beyond" - the answer would otherwise run
         // off the table. The cap reads that as "at the end of the last
         // segment", which for a loop is its start point, the same answer
         // wrapping would have given.
@@ -161,7 +161,7 @@ impl Waypoints {
     }
 
     /// World-frame position at arc length `s`, displaced `lateral` meters
-    /// to the **left** of the path — the Frenet `(s, d)` pair, resolved
+    /// to the **left** of the path - the Frenet `(s, d)` pair, resolved
     /// into world coordinates.
     ///
     /// This is what lets one road serve every lane: a lane is an offset

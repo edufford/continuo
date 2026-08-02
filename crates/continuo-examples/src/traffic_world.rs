@@ -15,10 +15,10 @@
 //! example that stepped the conductor without applying them would be
 //! running a different world, and `traffic_verify` exists to notice exactly
 //! that kind of difference. [`run_playback_traffic_scenario`] has nothing
-//! to apply — recorded cars are already a schedule — and the pair sitting
+//! to apply - recorded cars are already a schedule - and the pair sitting
 //! together is what makes that visible.
 //!
-//! Everything is generic over the transport, so an example picks its own —
+//! Everything is generic over the transport, so an example picks its own -
 //! plain `InProcTransport` for the base demo, wrapped in a
 //! `MonitorTransport` when recording or verifying.
 
@@ -47,7 +47,7 @@ pub const SIM_SECONDS: i64 = 30;
 const EGO_NAME: &str = "ego";
 
 /// Where the ego starts: at the road's origin, in the centre lane. Unlike
-/// [`EGO_SPEED`] these are not tuned against anything — they are what the
+/// [`EGO_SPEED`] these are not tuned against anything - they are what the
 /// rest of the scenario is measured from, which is why traffic spawns
 /// relative to the ego and the road is long enough for where it ends up.
 const EGO_START: f64 = 0.0;
@@ -57,7 +57,7 @@ const EGO_LANE: f64 = 0.0;
 /// traffic spawns into.
 const ROAD_LENGTH: f64 = 1600.0;
 const LANE_WIDTH: f64 = 3.5;
-/// Lanes traffic may use — either side of the ego, never [`EGO_LANE`]
+/// Lanes traffic may use - either side of the ego, never [`EGO_LANE`]
 /// itself: nothing here models a collision, so traffic goes beside the ego
 /// rather than in front of it, and the overtaking stays clean.
 const TRAFFIC_LANES: [f64; 2] = [LANE_WIDTH, -LANE_WIDTH];
@@ -75,7 +75,7 @@ const SPAWN_AHEAD: f64 = 40.0;
 const RETIRE_BEHIND: f64 = 60.0;
 const SPAWN_GAP: (f64, f64) = (20.0, 50.0);
 
-/// A handle on the one road every car in this world drives — built once and
+/// A handle on the one road every car in this world drives - built once and
 /// handed out, not rebuilt per call, which is what keeps a run that spawns
 /// twenty cars from carrying twenty copies of the same geometry.
 ///
@@ -154,7 +154,7 @@ fn add_car<T: Transport>(
 ///
 /// All three are parameters because they are the knobs a what-if run
 /// turns, and the ego is the component under study. Both setups pass
-/// [`EGO_START`] and [`EGO_LANE`]; where they differ is the speed —
+/// [`EGO_START`] and [`EGO_LANE`]; where they differ is the speed -
 /// [`setup_live_traffic_scenario`] passes [`EGO_SPEED`] and
 /// [`setup_playback_traffic_scenario`] takes whatever the experiment wants,
 /// which is what keeps the two runs comparable to each other.
@@ -206,7 +206,7 @@ fn add_spawner<T: Transport>(conductor: &mut Conductor<T>) -> Result<(), Conduct
 
 /// Registers the live scenario's fixed cast: the ego, the spawner that
 /// manages traffic around it, and the pose logger. Every car arrives later,
-/// while the run is under way — so this is the whole world only at sim time
+/// while the run is under way - so this is the whole world only at sim time
 /// zero, and [`run_live_traffic_scenario`] is what builds the rest of it.
 ///
 /// *Live* because the traffic is decided as the run happens. `traffic_resim`
@@ -229,7 +229,7 @@ pub fn setup_live_traffic_scenario<T: Transport>(
 ///
 /// Line this up against [`setup_live_traffic_scenario`] and the whole
 /// difference is two lines: no spawner, and the cars come from the log.
-/// That is what makes an open-loop what-if a fair comparison — the traffic
+/// That is what makes an open-loop what-if a fair comparison - the traffic
 /// cannot react to the ego, so the scene is held fixed while the ego
 /// varies, and any difference in the outcome belongs to the ego alone.
 ///
@@ -286,7 +286,7 @@ fn recorded_traffic_actor_names(recorded: &EventLog) -> Vec<String> {
 
 /// Registers the world-level pose logger, offset 1 ns past each second
 /// boundary: the smallest offset that clears same-instant deferral, so
-/// on-boundary poses are visible — and nothing can be scheduled between a
+/// on-boundary poses are visible - and nothing can be scheduled between a
 /// boundary and its sample.
 fn add_logger<T: Transport>(conductor: &mut Conductor<T>) -> Result<(), ConductorError> {
     conductor.add_component(
@@ -305,7 +305,7 @@ fn add_logger<T: Transport>(conductor: &mut Conductor<T>) -> Result<(), Conducto
 /// requests it publishes, then turns them into membership changes.
 ///
 /// Both halves are here because they are one job split by a boundary the
-/// sim cannot cross — a component can decide a car should exist but cannot
+/// sim cannot cross - a component can decide a car should exist but cannot
 /// build one. [`Self::wrap_transport`] wires up the collecting, and
 /// [`run_live_traffic_scenario`] does the building between ticks.
 #[derive(Clone, Default)]
@@ -395,7 +395,7 @@ impl TrafficRequestHandler {
                     spawn.first_due,
                 )?,
                 // The spawner drops a car from its roll when it asks, so it
-                // never asks twice — but a scenario that also removed cars
+                // never asks twice - but a scenario that also removed cars
                 // by hand could, and a request for someone already gone has
                 // simply been satisfied early.
                 Request::Despawn(despawn) => {
@@ -415,20 +415,20 @@ impl TrafficRequestHandler {
 /// Runs the world to `end`, applying the spawner's requests as they come.
 ///
 /// The sim decides *what* joins and leaves; this turns those decisions into
-/// components, and decides nothing itself. The split is forced — a
+/// components, and decides nothing itself. The split is forced - a
 /// component cannot hand over a `Box<dyn Component>`, which is also why
-/// join-over-transport waits for milestone 7 — but it is also what keeps
+/// join-over-transport waits for milestone 7 - but it is also what keeps
 /// the traffic pattern reproducible: the spawner chose it from poses and a
 /// seeded stream, so a recorded run can be verified against a re-run.
 ///
 /// Timing here is not load-bearing. Every request declares the instant it
 /// takes effect, so *when* this loop applies one does not shape the run,
-/// only that it lands before that instant — which draining after every tick
+/// only that it lands before that instant - which draining after every tick
 /// leaves a whole spawner period of room for.
 ///
 /// Pass `Some` verifier to stop at the first divergence rather than at
-/// `end`. Verification runs the world exactly as any other run does — that
-/// is the whole point of it — so it drives the same loop instead of a copy
+/// `end`. Verification runs the world exactly as any other run does - that
+/// is the whole point of it - so it drives the same loop instead of a copy
 /// that could drift from this one.
 // TODO(PLAN "Scenario configuration"): the general form of this loop is a
 // host-side registry mapping component *type names* to constructors, so one
@@ -461,8 +461,8 @@ pub fn run_live_traffic_scenario<T: Transport>(
 /// The counterpart to [`run_live_traffic_scenario`], and the contrast is
 /// the whole content of it: there is nothing to apply between ticks,
 /// because nothing in this world asks for anything. Recorded cars are
-/// already a schedule — each double knows every instant it publishes at
-/// before the run starts — so the conductor only has to follow it.
+/// already a schedule - each double knows every instant it publishes at
+/// before the run starts - so the conductor only has to follow it.
 ///
 /// Which is why this needs no request handler and no verifier: with no
 /// decisions being made there is nothing that could be made differently,

@@ -2,7 +2,7 @@
 //! sim as stimulus (see [`crate::record`] for the log itself and for how
 //! this differs from verification).
 //!
-//! This lives beside the conductor rather than in `continuo-actors` — it is
+//! This lives beside the conductor rather than in `continuo-actors` - it is
 //! harness machinery built on [`EventLog`], not a sample actor, and putting
 //! it in the actors crate would make that crate depend on this one.
 
@@ -11,7 +11,7 @@ use serde_json::value::RawValue;
 
 use crate::record::{EventLog, LogEvent};
 
-/// Replays one recorded publisher's messages as an ordinary component —
+/// Replays one recorded publisher's messages as an ordinary component -
 /// the open-loop resimulation stimulus.
 ///
 /// Built from an event log filtered to one publisher path (including its
@@ -20,7 +20,7 @@ use crate::record::{EventLog, LogEvent};
 /// payloads. Downstream components see them exactly as if the original
 /// were running, so a live component can be swapped for its playback
 /// double without consumers noticing. A playback double never reacts to
-/// the live world — its behavior is pure data, which also keeps hybrid
+/// the live world - its behavior is pure data, which also keeps hybrid
 /// runs fully deterministic and recordable.
 pub struct PlaybackComponent {
     id: ComponentId,
@@ -32,7 +32,7 @@ pub struct PlaybackComponent {
 impl PlaybackComponent {
     /// Filters `log` to messages recorded from `publisher` (a component
     /// path string) or any of its sub-components. `id` is the playback
-    /// double's own registration id — typically the original actor's name.
+    /// double's own registration id - typically the original actor's name.
     pub fn from_log(id: ComponentId, log: &EventLog, publisher: &str) -> Self {
         let prefix = format!("{publisher}/");
         let messages = log
