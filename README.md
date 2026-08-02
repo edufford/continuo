@@ -30,7 +30,7 @@ instant, and repeats.
             ┌────────────┴─────────────┐
             │        Transport         │   pub/sub on key expressions,
             │   (InProc now, Zenoh     │   e.g. continuo/demo/actor/ego/pose
-            │    later - same trait)   │
+            │    later; same trait)    │
             └────────────┬─────────────┘
        ┌─────────────┬───┴──────────┬──────────────────┐
 ┌──────┴─────┐ ┌─────┴──────┐ ┌─────┴─────────┐ ┌──────┴─────┐
