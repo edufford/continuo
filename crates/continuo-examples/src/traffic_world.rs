@@ -31,7 +31,7 @@ use continuo_actors::{
 use continuo_conductor::record::LogEvent;
 use continuo_conductor::{
     Conductor, ConductorConfig, ConductorError, EventLog, JoinMetadata, Pacing, PlaybackComponent,
-    Verifier,
+    Verifier, WORLD_LEVEL,
 };
 use continuo_core::{Component, ComponentId, Message, SimDuration, SimTime};
 use continuo_transport::{MonitorTransport, Transport};
@@ -186,7 +186,7 @@ fn add_ego<T: Transport>(
 /// it. See `traffic_resim`.
 fn add_spawner<T: Transport>(conductor: &mut Conductor<T>) -> Result<(), ConductorError> {
     conductor.add_component(
-        "",
+        WORLD_LEVEL,
         Box::new(TrafficSpawner::new(
             SimDuration::from_millis(500),
             shared_road(),
@@ -251,7 +251,7 @@ pub fn setup_playback_traffic_scenario<T: Transport>(
     for actor_name in &actor_names {
         let id = ComponentId::new(actor_name.as_str()).expect("a recorded path segment is an id");
         conductor.add_component(
-            "",
+            WORLD_LEVEL,
             Box::new(PlaybackComponent::from_log(id, recorded, actor_name)),
         )?;
     }
@@ -290,7 +290,7 @@ fn recorded_traffic_actor_names(recorded: &EventLog) -> Vec<String> {
 /// boundary and its sample.
 fn add_logger<T: Transport>(conductor: &mut Conductor<T>) -> Result<(), ConductorError> {
     conductor.add_component(
-        "",
+        WORLD_LEVEL,
         Box::new(PoseLogger::new(
             SimDuration::from_secs(1),
             SimDuration::from_nanos(1),

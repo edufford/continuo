@@ -17,7 +17,7 @@ use continuo_conductor::record::LogEvent;
 use continuo_conductor::{
     Conductor, ConductorConfig, ConductorError, EventLog, JoinMetadata, MembershipChange,
     OnTimeout, Pacing, RecordedBudgetMiss, RecordedObservation, RecordedTimeout, Recorder,
-    StepTiming, Verifier,
+    StepTiming, Verifier, WORLD_LEVEL,
 };
 use continuo_core::{
     Component, ComponentId, ComponentPath, KeyExpr, SimDuration, SimTime, StepCtx,
@@ -122,13 +122,13 @@ fn a_step_over_its_budget_is_counted_against_the_component_that_took_it() {
     let mut conductor = new_conductor();
     conductor
         .add_component(
-            JoinMetadata::at_start("").with_timing(StepTiming::budget(wall_ms(1))),
+            JoinMetadata::at_start(WORLD_LEVEL).with_timing(StepTiming::budget(wall_ms(1))),
             ticker("slow", SLOW, &steps),
         )
         .expect("registration succeeds");
     conductor
         .add_component(
-            JoinMetadata::at_start("").with_timing(StepTiming::budget(GENEROUS)),
+            JoinMetadata::at_start(WORLD_LEVEL).with_timing(StepTiming::budget(GENEROUS)),
             ticker("quick", Duration::ZERO, &steps),
         )
         .expect("registration succeeds");
@@ -165,7 +165,7 @@ fn a_missed_budget_leaves_the_run_identical() {
         let mut conductor = new_conductor();
         conductor
             .add_component(
-                JoinMetadata::at_start("").with_timing(timing),
+                JoinMetadata::at_start(WORLD_LEVEL).with_timing(timing),
                 ticker("slow", SLOW, steps),
             )
             .expect("registration succeeds");
@@ -194,13 +194,13 @@ fn a_timeout_halts_the_world_when_that_is_the_policy() {
     let mut conductor = new_conductor();
     conductor
         .add_component(
-            JoinMetadata::at_start("")
+            JoinMetadata::at_start(WORLD_LEVEL)
                 .with_timing(StepTiming::timeout(wall_ms(1), OnTimeout::Halt)),
             ticker("slow", SLOW, &steps),
         )
         .expect("registration succeeds");
     conductor
-        .add_component("", ticker("later_sibling", Duration::ZERO, &steps))
+        .add_component(WORLD_LEVEL, ticker("later_sibling", Duration::ZERO, &steps))
         .expect("registration succeeds");
 
     let halted = conductor.run_until(t_sim_ms(10));
@@ -231,13 +231,13 @@ fn a_timeout_removes_the_component_at_the_next_instant_when_that_is_the_policy()
 
     conductor
         .add_component(
-            JoinMetadata::at_start("")
+            JoinMetadata::at_start(WORLD_LEVEL)
                 .with_timing(StepTiming::timeout(wall_ms(1), OnTimeout::Remove)),
             ticker("slow", SLOW, &steps),
         )
         .expect("registration succeeds");
     conductor
-        .add_component("", ticker("neighbour", Duration::ZERO, &steps))
+        .add_component(WORLD_LEVEL, ticker("neighbour", Duration::ZERO, &steps))
         .expect("registration succeeds");
     conductor
         .run_until(t_sim_ms(30))
@@ -287,7 +287,7 @@ fn a_step_past_both_levels_is_counted_before_the_run_halts() {
     let mut conductor = new_conductor();
     conductor
         .add_component(
-            JoinMetadata::at_start("").with_timing(
+            JoinMetadata::at_start(WORLD_LEVEL).with_timing(
                 StepTiming::budget(wall_ms(1)).with_timeout(wall_ms(5), OnTimeout::Halt),
             ),
             ticker("slow", SLOW, &steps),
@@ -319,7 +319,7 @@ fn record_a_run_costing(step_cost: Duration) -> EventLog {
     conductor.set_observation_callback(recorder.observation_callback());
     conductor
         .add_component(
-            JoinMetadata::at_start("").with_timing(StepTiming::budget(wall_ms(1))),
+            JoinMetadata::at_start(WORLD_LEVEL).with_timing(StepTiming::budget(wall_ms(1))),
             ticker("slow", step_cost, &steps),
         )
         .expect("registration succeeds");
@@ -391,7 +391,7 @@ fn a_re_run_that_misses_different_budgets_still_verifies() {
     conductor.set_membership_callback(verifier.membership_callback());
     conductor
         .add_component(
-            JoinMetadata::at_start("").with_timing(StepTiming::budget(wall_ms(1))),
+            JoinMetadata::at_start(WORLD_LEVEL).with_timing(StepTiming::budget(wall_ms(1))),
             ticker("slow", Duration::ZERO, &steps),
         )
         .expect("registration succeeds");
@@ -438,13 +438,13 @@ fn the_log_says_why_a_timed_out_component_left() {
     conductor.set_observation_callback(recorder.observation_callback());
     conductor
         .add_component(
-            JoinMetadata::at_start("")
+            JoinMetadata::at_start(WORLD_LEVEL)
                 .with_timing(StepTiming::timeout(wall_ms(5), OnTimeout::Remove)),
             ticker("slow", SLOW, &steps),
         )
         .expect("registration succeeds");
     conductor
-        .add_component("", ticker("neighbour", Duration::ZERO, &steps))
+        .add_component(WORLD_LEVEL, ticker("neighbour", Duration::ZERO, &steps))
         .expect("registration succeeds");
     conductor
         .run_until(t_sim_ms(20))
@@ -477,7 +477,7 @@ fn a_budget_that_the_timeout_would_always_beat_is_rejected() {
     // could never report one.
     assert!(matches!(
         conductor.add_component(
-            JoinMetadata::at_start("").with_timing(
+            JoinMetadata::at_start(WORLD_LEVEL).with_timing(
                 StepTiming::budget(wall_ms(50)).with_timeout(wall_ms(10), OnTimeout::Halt)
             ),
             ticker("misdeclared", Duration::ZERO, &steps),
@@ -490,7 +490,7 @@ fn a_budget_that_the_timeout_would_always_beat_is_rejected() {
     // The same two limits the right way round are fine.
     conductor
         .add_component(
-            JoinMetadata::at_start("").with_timing(
+            JoinMetadata::at_start(WORLD_LEVEL).with_timing(
                 StepTiming::budget(wall_ms(10)).with_timeout(wall_ms(50), OnTimeout::Halt),
             ),
             ticker("declared", Duration::ZERO, &steps),

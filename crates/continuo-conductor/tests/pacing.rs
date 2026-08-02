@@ -9,7 +9,7 @@
 
 use std::time::Instant;
 
-use continuo_conductor::{Conductor, ConductorConfig, ConductorError, Pacing};
+use continuo_conductor::{Conductor, ConductorConfig, ConductorError, Pacing, WORLD_LEVEL};
 use continuo_core::{Component, ComponentId, KeyExpr, SimDuration, SimTime, StepCtx};
 use continuo_transport::InProcTransport;
 
@@ -53,7 +53,7 @@ fn run(pacing: Pacing, end: SimTime) -> Conductor<InProcTransport> {
     .expect("config is accepted");
     conductor
         .add_component(
-            "",
+            WORLD_LEVEL,
             Box::new(Ticker {
                 period: SimDuration::from_millis(10),
             }),

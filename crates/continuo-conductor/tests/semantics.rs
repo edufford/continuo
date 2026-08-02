@@ -3,7 +3,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use continuo_conductor::{Conductor, ConductorConfig, ConductorError, Pacing};
+use continuo_conductor::{Conductor, ConductorConfig, ConductorError, Pacing, WORLD_LEVEL};
 use continuo_core::{Component, ComponentId, KeyExpr, SimDuration, SimTime, StepCtx};
 use continuo_transport::InProcTransport;
 
@@ -88,7 +88,7 @@ fn advances_to_earliest_due_and_orders_by_declaration() {
     let mut c = new_conductor();
     // Declared order: a then b, but different periods.
     c.add_component(
-        "",
+        WORLD_LEVEL,
         Box::new(Probe {
             id: "a",
             period: dur_ms(3),
@@ -99,7 +99,7 @@ fn advances_to_earliest_due_and_orders_by_declaration() {
     )
     .unwrap();
     c.add_component(
-        "",
+        WORLD_LEVEL,
         Box::new(Probe {
             id: "b",
             period: dur_ms(2),
@@ -137,7 +137,7 @@ fn strict_advance_guard_rejects_non_advancing_next_due() {
     let observations: ObservationLog = Default::default();
     let mut c = new_conductor();
     c.add_component(
-        "",
+        WORLD_LEVEL,
         Box::new(Probe {
             id: "stuck",
             period: dur_ms(0),
@@ -209,7 +209,7 @@ fn cross_actor_same_instant_is_deferred_to_next_step() {
     let mut c = new_conductor();
     // Two world-level actors, co-scheduled every 10 ms.
     c.add_component(
-        "",
+        WORLD_LEVEL,
         Box::new(Probe {
             id: "producer",
             period: dur_ms(10),
@@ -220,7 +220,7 @@ fn cross_actor_same_instant_is_deferred_to_next_step() {
     )
     .unwrap();
     c.add_component(
-        "",
+        WORLD_LEVEL,
         Box::new(Probe {
             id: "consumer",
             period: dur_ms(10),
@@ -258,7 +258,7 @@ fn slow_consumer_receives_accumulated_messages_in_order() {
     let observations: ObservationLog = Default::default();
     let mut c = new_conductor();
     c.add_component(
-        "",
+        WORLD_LEVEL,
         Box::new(Probe {
             id: "fast",
             period: dur_ms(10),
@@ -269,7 +269,7 @@ fn slow_consumer_receives_accumulated_messages_in_order() {
     )
     .unwrap();
     c.add_component(
-        "",
+        WORLD_LEVEL,
         Box::new(Probe {
             id: "slow",
             period: dur_ms(35),

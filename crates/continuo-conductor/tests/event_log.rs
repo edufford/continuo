@@ -6,7 +6,7 @@
 use continuo_conductor::record::{LogEvent, LogHeader};
 use continuo_conductor::{
     Conductor, ConductorConfig, EventLog, Pacing, PlaybackComponent, RecordedBudgetMiss,
-    RecordedObservation, Recorder, TickFingerprint, Verifier,
+    RecordedObservation, Recorder, TickFingerprint, Verifier, WORLD_LEVEL,
 };
 use continuo_core::{Component, ComponentId, ComponentPath, KeyExpr, Message, SimTime, StepCtx};
 use continuo_transport::InProcTransport;
@@ -251,7 +251,7 @@ fn a_playback_double_registers_like_any_component() {
         .expect("free-run config is always accepted");
     conductor
         .add_component(
-            "",
+            WORLD_LEVEL,
             Box::new(PlaybackComponent::from_log(
                 ComponentId::new(PUBLISHER).unwrap(),
                 &log,

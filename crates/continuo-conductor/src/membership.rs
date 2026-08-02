@@ -18,14 +18,25 @@ use continuo_core::SimTime;
 
 use crate::timing::StepTiming;
 
+/// Parent path of a component that sits directly under the world, with no
+/// composite above it — its own id is the whole path.
+///
+/// The empty string is not a placeholder here, it is the root path:
+/// [`continuo_core::ComponentPath::parse`] maps `""` to the root, and a
+/// [`continuo_core::ComponentId`] is never empty, so no real composite can
+/// collide with it. Named because the bare literal reads at a call site
+/// like a forgotten argument, where `add_component(WORLD_LEVEL, component)`
+/// says what it means.
+pub const WORLD_LEVEL: &str = "";
+
 /// Everything the conductor needs to admit a component.
 // TODO(M7): the coupled/decoupled flag (PLAN.md decision 2026-07-18) joins
 // this struct too — decoupled children take next-step visibility, which
 // frees their host placement.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JoinMetadata {
-    /// `""` for a world-level actor, or a composite's path to join it. The
-    /// component's own id completes the path.
+    /// [`WORLD_LEVEL`] for a world-level actor, or a composite's path to
+    /// join it. The component's own id completes the path.
     pub parent_path: String,
     /// Sim time of the component's first step.
     ///
