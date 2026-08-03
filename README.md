@@ -7,8 +7,8 @@ runs entirely in a single process today, and is designed so components can
 later be split into separate processes over [Zenoh](https://zenoh.io/) without
 changing component code.
 
-See [PLAN.md](PLAN.md) for the full design, decision log, and milestone
-roadmap.
+See [PLAN.md](PLAN.md) for the full design and milestone roadmap, and
+[DECISIONS.md](DECISIONS.md) for why the design is what it is.
 
 ## Architecture
 
