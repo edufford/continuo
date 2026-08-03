@@ -67,7 +67,9 @@ instant, and repeats.
 - **Deterministic by construction.** Inboxes are sorted by
   `(publisher, seq)`, never arrival order; execution order within an instant
   is declaration order; no wall clock or OS entropy in sim logic. All
-  randomness derives from one world seed.
+  randomness derives from one world seed. `HashMap` and `HashSet` are banned
+  workspace-wide by a clippy lint, since their iteration order is
+  unspecified; every map here is a `BTreeMap`.
 - **Determinism verification.** Every tick the conductor emits a
   **fingerprint**, a hash over what each stepped component published (plus
   its internal state, if it implements `state_bytes`), chained into a

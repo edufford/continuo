@@ -173,7 +173,9 @@ All transport payloads are JSON via `serde_json`:
   threaten replay fidelity.
 - Serialization must be canonical so the serialized bytes can be hashed directly:
   struct fields in declaration order (serde default), and **never serialize
-  `HashMap`** in messages; use `BTreeMap` or `Vec` of pairs.
+  `HashMap`** in messages; use `BTreeMap` or `Vec` of pairs. Hash-ordered
+  collections are in fact banned everywhere, not only on the wire, and a lint
+  enforces it (see the 2026-08-02 decision below).
 - **Pose convention**: SI units throughout. Right-handed, Z-up world frame
   (ENU); body frames X-forward/Y-left/Z-up (ROS REP-103 style). A pose is a
   position `{x, y, z}` in meters plus a unit quaternion `{w, x, y, z}`,
@@ -916,6 +918,28 @@ networking in the mix. They are independent and can swap if priorities shift.
     scenario config's type-name-plus-parameters request, resolved by a
     host-side registry, the same registry the run loop is standing in for, and the
     part a host takes over at M7.
+- **2026-08-02**: **`HashMap` and `HashSet` are banned workspace-wide**, not
+  merely in wire messages, enforced by `disallowed-types` in `clippy.toml`.
+  CI already runs clippy with `-D warnings`, so the ban is a build failure
+  rather than a convention.
+  - The hazard is *iteration order*, not serialization. Serializing a
+    hash-ordered collection breaks canonical bytes outright, but iterating
+    one anywhere its order can reach sim state, the schedule, or a
+    fingerprint breaks determinism just as thoroughly and far less visibly.
+    A map that is only ever looked up is safe today and one `for` loop away
+    from being a bug tomorrow, and that bug surfaces as a divergence far
+    from the type that caused it rather than as a compile error.
+  - Banning the type outright rather than reviewing each use is the same
+    reasoning that made the hash and RNG owned implementations: remove the
+    possibility instead of relying on vigilance.
+  - Free to adopt, which is why it is a ban rather than a guideline: the
+    workspace contained **zero** uses of either type when this landed, so
+    nothing needed grandfathering and no `#[allow]` escapes were required.
+    `BTreeMap`/`BTreeSet` iterate in key order and are what every map here
+    already used.
+  - The escape hatch is `#[allow(clippy::disallowed_types)]` with a comment
+    saying why the order cannot matter. Having to write that comment is the
+    point.
 
 ## Deferred (decided-not-now, revisit when they bite)
 

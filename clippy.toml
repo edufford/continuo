@@ -1,0 +1,19 @@
+# Hash-ordered collections are banned outright, not merely in wire messages.
+#
+# Their iteration order is unspecified and randomized per process, so any
+# order-dependent use breaks the determinism guarantee (PLAN.md, "Determinism
+# rules"). Serializing one breaks canonical bytes directly; iterating one
+# anywhere its order can reach sim state, the schedule, or a fingerprint does
+# the same thing less obviously. A map that is only ever looked up is safe
+# today and one `for` loop away from being a determinism bug tomorrow, and
+# that bug surfaces as a divergence far from the type that caused it rather
+# than as a compile error.
+#
+# `BTreeMap` and `BTreeSet` iterate in key order, which is what every map in
+# this workspace already uses. If a genuinely order-independent need ever
+# appears, `#[allow(clippy::disallowed_types)]` with a comment saying why is
+# the escape hatch, and having to write that comment is the point.
+disallowed-types = [
+    { path = "std::collections::HashMap", reason = "iteration order is unspecified; use BTreeMap so runs stay reproducible" },
+    { path = "std::collections::HashSet", reason = "iteration order is unspecified; use BTreeSet so runs stay reproducible" },
+]
