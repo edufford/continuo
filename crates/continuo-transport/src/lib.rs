@@ -23,7 +23,7 @@ pub trait Transport {
     fn subscribe(&mut self, subscriber: ComponentPath, key: KeyExpr);
 
     /// Drops every subscription for `subscriber`, along with anything still
-    /// queued for it — called when a component leaves (milestone 4).
+    /// queued for it. Called when a component leaves (milestone 4).
     ///
     /// Discarding the queue is the point, not a side effect: a departed
     /// component will never step again to drain it, so keeping the messages

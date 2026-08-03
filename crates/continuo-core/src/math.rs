@@ -3,7 +3,7 @@
 //! SI units. Right-handed Z-up (ENU) world frame; body frames are
 //! X-forward/Y-left/Z-up (REP-103 style). Orientation on the wire is always
 //! a unit quaternion with named fields; Euler angles exist only at human
-//! boundaries (config, APIs) with one convention: intrinsic Z-Y-X — apply
+//! boundaries (config, APIs) with one convention, intrinsic Z-Y-X: apply
 //! yaw about Z, then pitch about the new Y, then roll about the new X.
 
 use serde::{Deserialize, Serialize};
@@ -28,7 +28,7 @@ impl Vec3 {
     }
 }
 
-/// Unit quaternion (Hamilton convention), named fields only — never arrays,
+/// Unit quaternion (Hamilton convention), named fields only, never arrays,
 /// so component order can't be misread.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Quat {
@@ -68,7 +68,7 @@ impl Quat {
         z: 0.0,
     };
 
-    /// Rotation about Z only — the common case for planar (2D) models.
+    /// Rotation about Z only, the common case for planar (2D) models.
     pub fn from_yaw(yaw: f64) -> Self {
         EulerRad {
             roll: 0.0,
@@ -102,7 +102,7 @@ impl Quat {
     /// (|pitch| = π/2) roll and yaw are not independent and roll is
     /// reported as 0 by the atan2 identities.
     ///
-    /// Equations: the standard aerospace (3-2-1) sequence — see Diebel,
+    /// Equations: the standard aerospace (3-2-1) sequence. See Diebel,
     /// "Representing Attitude: Euler Angles, Unit Quaternions, and Rotation
     /// Vectors" (2006), eq. 290, and Wikipedia "Conversion between
     /// quaternions and Euler angles" (Quaternion → ZYX Euler). The asin
@@ -123,7 +123,7 @@ impl Quat {
         EulerRad { roll, pitch, yaw }
     }
 
-    /// Yaw component only — convenience for planar models.
+    /// Yaw component only, a convenience for planar models.
     pub fn yaw(self) -> f64 {
         self.to_euler().yaw
     }
@@ -131,7 +131,7 @@ impl Quat {
 
 /// Hamilton product: `a * b` applies `b` first, then `a`.
 ///
-/// Equations: the standard Hamilton quaternion product — see Wikipedia
+/// Equations: the standard Hamilton quaternion product. See Wikipedia
 /// "Quaternion" § Hamilton product (w = scalar part, (x, y, z) = vector
 /// part; expansion of (w₁ + v₁)(w₂ + v₂) with i² = j² = k² = ijk = −1).
 impl std::ops::Mul for Quat {
@@ -151,7 +151,7 @@ impl EulerRad {
     /// `q = qz(yaw) * qy(pitch) * qx(roll)`.
     ///
     /// Equations: expansion of that half-angle product for the aerospace
-    /// (3-2-1) sequence — see Diebel (2006) eq. 297 and Wikipedia
+    /// (3-2-1) sequence. See Diebel (2006) eq. 297 and Wikipedia
     /// "Conversion between quaternions and Euler angles" (Euler ZYX →
     /// quaternion). Verified against the composition identity by the
     /// `intrinsic_zyx_composition_order` test.

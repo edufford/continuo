@@ -1,7 +1,7 @@
 use continuo_core::Vec3;
 
 /// A 2D polyline with arc-length parameterization, closed into a loop or
-/// open with two ends — the demo "map" until the world spec exists (see
+/// open with two ends. The demo "map" until the world spec exists (see
 /// PLAN.md, World and map).
 // TODO(PLAN "World and map"): replace with named paths from the world spec
 // scene graph (published on continuo/{world}/map) once it exists; actors
@@ -83,8 +83,8 @@ impl Waypoints {
     /// How many segments the arc-length table covers.
     fn num_segments(&self) -> usize {
         // Return the segment count. The table holds each segment's end
-        // plus the leading zero, so it is one longer than the count -
-        // whether the path closes is already baked into it by `build`.
+        // plus the leading zero, so it is one longer than the count.
+        // Whether the path closes is already baked into it by `build`.
         self.cumulative.len() - 1
     }
 
@@ -130,7 +130,7 @@ impl Waypoints {
         let s = self.resolve_arc_length(s);
         // partition_point: first segment whose end is beyond s. Capped
         // because `resolve_arc_length` can hand back the total, and at the
-        // path's end nothing is "beyond" — the answer would otherwise run
+        // path's end nothing is "beyond", so the answer would otherwise run
         // off the table. The cap reads that as "at the end of the last
         // segment", which for a loop is its start point, the same answer
         // wrapping would have given.
@@ -161,7 +161,7 @@ impl Waypoints {
     }
 
     /// World-frame position at arc length `s`, displaced `lateral` meters
-    /// to the **left** of the path — the Frenet `(s, d)` pair, resolved
+    /// to the **left** of the path: the Frenet `(s, d)` pair, resolved
     /// into world coordinates.
     ///
     /// This is what lets one road serve every lane: a lane is an offset
@@ -301,7 +301,7 @@ mod tests {
         assert!((middle.x - 40.0).abs() < 1e-12 && middle.y.abs() < 1e-12);
 
         // Past the end, a follower's lookahead finds the end and keeps
-        // pointing down the road - where a closed path would have sent it
+        // pointing down the road, where a closed path would have sent it
         // back to the start.
         let past_end = road.point_at(140.0);
         assert!((past_end.x - 100.0).abs() < 1e-12);

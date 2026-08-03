@@ -1,6 +1,6 @@
 //! Determinism verification: re-runs the traffic demo with every component
 //! live, checking each event against a recorded log as it happens. The
-//! re-run stops at the first divergence and exits non-zero — divergence
+//! re-run stops at the first divergence and exits non-zero, because divergence
 //! here means determinism is broken (or the log was modified). Nothing
 //! from the log enters the simulation.
 //!
@@ -27,7 +27,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // The verifier taps the same observation points the recorder used,
     // comparing instead of collecting. It checks the log header against the
-    // config this run is about to use — the log does not get to say what is
+    // config this run is about to use. The log does not get to say what is
     // being replayed.
     let config = traffic_world::config();
     let verifier = Verifier::new(expected, &config);

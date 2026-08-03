@@ -5,14 +5,14 @@
 //! Two levels in one declaration, answering different questions (PLAN.md,
 //! "Per-component timing"):
 //!
-//! - **budget** — soft, and permanently so. Did *this component's* `step`
+//! - **budget**: soft, and permanently so. Did *this component's* `step`
 //!   finish in time? Measured around the step itself, so it is attributable
 //!   to the component and to nothing else: not to whatever ran ahead of it
 //!   in the instant, and not to the schedule around it. A step over it is
-//!   logged and counted, and that is all — nothing about the run changes, so
+//!   logged and counted, and that is all. Nothing about the run changes, so
 //!   a run that misses every budget produces the identical world hash to one
 //!   that misses none.
-//! - **timeout** — hard, and what it does is declared with it: halt the
+//! - **timeout**: hard, and what it does is declared with it: halt the
 //!   world, or remove the component. This one is the *conductor's* question,
 //!   how long it will wait to hear a step is done, which is why it is the
 //!   level that acts. "The conductor must never hang indefinitely waiting for
@@ -21,7 +21,7 @@
 //! In-process the two quantities coincide, because the conductor's wait *is*
 //! the call: `step` is synchronous and there is nothing in between. That is
 //! why one measured duration is what both are judged against here.
-//! Distributed they separate — the budget is measured by the host running the
+//! Distributed they separate: the budget is measured by the host running the
 //! step and rides back in its `TickDone`, while the timeout stays the
 //! conductor's own wait and takes the transport with it. Keeping the soft
 //! level permanently soft is what makes that split harmless: a limit that
@@ -40,8 +40,8 @@
 //!
 //! Limits belong to **registration** ([`JoinMetadata`](crate::JoinMetadata))
 //! rather than to the `Component` trait: a deadline is a property of the
-//! deployment, not of the model — the same physics has one on a HIL rig and
-//! none in a batch run — and declaring it here keeps wall-clock types out of
+//! deployment, not of the model (the same physics has one on a HIL rig and
+//! none in a batch run), and declaring it here keeps wall-clock types out of
 //! `continuo-core` entirely.
 //!
 //! Timing is not a pacing mode. A budget measures what a step costs whether
@@ -65,8 +65,8 @@ pub struct StepTiming {
     /// Soft limit on the component's own `step`: a step taking longer is
     /// logged and counted (see
     /// [`Conductor::budget_misses`](crate::Conductor::budget_misses)), and
-    /// nothing else, ever. `None` declares no budget — the component has no
-    /// deadline worth flagging.
+    /// nothing else, ever. `None` declares no budget, meaning the component
+    /// has no deadline worth flagging.
     pub budget: Option<Duration>,
     /// Hard limit on how long the conductor waits to hear the step is done:
     /// passing it triggers [`Self::on_timeout`]. `None` declares no timeout,
@@ -95,7 +95,7 @@ pub enum OnTimeout {
     /// as if it had asked to leave then.
     ///
     /// This **changes the scenario**: the component stops publishing, so
-    /// every tick after the removal differs from a run where it survived —
+    /// every tick after the removal differs from a run where it survived,
     /// and the trigger is wall-clock-dependent, so a re-run on a faster
     /// machine may remove it later, or not at all. The removal is recorded
     /// in the event log like any other leave, which keeps the run
@@ -173,7 +173,7 @@ impl StepTiming {
     /// either can happen without the other. That matters most where they
     /// differ: once a transport sits between the conductor and the step, a
     /// timeout with the budget intact means the *network* was slow, and a
-    /// timeout with the budget missed means the component was — a
+    /// timeout with the budget missed means the component was, a
     /// distinction a single worst-level verdict cannot express.
     pub(crate) fn over_timeout(&self, waited: Duration) -> bool {
         // Return whether a timeout was declared and the wait outlasted it.
@@ -184,7 +184,7 @@ impl StepTiming {
     /// never report, because the conductor stops waiting before any step
     /// slow enough to miss it can finish. That survives the two levels
     /// becoming separate measurements, for a structural reason rather than a
-    /// coincidence — a wait always contains the step it is waiting on.
+    /// coincidence: a wait always contains the step it is waiting on.
     /// Returns the offending pair so the caller can name both when rejecting
     /// it.
     pub(crate) fn unreachable_budget(&self) -> Option<(Duration, Duration)> {
@@ -269,8 +269,8 @@ mod tests {
         // What separate judging buys, and the reason it cannot be one
         // verdict on one number: distributed, these are two measurements.
         // A quick step behind a slow transport passes the timeout with its
-        // budget intact — the network was slow, not the component — and
-        // nothing about that state is expressible as "the worse level".
+        // budget intact, so the network was slow rather than the component,
+        // and nothing about that state is expressible as "the worse level".
         let timing = StepTiming::budget(wall_ms(10)).with_timeout(wall_ms(50), OnTimeout::Halt);
         let step = wall_ms(5);
         let waited = wall_ms(60);

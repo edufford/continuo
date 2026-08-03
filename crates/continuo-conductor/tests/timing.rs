@@ -3,12 +3,12 @@
 //!
 //! These tests contain the only deliberately slow steps in the suite. There
 //! is no way around it: the quantity under test is wall time, so overrunning
-//! a limit means actually spending it. Sleeping is what makes that reliable
-//! — [`std::thread::sleep`] never returns early, so a step told to take
-//! 20 ms is always over a 1 ms limit however loaded the machine is. Limits
-//! meant *not* to be hit are set absurdly high for the same reason, since
-//! the machine can always stall. Steps stay few, and the whole file spends
-//! well under a second.
+//! a limit means actually spending it. Sleeping is what makes that reliable:
+//! [`std::thread::sleep`] never returns early, so a step told to take 20 ms
+//! is always over a 1 ms limit however loaded the machine is. Limits meant
+//! *not* to be hit are set absurdly high for the same reason, since the
+//! machine can always stall. Steps stay few, and the whole file spends well
+//! under a second.
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -66,7 +66,7 @@ fn t_sim_ms(millis: i64) -> SimTime {
     SimTime::from_millis(millis)
 }
 
-/// Wall-clock milliseconds — the scale step limits are declared at.
+/// Wall-clock milliseconds, the scale step limits are declared at.
 fn wall_ms(millis: u64) -> Duration {
     Duration::from_millis(millis)
 }
@@ -254,7 +254,7 @@ fn a_timeout_removes_the_component_at_the_next_instant_when_that_is_the_policy()
         "losing a component is not the world stopping"
     );
 
-    // It goes out as an ordinary leave — the same event a scheduled
+    // It goes out as an ordinary leave, the same event a scheduled
     // departure emits, so the recorder writes it to the log without knowing
     // a timeout caused it.
     let changes = changes
@@ -282,7 +282,7 @@ fn a_step_past_both_levels_is_counted_before_the_run_halts() {
     // The two levels are judged separately, so timing out does not swallow
     // the budget miss that came with it. That count is what says the
     // component itself was slow, rather than something between it and the
-    // conductor — the distinction the levels exist to draw.
+    // conductor, the distinction the levels exist to draw.
     let steps: StepLog = Default::default();
     let mut conductor = new_conductor();
     conductor
@@ -370,7 +370,7 @@ fn the_log_records_which_steps_missed_their_budget() {
 fn a_re_run_that_misses_different_budgets_still_verifies() {
     // Why misses are observations and not expectations. They are a fact
     // about the machine, so a faster re-run of the identical scenario
-    // legitimately records none — and comparing them would report two runs
+    // legitimately records none, and comparing them would report two runs
     // that behaved identically as divergent.
     let recorded = record_a_run_costing(SLOW);
     let observations = budget_misses_in(&recorded).len();
@@ -473,7 +473,7 @@ fn a_budget_that_the_timeout_would_always_beat_is_rejected() {
     let mut conductor = new_conductor();
 
     // Above the timeout, so every step slow enough to miss the budget has
-    // already timed out — the declaration reads like a warning level but
+    // already timed out. The declaration reads like a warning level but
     // could never report one.
     assert!(matches!(
         conductor.add_component(

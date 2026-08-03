@@ -3,7 +3,7 @@
 //! `src/pacing.rs`; here the real clock runs, so these check the two
 //! properties that matter at the conductor boundary:
 //!
-//! 1. pacing changes *timing only* — a paced run and a free run of the same
+//! 1. pacing changes *timing only*, so a paced run and a free run of the same
 //!    seeded world produce the identical world hash, and
 //! 2. a paced run actually spends wall time (it does not free-run).
 
@@ -69,7 +69,7 @@ fn run(pacing: Pacing, end: SimTime) -> Conductor<InProcTransport> {
 fn pacing_does_not_change_the_world_hash() {
     let end = SimTime::from_millis(50);
     let free = run(Pacing::FreeRun, end);
-    // Both real-time modes — OS-timer and sleep-then-spin — must match the
+    // Both real-time modes, OS-timer and sleep-then-spin, must match the
     // free run exactly: pacing only delays instants, never changes content.
     for paced in [
         run(Pacing::real_time(), end),
@@ -86,7 +86,7 @@ fn pacing_does_not_change_the_world_hash() {
 
 #[test]
 fn a_paced_run_spends_real_wall_time() {
-    // 200 ms of sim at 1x should take on the order of 200 ms of wall time —
+    // 200 ms of sim at 1x should take on the order of 200 ms of wall time,
     // certainly not the sub-millisecond a free run of this tiny world takes.
     // The lower bound is generous to stay robust on any machine; the point
     // is that it did not free-run.

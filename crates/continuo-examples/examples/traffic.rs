@@ -1,6 +1,6 @@
 //! The base traffic demo: an ego car driving a straight highway while
 //! traffic spawns ahead of it and retires behind, free-run, poses logged
-//! once per sim-second. As small as it gets — see `traffic_record`,
+//! once per sim-second. As small as it gets; see `traffic_record`,
 //! `traffic_verify`, and `traffic_resim` for the determinism workflows.
 //!
 //! Run with: `cargo run -p continuo-examples --example traffic`

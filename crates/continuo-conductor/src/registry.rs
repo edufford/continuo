@@ -31,8 +31,8 @@ impl Tree {
     }
 
     /// Forgets a departed child, so its id no longer counts as a declared
-    /// sibling. Survivors keep their relative order — the only thing the
-    /// visibility rule reads — and a later component may reuse the id,
+    /// sibling. Survivors keep their relative order, the only thing the
+    /// visibility rule reads, and a later component may reuse the id,
     /// arriving at the end like any new sibling.
     ///
     /// **Recursive, upwards.** Forgetting the last child leaves its parent
@@ -40,7 +40,7 @@ impl Tree {
     /// *its* parent in turn, on up until a node still has survivors or the
     /// world root is reached. So removing one leaf can retire a whole spine
     /// of composites that existed only to hold it, and `child_name` is not
-    /// always a leaf — above the first step it is whatever branch just
+    /// always a leaf; above the first step it is whatever branch just
     /// emptied.
     fn forget_child(&mut self, parent_path: &ComponentPath, child_name: &ComponentId) {
         let Some(children) = self.children.get_mut(parent_path) else {
@@ -52,13 +52,13 @@ impl Tree {
         children.retain(|c| c != child_name);
         // Survivors keep this node internal, and keep it a declared sibling
         // of its own siblings, so nothing above it changes. This is where
-        // the walk up stops — and for the ordinary case, one leaf leaving a
+        // the walk up stops, and for the ordinary case, one leaf leaving a
         // composite that still has others, it stops right here.
         if !children.is_empty() {
             return;
         }
         // Emptied. The node stops being internal, so its path is free for a
-        // leaf to take — and it stops being a declared sibling of its own
+        // leaf to take, and it stops being a declared sibling of its own
         // siblings, so a composite rebuilt here later arrives at the end of
         // that list like any new branch. Leaving it in place would restore
         // its old position instead, which is the disagreement between
@@ -126,11 +126,11 @@ pub(crate) struct Entry {
     /// it joined.
     pub(crate) timing: StepTiming,
     /// How many of its steps have exceeded the soft half of that. Purely
-    /// diagnostic — nothing in the run reads it.
+    /// diagnostic; nothing in the run reads it.
     pub(crate) budget_misses: u64,
 }
 
-/// All registered leaves (indexed by declaration order — the deterministic
+/// All registered leaves (indexed by declaration order, the deterministic
 /// execution order within an instant) plus the tree.
 ///
 /// A slot is `None` once its component has left. Vacating rather than
@@ -162,7 +162,7 @@ impl Registry {
     }
 
     /// The declaration index of the component registered at `path`, if one
-    /// is — for checking membership without removing anything.
+    /// is, for checking membership without removing anything.
     pub(crate) fn index_of(&self, path: &ComponentPath) -> Option<usize> {
         self.by_path.get(path).copied()
     }
@@ -179,8 +179,8 @@ impl Registry {
         self.entry_mut(index)
     }
 
-    /// Every registered leaf strictly beneath `path`, in declaration order —
-    /// what a composite means, given only leaves are ever registered.
+    /// Every registered leaf strictly beneath `path`, in declaration order,
+    /// which is what a composite means, given only leaves are ever registered.
     ///
     /// Empty when `path` is itself a leaf, or names nothing at all; the
     /// caller distinguishes those with [`Self::index_of`].
@@ -210,7 +210,7 @@ impl Registry {
     /// registered.
     ///
     /// Rejoining under the same path is allowed and arrives like any new
-    /// sibling — a fresh slot at the end, and the end of the parent's child
+    /// sibling: a fresh slot at the end, and the end of the parent's child
     /// list. Arrival order therefore stays the single source of truth for
     /// both execution order and the visibility rule, so the two can never
     /// disagree about which sibling is "earlier".
@@ -249,7 +249,7 @@ impl Registry {
         }
         // No existing leaf may be an ancestor of the new path. Exclusive
         // range on purpose: only *strict* prefixes (depths 1..len-1 plus the
-        // parent itself) are ancestors — depth == len is the full path,
+        // parent itself) are ancestors; depth == len is the full path,
         // already handled by the duplicate check above.
         for depth in 1..path.segments().len() {
             let ancestor = path.prefix(depth);
@@ -314,7 +314,7 @@ mod tests {
     /// some fixed value, since no component here draws random numbers.
     const TEST_WORLD_SEED: u64 = 0;
 
-    /// Nor does any of them declare a step limit — the registry only stores
+    /// Nor does any of them declare a step limit; the registry only stores
     /// what it is handed.
     const NO_LIMITS: StepTiming = StepTiming::unlimited();
 
@@ -431,7 +431,7 @@ mod tests {
 
         // Rejoining is a new arrival, not a restoration: a fresh slot at the
         // end, and the end of the parent's child list. The physics is now the
-        // earlier sibling — and note the two orders agree, which is the point.
+        // earlier sibling, and note the two orders agree, which is the point.
         // The visibility rule reads the tree while execution reads the index,
         // so if arrival did not drive both they could disagree about who is
         // "earlier" and a same-instant hand-off would silently stop working.

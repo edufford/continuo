@@ -3,7 +3,7 @@
 //!
 //! Kept separate from the `Box<dyn Component>` on purpose. A remote
 //! component (milestone 7) lives in another process and the conductor never
-//! holds its box — but scheduling, the visibility rule, and sequence-number
+//! holds its box, but scheduling, the visibility rule, and sequence-number
 //! assignment all work off this metadata alone, so the same admission path
 //! serves both once the request arrives over the transport instead of as a
 //! direct call.
@@ -11,7 +11,7 @@
 //! Both sides name the sim time they take effect at, and neither infers it
 //! from when the request turned up. That is what keeps a dynamic run
 //! reproducible: the requester chooses the instant, so the run is the same
-//! whether the request arrived a tick early or a hundred ticks early — and,
+//! whether the request arrived a tick early or a hundred ticks early and,
 //! once these travel over a network, whatever the delivery did.
 
 use continuo_core::SimTime;
@@ -19,7 +19,7 @@ use continuo_core::SimTime;
 use crate::timing::StepTiming;
 
 /// Parent path of a component that sits directly under the world, with no
-/// composite above it — its own id is the whole path.
+/// composite above it, so its own id is the whole path.
 ///
 /// The empty string is not a placeholder here, it is the root path:
 /// [`continuo_core::ComponentPath::parse`] maps `""` to the root, and a
@@ -31,7 +31,7 @@ pub const WORLD_LEVEL: &str = "";
 
 /// Everything the conductor needs to admit a component.
 // TODO(M7): the coupled/decoupled flag (PLAN.md decision 2026-07-18) joins
-// this struct too — decoupled children take next-step visibility, which
+// this struct too, since decoupled children take next-step visibility, which
 // frees their host placement.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JoinMetadata {
@@ -43,7 +43,7 @@ pub struct JoinMetadata {
     /// Declared, never inferred: only the joiner knows its own phase. The
     /// conductor puts it in the schedule as the component is admitted, so
     /// by the time that instant arrives the newcomer is already among the
-    /// components due there — the barrier waits for it rather than stepping
+    /// components due there, so the barrier waits for it rather than stepping
     /// the instant without it.
     ///
     /// It must be an instant the conductor has not stepped past; joining
@@ -54,14 +54,14 @@ pub struct JoinMetadata {
     /// when it costs more. Declares no limits by default.
     ///
     /// Registration is where a deadline belongs, because a deadline is a
-    /// property of the deployment rather than of the model — see
+    /// property of the deployment rather than of the model. See
     /// [`StepTiming`].
     pub timing: StepTiming,
 }
 
 impl JoinMetadata {
-    /// Joins before the run starts, first stepping at sim time zero — what
-    /// every component in a statically-built world wants.
+    /// Joins before the run starts, first stepping at sim time zero, which
+    /// is what every component in a statically-built world wants.
     ///
     /// This is what you get by passing just the parent path where a join is
     /// expected: `add_component("car1", component)` is shorthand for
@@ -99,13 +99,13 @@ pub struct LeaveMetadata {
     /// The departing component's full path.
     pub path: String,
     /// The first instant the component does *not* step, or `None` to stop
-    /// it at the earliest instant still open — "now".
+    /// it at the earliest instant still open, meaning "now".
     ///
     /// Naming an instant is half-open, mirroring
     /// [`JoinMetadata::first_due`]: a component present for `[0, 10ms)`
     /// joins at `0` and leaves at `10ms`, having stepped at `0` but not at
     /// `10ms`. Adjacent lifetimes therefore abut without off-by-one
-    /// reasoning about periods — one component's `leaves_at` is the next
+    /// reasoning about periods, since one component's `leaves_at` is the next
     /// one's `first_due`.
     ///
     /// Prefer naming it for anything a run must reproduce. `None` stops the
@@ -166,7 +166,7 @@ impl From<&String> for LeaveMetadata {
 ///
 /// It always means [`JoinMetadata::at_start`], so it is only usable before
 /// the run begins. Offered to a running conductor it resolves to sim time
-/// zero — long closed — and the join is rejected rather than quietly
+/// zero, long closed, and the join is rejected rather than quietly
 /// landing at some instant the caller never chose.
 impl From<&str> for JoinMetadata {
     fn from(parent_path: &str) -> Self {

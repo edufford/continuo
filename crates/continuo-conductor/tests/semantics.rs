@@ -239,7 +239,8 @@ fn cross_actor_same_instant_is_deferred_to_next_step() {
         .filter(|(id, _)| id == "consumer")
         .map(|(_, o)| o)
         .collect();
-    // t=0: nothing — the producer's t=0 message is same-instant, cross-actor.
+    // t=0: nothing, since the producer's t=0 message is same-instant and
+    // cross-actor.
     assert_eq!(consumer[0].inbox, vec![]);
     // t=10ms: exactly the t=0 message; the t=10ms one is again deferred.
     assert_eq!(

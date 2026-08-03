@@ -1,17 +1,17 @@
 //! Open-loop resimulation: the ego runs live while every traffic car it met
 //! is replaced by a playback double re-publishing its recorded poses.
-//! Nothing is compared — this is the harness for engineering what-ifs.
+//! Nothing is compared. This is the harness for engineering what-ifs.
 //! Change the ego's controller, or just the speed it holds, and watch what
 //! that does against a traffic scene that stays exactly as recorded.
 //!
 //! Open-loop means the played-back cars do not react: they drive their
 //! recorded trajectories whatever the ego does. That is the point rather
-//! than a limitation — holding the scene fixed is what makes two ego
+//! than a limitation, since holding the scene fixed is what makes two ego
 //! variants comparable.
 //!
 //! The traffic to play back is read out of the log rather than configured.
 //! Which cars existed, and when, was the spawner's decision on the recorded
-//! run, so the log is the only place that knows. No spawner runs here — the
+//! run, so the log is the only place that knows. No spawner runs here; the
 //! recording *is* the traffic.
 //!
 //! Run with:

@@ -1,7 +1,7 @@
 # continuo
 
 A minimal simulation orchestration system in Rust. A conductor ticks a world
-deterministically while components join and leave at runtime — enabling
+deterministically while components join and leave at runtime, enabling
 many-actor scenarios such as live traffic around an autonomous vehicle. It
 runs entirely in a single process today, and is designed so components can
 later be split into separate processes over [Zenoh](https://zenoh.io/) without
@@ -30,7 +30,7 @@ instant, and repeats.
             ┌────────────┴─────────────┐
             │        Transport         │   pub/sub on key expressions,
             │   (InProc now, Zenoh     │   e.g. continuo/demo/actor/ego/pose
-            │    later — same trait)   │
+            │    later; same trait)    │
             └────────────┬─────────────┘
        ┌─────────────┬───┴──────────┬──────────────────┐
 ┌──────┴─────┐ ┌─────┴──────┐ ┌─────┴─────────┐ ┌──────┴─────┐
@@ -50,27 +50,27 @@ instant, and repeats.
 - **Self-scheduled stepping.** `Component::step` returns its own `next_due`
   time. Fixed periods, aperiodic sensors, and event-driven components all use
   the same mechanism. A component must always schedule strictly into the
-  future (≥ 1 ns) — the conductor rejects zero-time livelock.
+  future (≥ 1 ns); the conductor rejects zero-time livelock.
 - **Integer-nanosecond time.** `SimTime` is `i64` nanoseconds internally and
   exact decimal seconds on the wire (`1.234567891`), formatted and parsed via
-  integer math only. Scheduling comparisons are integer — no float-equality
-  hazards.
+  integer math only. Scheduling comparisons are integer, so there are no
+  float-equality hazards.
 - **Hierarchical components.** Actors are composites of ordered
   sub-components (e.g. `controller → physics`). The visibility rule makes the
   hierarchy meaningful:
   - *Across actors:* a message published at time T is seen at the consumer's
     next step after T. Co-due actors never see each other's same-instant
-    outputs — this is the lockstep isolation that makes distribution possible.
+    outputs, which is the lockstep isolation that makes distribution possible.
   - *Inside a composite:* children step in declared order, and messages from
-    an earlier child reach later children in the same step — the
+    an earlier child reach later children in the same step, giving the
     sensor → controller → physics pipeline.
 - **Deterministic by construction.** Inboxes are sorted by
   `(publisher, seq)`, never arrival order; execution order within an instant
   is declaration order; no wall clock or OS entropy in sim logic. All
   randomness derives from one world seed.
 - **Determinism verification.** Every tick the conductor emits a
-  **fingerprint** — a hash over what each stepped component published (plus
-  its internal state, if it implements `state_bytes`) — chained into a
+  **fingerprint**, a hash over what each stepped component published (plus
+  its internal state, if it implements `state_bytes`), chained into a
   running world hash, so one value fingerprints a whole run. Runs record to
   a JSON-lines event log, which can then be read two opposite ways:
   **verification** re-runs everything live and checks it against the log,
@@ -82,8 +82,8 @@ instant, and repeats.
   arrays); the wire format is directly inspectable and, later, hashable.
 - **Pacing is one setting.** `Pacing::FreeRun` runs as fast as possible;
   `Pacing::RealTime { .. }` waits for 1× wall time and logs overruns (when
-  the sim can't keep up the wall anchor slips — no catch-up, no skipped
-  steps; lateness under the re-anchor threshold is absorbed rather than
+  the sim can't keep up the wall anchor slips, with no catch-up and no
+  skipped steps; lateness under the re-anchor threshold is absorbed rather than
   counted). Sim logic never sees which mode is active, and pacing never
   changes the world hash.
 
@@ -101,15 +101,15 @@ instant, and repeats.
 
 See PLAN.md for what each one covers.
 
-- [x] **M1** — skeleton: core types, transport, conductor loop, traffic demo
-- [x] **M2** — determinism harness: seeding, tick fingerprints, event-log
+- [x] **M1** skeleton: core types, transport, conductor loop, traffic demo
+- [x] **M2** determinism harness: seeding, tick fingerprints, event-log
       recording, verification, open-loop resimulation
-- [x] **M3** — real-time pacing (1× wall time, overrun logging)
-- [x] **M4** — runtime join/leave; per-component step budgets and timeout
+- [x] **M3** real-time pacing (1× wall time, overrun logging)
+- [x] **M4** runtime join/leave; per-component step budgets and timeout
       policy
-- [ ] **M5** — Python visualization package
-- [ ] **M6** — FMI 3.0 CS import (FMUs as components)
-- [ ] **M7** — Zenoh transport and distributed hosts
+- [ ] **M5** Python visualization package
+- [ ] **M6** FMI 3.0 CS import (FMUs as components)
+- [ ] **M7** Zenoh transport and distributed hosts
 
 Everywhere current code is a placeholder for later work, a comment marks the
 spot: `TODO(Mn)` for numbered milestones, `TODO(PLAN "section")` for design
@@ -146,8 +146,8 @@ cargo run -p continuo-examples --example traffic_record -- run.jsonl
 # divergence
 cargo run -p continuo-examples --example traffic_verify -- run.jsonl
 
-# Open-loop resimulation: a live ego driven against played-back traffic —
-# change the ego and see what it does to the same recorded scene
+# Open-loop resimulation: a live ego driven against played-back traffic.
+# Change the ego and see what it does to the same recorded scene
 # (nothing is compared)
 cargo run -p continuo-examples --example traffic_resim -- run.jsonl
 ```
@@ -168,10 +168,10 @@ done: world 'demo' reached sim time 30.0 in 3031 ticks (free-run)
 actual time: 0.601 s (50x real-time), world hash 7c4cbf0d148d9621
 ```
 
-The ego holds the centre lane at 30 m/s; traffic runs 16–22 m/s in the lanes
+The ego holds the centre lane at 30 m/s; traffic runs 16-22 m/s in the lanes
 either side, so the ego spends the run overtaking. Nothing here models a
 collision, which is why traffic never shares the ego's lane. A car is
-retired once it falls 60 m behind, and a replacement spawns ahead — over
+retired once it falls 60 m behind, and a replacement spawns ahead. Over
 30 sim-seconds fourteen different cars pass through a world that holds six
 at a time, eight of them retired along the way.
 
@@ -180,8 +180,8 @@ run of the same seeded scenario, on every platform CI tests.
 
 Two observer details worth knowing: log lines carry the *message's* sim time
 (an observer is a world-level actor, so it receives time-T poses strictly
-after T — next-step visibility), and the logger schedules its samples **1 ns
-after** each second boundary — the smallest offset that clears same-instant
+after T, which is next-step visibility), and the logger schedules its samples
+**1 ns after** each second boundary, the smallest offset that clears same-instant
 deferral, so on-boundary poses are visible and nothing can be scheduled
 between a boundary and its sample.
 
@@ -193,7 +193,7 @@ There are two distinct ways to watch a world, and the demo uses both:
   they subscribe, they step, and they see messages under the visibility rule
   like any participant. Use these when the observation is part of the world.
 - **Transport monitors** (`MonitorTransport`) wrap the transport and invoke
-  a callback for every published message — at publish time, independent of
+  a callback for every published message at publish time, independent of
   subscriptions and visibility, including messages nobody subscribes to.
   Use these for logging, debugging, and recording; the milestone 2 event log
   and record/replay build on this. A monitor is not part of the simulation
@@ -239,4 +239,4 @@ conductor.add_component("", Box::new(Beacon))?;
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).
