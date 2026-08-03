@@ -17,7 +17,7 @@ separate processes over Zenoh without changing component code.
   sub-components (sensors, controllers, physics models, actuators) with
   intra-tick data flow between them. Orchestration and transport work the same
   at every level.
-- **Multi-rate for free**: rates are not configured centrally - any period, and
+- **Multi-rate for free**: rates are not configured centrally. Any period, and
   even aperiodic behavior, falls out of self-reported next-step times.
 - **Pacing modes**: free-run (as fast as possible) or 1× real-time, without
   affecting determinism.

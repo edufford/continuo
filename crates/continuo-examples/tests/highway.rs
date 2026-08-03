@@ -107,7 +107,7 @@ fn a_car_leaves_as_a_whole_actor() {
             &format!("{actor}/controller").as_str(),
             &format!("{actor}/physics").as_str()
         ],
-        "one leave per leaf, controller before physics - declaration order"
+        "one leave per leaf, controller before physics, in declaration order"
     );
 }
 

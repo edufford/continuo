@@ -69,7 +69,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     match conductor.overrun_reanchor_count() {
         0 => println!(
-            "pacing: the schedule kept up - lateness stayed under the reanchor \
+            "pacing: the schedule kept up; lateness stayed under the reanchor \
              threshold and was absorbed, never accumulating (whole-run measure, \
              not per-component step timing)"
         ),
