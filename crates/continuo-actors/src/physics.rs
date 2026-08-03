@@ -47,6 +47,8 @@ impl Component for UnicyclePhysics {
 
     fn step(&mut self, ctx: &mut StepCtx) -> SimTime {
         if let Some(message) = ctx.inbox().last() {
+            // TODO(PLAN "Deferred"): a failed decode leaves `self.cmd` alone, so
+            // this integrates the previous command indefinitely without saying so.
             if let Ok(cmd) = message.decode::<Cmd>() {
                 self.cmd = cmd;
             }

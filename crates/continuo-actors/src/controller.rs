@@ -92,6 +92,8 @@ impl Component for PathFollowController {
         // Latest pose wins; inbox is (publisher, seq)-sorted and all pose
         // messages here come from our physics sibling.
         if let Some(message) = ctx.inbox().last() {
+            // TODO(PLAN "Deferred"): a failed decode keeps the stale pose, and this
+            // carries on steering from it.
             if let Ok(pose) = message.decode::<Pose>() {
                 self.last_pose = pose;
             }

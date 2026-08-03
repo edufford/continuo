@@ -597,6 +597,12 @@ impl<T: Transport> Conductor<T> {
             // different split (published "ab" with state "c" vs. published
             // "a" with state "bc") hash alike, and a divergence that only
             // moves the boundary would go unseen.
+            // TODO(PLAN "Deferred"): replace this marker with a byte-length
+            // prefix on every variable-length field. A separator is unsound
+            // (a payload may contain the marker) and guards only this one
+            // boundary: a payload also runs straight into the next message's
+            // key, and the last payload of a component into the next
+            // component's path, neither of which is separated at all.
             if let Some(state) = entry.component.state_bytes() {
                 tick_hasher.write(b"|state|");
                 tick_hasher.write(&state);

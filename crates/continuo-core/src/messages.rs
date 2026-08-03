@@ -51,6 +51,12 @@ pub struct Message {
 
 impl Message {
     /// Deserializes the JSON payload.
+    // TODO(PLAN "Deferred"): every caller currently throws this error away, so
+    // a component that cannot read a message silently keeps its previous state
+    // and the run continues on stale data. That failure is deterministic, so
+    // the hash stays steady and verification passes: nothing in the determinism
+    // machinery can see it. Wanted is a `StepCtx`-mediated decode that reports
+    // centrally, making the swallow something a caller opts into.
     pub fn decode<'a, T: Deserialize<'a>>(&'a self) -> Result<T, serde_json::Error> {
         serde_json::from_slice(&self.payload)
     }

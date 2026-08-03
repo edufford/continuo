@@ -1,14 +1,14 @@
 # continuo
 
-A minimal simulation orchestration system in Rust. A conductor ticks a world
-deterministically while components join and leave at runtime, enabling
-many-actor scenarios such as live traffic around an autonomous vehicle. It
-runs entirely in a single process today, and is designed so components can
-later be split into separate processes over [Zenoh](https://zenoh.io/) without
-changing component code.
+A deterministic simulation orchestration system in Rust. A conductor advances
+a world while components set their own cadence and join or leave throughout,
+enabling many-actor scenarios such as live traffic around an autonomous
+vehicle. It runs entirely in a single process today, and is designed so
+components can later be split into separate processes over
+[Zenoh](https://zenoh.io/) without changing component code.
 
-See [PLAN.md](PLAN.md) for the full design, decision log, and milestone
-roadmap.
+See [PLAN.md](PLAN.md) for the full design and milestone roadmap, and
+[DECISIONS.md](DECISIONS.md) for why the design is what it is.
 
 ## Architecture
 
@@ -232,11 +232,13 @@ impl Component for Beacon {
 }
 ```
 
-Register it with a conductor (`""` = world level, or a composite name to make
-it a child):
+Register it with a conductor (`WORLD_LEVEL` for a world-level actor, or a
+composite name to make it a child):
 
 ```rust
-conductor.add_component("", Box::new(Beacon))?;
+use continuo_conductor::WORLD_LEVEL;
+
+conductor.add_component(WORLD_LEVEL, Box::new(Beacon))?;
 ```
 
 ## License
