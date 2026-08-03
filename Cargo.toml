@@ -13,8 +13,10 @@ continuo-core = { path = "crates/continuo-core" }
 continuo-transport = { path = "crates/continuo-transport" }
 continuo-conductor = { path = "crates/continuo-conductor" }
 continuo-actors = { path = "crates/continuo-actors" }
+continuo-viz-bridge = { path = "crates/continuo-viz-bridge" }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["arbitrary_precision", "raw_value"] }
 thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = "0.3"
+zenoh = "1.9"

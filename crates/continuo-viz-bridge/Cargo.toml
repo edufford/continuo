@@ -1,0 +1,24 @@
+[package]
+name = "continuo-viz-bridge"
+description = "Republishes observed continuo messages to a live viewer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[features]
+# Zenoh is off by default because it is 300-odd transitive crates against the
+# workspace's 21, and it pulls an async runtime. Everything except the sink
+# itself works without it, so the default build, the tests, and CI's lint and
+# test steps never pay for it.
+default = []
+zenoh = ["dep:zenoh"]
+
+[dependencies]
+continuo-core = { workspace = true }
+continuo-transport = { workspace = true }
+continuo-conductor = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+zenoh = { workspace = true, optional = true }
