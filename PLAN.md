@@ -1,12 +1,12 @@
 # continuo Project Plan
 
-A minimal simulation orchestration system in Rust. A conductor ticks a world
-deterministically while components join and leave at runtime, enabling
-many-actor scenarios such as live traffic around an autonomous vehicle. There
-is no global tick rate: every component reports the next sim time it should
-step, and the conductor advances to the earliest due time. Runs entirely in a
-single process initially, but is designed so components can later be split into
-separate processes over Zenoh without changing component code.
+A deterministic simulation orchestration system in Rust. A conductor advances
+a world while components set their own cadence and join or leave throughout,
+enabling many-actor scenarios such as live traffic around an autonomous
+vehicle. There is no global tick rate: every component reports the next sim
+time it should step, and the conductor advances to the earliest due time. Runs
+entirely in a single process initially, but is designed so components can later
+be split into separate processes over Zenoh without changing component code.
 
 ## Goals
 
