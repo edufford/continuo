@@ -44,9 +44,14 @@ pub struct Conductor<T: Transport> {
     /// chained with each tick's hash. Identical runs produce identical
     /// values at every tick.
     world_hash: u64,
-    tick_callback: Option<TickCallback>,
-    membership_callback: Option<MembershipCallback>,
-    observation_callback: Option<ObservationCallback>,
+    /// Observers, in the order they were added. Lists rather than single
+    /// slots because more than one observer legitimately wants the same
+    /// hookup: recording a run while watching it, for instance. A slot that
+    /// silently kept only the last registration turned that into a log
+    /// quietly missing a channel.
+    tick_callbacks: Vec<TickCallback>,
+    membership_callbacks: Vec<MembershipCallback>,
+    observation_callbacks: Vec<ObservationCallback>,
 }
 
 impl<T: Transport> Conductor<T> {
@@ -75,21 +80,24 @@ impl<T: Transport> Conductor<T> {
             sim_time: SimTime::ZERO,
             tick: 0,
             world_hash,
-            tick_callback: None,
-            membership_callback: None,
-            observation_callback: None,
+            tick_callbacks: Vec::new(),
+            membership_callbacks: Vec::new(),
+            observation_callbacks: Vec::new(),
         })
     }
 
-    // TODO(M7): these three setters, plus the `MonitorTransport` wrap that
+    // TODO(M7): these three adders, plus the `MonitorTransport` wrap that
     // catches published messages, are four hookups a caller has to remember,
     // and forgetting one does not fail; it writes a log that quietly omits a
     // channel. Every observation point added so far has needed every caller
     // updated by hand.
     //
     // Wanted: an `Observer` trait with default no-op methods and a single
-    // `set_observer`, implemented by `Recorder` and `Verifier`, so a new
+    // `add_observer`, implemented by `Recorder` and `Verifier`, so a new
     // observation point cannot be silently skipped by an existing caller.
+    // Note *add*, not *set*: a single-slot `set_observer` would reintroduce
+    // the collision these lists exist to remove, since recording a run while
+    // watching it needs two observers at once.
     //
     // Tagged M7 because it is not a rename. Messages are observed at the
     // *transport*, wrapped before the conductor exists, so construction
@@ -100,49 +108,57 @@ impl<T: Transport> Conductor<T> {
     // move the seam twice. The three conductor-side callbacks could be
     // folded sooner if the churn is worth it on its own.
 
-    /// Installs a callback invoked with every tick's [`TickFingerprint`].
+    /// Adds a callback invoked with every tick's [`TickFingerprint`].
     /// This is the hook for recording (see
     /// [`crate::Recorder::tick_callback`]) or live divergence checking.
-    pub fn set_tick_callback(&mut self, callback: impl FnMut(&TickFingerprint) + Send + 'static) {
-        self.tick_callback = Some(Box::new(callback));
+    ///
+    /// Observers accumulate, and every one added is invoked in the order it
+    /// was added. Adding never displaces an earlier observer, so recording a
+    /// run and watching it are not mutually exclusive.
+    pub fn add_tick_callback(&mut self, callback: impl FnMut(&TickFingerprint) + Send + 'static) {
+        self.tick_callbacks.push(Box::new(callback));
     }
 
-    /// Installs a callback invoked whenever a component joins or leaves.
+    /// Adds a callback invoked whenever a component joins or leaves.
     /// The third observation point, alongside published messages and tick
     /// fingerprints, and the one that makes a dynamic run recordable
     /// (see [`crate::Recorder::membership_callback`]).
-    pub fn set_membership_callback(
+    ///
+    /// Accumulates, in the order added, like [`Self::add_tick_callback`].
+    pub fn add_membership_callback(
         &mut self,
         callback: impl FnMut(&MembershipChange) + Send + 'static,
     ) {
-        self.membership_callback = Some(Box::new(callback));
+        self.membership_callbacks.push(Box::new(callback));
     }
 
-    /// Installs a callback invoked for everything the *machine* did rather
+    /// Adds a callback invoked for everything the *machine* did rather
     /// than the run: steps over their budget, and the timeouts that say why
     /// a component left or a run stopped (see
     /// [`crate::Recorder::observation_callback`]).
     ///
     /// The fourth observation point, and the one whose reports a re-run is
     /// free to differ on. See [`RecordedObservation`].
-    pub fn set_observation_callback(
+    ///
+    /// Accumulates, in the order added, like [`Self::add_tick_callback`].
+    pub fn add_observation_callback(
         &mut self,
         callback: impl FnMut(&RecordedObservation) + Send + 'static,
     ) {
-        self.observation_callback = Some(Box::new(callback));
+        self.observation_callbacks.push(Box::new(callback));
     }
 
-    /// Reports an applied membership change to the observer, if any.
+    /// Reports an applied membership change to every observer.
     fn emit_membership(&mut self, change: MembershipChange) {
-        if let Some(callback) = self.membership_callback.as_mut() {
+        for callback in self.membership_callbacks.iter_mut() {
             callback(&change);
         }
     }
 
-    /// Reports an observation to the observer, if any. An observation is
+    /// Reports an observation to every observer. An observation is
     /// something worth noting about the run rather than a part of it.
     fn emit_observation(&mut self, observation: RecordedObservation) {
-        if let Some(callback) = self.observation_callback.as_mut() {
+        for callback in self.observation_callbacks.iter_mut() {
             callback(&observation);
         }
     }
@@ -630,13 +646,16 @@ impl<T: Transport> Conductor<T> {
         let mut chain = HashFnv1a64::resume(self.world_hash);
         chain.write_u64(tick_hash);
         self.world_hash = chain.finish();
-        if let Some(callback) = self.tick_callback.as_mut() {
-            callback(&TickFingerprint {
+        if !self.tick_callbacks.is_empty() {
+            let fingerprint = TickFingerprint {
                 tick: self.tick,
                 sim_time: now,
                 tick_hash,
                 world_hash: self.world_hash,
-            });
+            };
+            for callback in self.tick_callbacks.iter_mut() {
+                callback(&fingerprint);
+            }
         }
 
         // Return true: a tick was executed (more may be scheduled).

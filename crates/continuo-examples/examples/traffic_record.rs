@@ -37,12 +37,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             recorder.message_callback(),
         )),
     )?;
-    conductor.set_tick_callback(recorder.tick_callback());
-    conductor.set_membership_callback(recorder.membership_callback());
+    conductor.add_tick_callback(recorder.tick_callback());
+    conductor.add_membership_callback(recorder.membership_callback());
     // No component in this world declares a budget, so this writes nothing
     // today. It is wired anyway: a recorder that taps only some of what the
     // conductor reports writes a log that quietly omits the rest.
-    conductor.set_observation_callback(recorder.observation_callback());
+    conductor.add_observation_callback(recorder.observation_callback());
     traffic_world::setup_live_traffic_scenario(&mut conductor)?;
 
     traffic_world::run_live_traffic_scenario(

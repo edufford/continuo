@@ -335,7 +335,7 @@ pub(crate) fn recorded_message(m: &Message) -> RecordedMessage {
 
 /// Collects a run into an [`EventLog`] via two cloneable callbacks: attach
 /// [`Recorder::message_callback`] to a `MonitorTransport` and
-/// [`Recorder::tick_callback`] to `Conductor::set_tick_callback`, run, then call
+/// [`Recorder::tick_callback`] to `Conductor::add_tick_callback`, run, then call
 /// [`Recorder::finish`].
 #[derive(Clone)]
 pub struct Recorder {

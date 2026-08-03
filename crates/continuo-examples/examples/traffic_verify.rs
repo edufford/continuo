@@ -39,8 +39,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             verifier.message_callback(),
         )),
     )?;
-    conductor.set_tick_callback(verifier.tick_callback());
-    conductor.set_membership_callback(verifier.membership_callback());
+    conductor.add_tick_callback(verifier.tick_callback());
+    conductor.add_membership_callback(verifier.membership_callback());
     traffic_world::setup_live_traffic_scenario(&mut conductor)?;
 
     // The same driver every other example uses, which is what makes this a
