@@ -287,8 +287,8 @@ fn record_a_dynamic_run(config: &ConductorConfig) -> continuo_conductor::EventLo
     let transport = MonitorTransport::new(InProcTransport::new(), recorder.message_callback());
     let mut conductor =
         Conductor::new(config.clone(), transport).expect("free-run config is always accepted");
-    conductor.set_tick_callback(recorder.tick_callback());
-    conductor.set_membership_callback(recorder.membership_callback());
+    conductor.add_tick_callback(recorder.tick_callback());
+    conductor.add_membership_callback(recorder.membership_callback());
 
     conductor
         .add_component(WORLD_LEVEL, ticker("a", &steps))
@@ -379,8 +379,8 @@ fn a_recorded_dynamic_run_verifies_against_a_faithful_re_run() {
     let transport = MonitorTransport::new(InProcTransport::new(), verifier.message_callback());
     let mut conductor =
         Conductor::new(config, transport).expect("free-run config is always accepted");
-    conductor.set_tick_callback(verifier.tick_callback());
-    conductor.set_membership_callback(verifier.membership_callback());
+    conductor.add_tick_callback(verifier.tick_callback());
+    conductor.add_membership_callback(verifier.membership_callback());
 
     conductor
         .add_component(WORLD_LEVEL, ticker("a", &steps))
@@ -410,8 +410,8 @@ fn a_re_run_that_skips_a_departure_is_caught() {
     let transport = MonitorTransport::new(InProcTransport::new(), verifier.message_callback());
     let mut conductor =
         Conductor::new(config, transport).expect("free-run config is always accepted");
-    conductor.set_tick_callback(verifier.tick_callback());
-    conductor.set_membership_callback(verifier.membership_callback());
+    conductor.add_tick_callback(verifier.tick_callback());
+    conductor.add_membership_callback(verifier.membership_callback());
 
     conductor
         .add_component(WORLD_LEVEL, ticker("a", &steps))
@@ -575,7 +575,7 @@ fn a_scheduled_departure_is_recorded_with_the_instant_it_takes_effect() {
     let recorder = Recorder::new(&config);
     let mut conductor =
         Conductor::new(config, InProcTransport::new()).expect("free-run config is always accepted");
-    conductor.set_membership_callback(recorder.membership_callback());
+    conductor.add_membership_callback(recorder.membership_callback());
 
     conductor
         .add_component(WORLD_LEVEL, ticker("a", &steps))
@@ -636,7 +636,7 @@ fn removing_a_composite_takes_every_leaf_under_it() {
     let changes: Arc<Mutex<Vec<MembershipChange>>> = Default::default();
     let mut conductor = new_conductor();
     let observed = changes.clone();
-    conductor.set_membership_callback(move |change| {
+    conductor.add_membership_callback(move |change| {
         observed
             .lock()
             .expect("membership log mutex is never poisoned")

@@ -26,9 +26,9 @@ fn record_highway(seconds: i64) -> EventLog {
         )),
     )
     .expect("free-run config is always accepted");
-    conductor.set_tick_callback(recorder.tick_callback());
-    conductor.set_membership_callback(recorder.membership_callback());
-    conductor.set_observation_callback(recorder.observation_callback());
+    conductor.add_tick_callback(recorder.tick_callback());
+    conductor.add_membership_callback(recorder.membership_callback());
+    conductor.add_observation_callback(recorder.observation_callback());
     traffic_world::setup_live_traffic_scenario(&mut conductor).expect("the world builds");
     traffic_world::run_live_traffic_scenario(
         &mut conductor,
@@ -143,8 +143,8 @@ fn verify_highway(recorded: EventLog, seconds: i64) -> (SimTime, Result<usize, D
         )),
     )
     .expect("free-run config is always accepted");
-    conductor.set_tick_callback(verifier.tick_callback());
-    conductor.set_membership_callback(verifier.membership_callback());
+    conductor.add_tick_callback(verifier.tick_callback());
+    conductor.add_membership_callback(verifier.membership_callback());
     traffic_world::setup_live_traffic_scenario(&mut conductor).expect("the world builds");
 
     traffic_world::run_live_traffic_scenario(

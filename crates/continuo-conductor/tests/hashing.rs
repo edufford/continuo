@@ -85,7 +85,7 @@ fn run_noise_world(world_seed: u64) -> EventLog {
     let transport = MonitorTransport::new(InProcTransport::new(), recorder.message_callback());
     let mut conductor =
         Conductor::new(config, transport).expect("free-run config is always accepted");
-    conductor.set_tick_callback(recorder.tick_callback());
+    conductor.add_tick_callback(recorder.tick_callback());
 
     conductor
         .add_component(
@@ -185,7 +185,7 @@ fn live_verification_stops_at_the_first_divergence() {
     let transport = MonitorTransport::new(InProcTransport::new(), checker.message_callback());
     let mut conductor =
         Conductor::new(config, transport).expect("free-run config is always accepted");
-    conductor.set_tick_callback(checker.tick_callback());
+    conductor.add_tick_callback(checker.tick_callback());
     conductor
         .add_component(
             WORLD_LEVEL,
@@ -219,7 +219,7 @@ fn playback_double_reproduces_the_recorded_messages() {
     let transport = MonitorTransport::new(InProcTransport::new(), recorder.message_callback());
     let mut conductor =
         Conductor::new(config, transport).expect("free-run config is always accepted");
-    conductor.set_tick_callback(recorder.tick_callback());
+    conductor.add_tick_callback(recorder.tick_callback());
     conductor
         .add_component(
             WORLD_LEVEL,

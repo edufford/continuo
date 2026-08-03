@@ -222,7 +222,7 @@ fn a_timeout_removes_the_component_at_the_next_instant_when_that_is_the_policy()
     let changes: Arc<Mutex<Vec<MembershipChange>>> = Default::default();
     let mut conductor = new_conductor();
     let observed = changes.clone();
-    conductor.set_membership_callback(move |change| {
+    conductor.add_membership_callback(move |change| {
         observed
             .lock()
             .expect("membership log mutex is never poisoned")
@@ -314,9 +314,9 @@ fn record_a_run_costing(step_cost: Duration) -> EventLog {
     let transport = MonitorTransport::new(InProcTransport::new(), recorder.message_callback());
     let mut conductor =
         Conductor::new(config, transport).expect("free-run config is always accepted");
-    conductor.set_tick_callback(recorder.tick_callback());
-    conductor.set_membership_callback(recorder.membership_callback());
-    conductor.set_observation_callback(recorder.observation_callback());
+    conductor.add_tick_callback(recorder.tick_callback());
+    conductor.add_membership_callback(recorder.membership_callback());
+    conductor.add_observation_callback(recorder.observation_callback());
     conductor
         .add_component(
             JoinMetadata::at_start(WORLD_LEVEL).with_timing(StepTiming::budget(wall_ms(1))),
@@ -387,8 +387,8 @@ fn a_re_run_that_misses_different_budgets_still_verifies() {
     let transport = MonitorTransport::new(InProcTransport::new(), verifier.message_callback());
     let mut conductor =
         Conductor::new(config, transport).expect("free-run config is always accepted");
-    conductor.set_tick_callback(verifier.tick_callback());
-    conductor.set_membership_callback(verifier.membership_callback());
+    conductor.add_tick_callback(verifier.tick_callback());
+    conductor.add_membership_callback(verifier.membership_callback());
     conductor
         .add_component(
             JoinMetadata::at_start(WORLD_LEVEL).with_timing(StepTiming::budget(wall_ms(1))),
@@ -433,9 +433,9 @@ fn the_log_says_why_a_timed_out_component_left() {
     let transport = MonitorTransport::new(InProcTransport::new(), recorder.message_callback());
     let mut conductor =
         Conductor::new(config, transport).expect("free-run config is always accepted");
-    conductor.set_tick_callback(recorder.tick_callback());
-    conductor.set_membership_callback(recorder.membership_callback());
-    conductor.set_observation_callback(recorder.observation_callback());
+    conductor.add_tick_callback(recorder.tick_callback());
+    conductor.add_membership_callback(recorder.membership_callback());
+    conductor.add_observation_callback(recorder.observation_callback());
     conductor
         .add_component(
             JoinMetadata::at_start(WORLD_LEVEL)

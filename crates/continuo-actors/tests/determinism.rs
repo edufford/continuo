@@ -26,7 +26,7 @@ fn run_world(sim_seconds: i64, world_seed: u64) -> EventLog {
     let path = Arc::new(Waypoints::ellipse((0.0, 0.0), 40.0, 25.0, 72));
     let mut conductor =
         Conductor::new(config, transport).expect("free-run config is always accepted");
-    conductor.set_tick_callback(recorder.tick_callback());
+    conductor.add_tick_callback(recorder.tick_callback());
 
     // Each car is registered as a composite `carN = [controller, physics]`.
     // Registration order is declared sibling order, which fixes both the
