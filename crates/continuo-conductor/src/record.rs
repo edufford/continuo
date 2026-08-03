@@ -33,7 +33,7 @@
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use continuo_core::{Message, SimTime, hash::hex_u64};
+use continuo_core::{KeyExpr, Message, SimTime, hash::hex_u64};
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 use thiserror::Error;
@@ -110,6 +110,26 @@ pub struct RecordedLeave {
 pub enum MembershipChange {
     Joined(RecordedJoin),
     Left(RecordedLeave),
+}
+
+/// Key expression an applied [`MembershipChange`] is published on, for
+/// observers outside the process.
+///
+/// Deliberately not PLAN.md's `continuo/{world}/conductor/join`, which is the
+/// channel for *asking* to join once requests cross a transport. This one says
+/// a join or leave already happened, which is what a viewer needs in order to
+/// stop drawing a component that has retired.
+///
+/// It lives here rather than with any particular publisher because it is wire
+/// vocabulary, and an observer that defined it would leave the conductor
+/// depending on an observer or duplicating the string.
+// TODO(M7): when join and leave cross the transport, this and the
+// `RecordedJoin`/`RecordedLeave` types plausibly move to `continuo-core`
+// together, alongside `TickStart`/`TickDone` and their keys. One move then
+// rather than two half-moves now.
+pub fn membership_key(world_name: &str) -> KeyExpr {
+    // Return the world's membership notification key.
+    KeyExpr::new(format!("continuo/{world_name}/membership")).expect("valid membership key")
 }
 
 /// A step that ran over the wall-clock budget its component declared.
