@@ -232,11 +232,13 @@ impl Component for Beacon {
 }
 ```
 
-Register it with a conductor (`""` = world level, or a composite name to make
-it a child):
+Register it with a conductor (`WORLD_LEVEL` for a world-level actor, or a
+composite name to make it a child):
 
 ```rust
-conductor.add_component("", Box::new(Beacon))?;
+use continuo_conductor::WORLD_LEVEL;
+
+conductor.add_component(WORLD_LEVEL, Box::new(Beacon))?;
 ```
 
 ## License
