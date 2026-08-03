@@ -533,6 +533,100 @@ what the system *is* rather than the history of how it got there.
 
 ## Deferred (decided-not-now, revisit when they bite)
 
+### Determinism and correctness
+
+These share a shape worth naming. Every one of them produces a **stable wrong
+answer** rather than a divergence: the run reproduces perfectly, the world hash
+is steady, and verification passes against a recording carrying the same fault.
+The determinism apparatus exists to catch divergence, so none of these trip it.
+Three of them change the world hash when fixed, which is a versioned event-log
+change, so they want landing together rather than churning the fingerprint
+three times.
+
+- **Payload decode failures are swallowed, and nothing reports them.** Every
+  `decode::<T>()` call site discards the error: `if let Ok(..)` in
+  `controller.rs`, `logger.rs`, and `physics.rs`, `else { continue }` in
+  `traffic_spawner.rs`, and `.ok()` on both request decodes in
+  `traffic_world.rs`. No warning, no counter, no observation. The consequences
+  differ by site and none are benign: physics keeps integrating the *last
+  command* indefinitely, the controller keeps steering from a *stale pose*, the
+  spawner never sees a car move so never retires it, and a spawn or despawn
+  request simply vanishes. A decode failure is a pure function of the run, the
+  same character as a schedule violation, so halting loudly is safe and
+  reproducible. The obstacle is that `step` returns `SimTime` rather than a
+  `Result`, so a component cannot signal a fatal error; a `StepCtx`-mediated
+  decode reporting centrally is the tractable shape, and it makes swallowing
+  something a component opts into rather than the default.
+
+- **A non-finite float serializes to `null` and nothing notices.** `serde_json`
+  turns `NaN` and `±inf` into `null` rather than erroring, so a component
+  publishing a NaN pose emits `{"x":null,...}`, which then fails to decode at
+  whichever consumer reads it next, far from the component that produced it.
+  Combined with the swallowed decode above, the chain is silent end to end:
+  physics reaches NaN, publishes null, the controller ignores it and drives on
+  stale data. A guard at `StepCtx::publish` rejecting non-finite floats at the
+  source would make a diverging integrator fail where it happens.
+
+- **Length-prefix every variable-length field in the tick hash, and drop the
+  `b"|state|"` marker.** The marker separates state bytes from the payload
+  bytes they follow, and its comment states the hazard correctly, but a
+  separator is the wrong instrument twice over. It is unsound in its own right,
+  since a component publishing the literal bytes `|state|` reintroduces the
+  ambiguity. And it guards one boundary of several: each component contributes
+  `path(var) | next_due(8) | [key(var) | seq(8) | payload(var)]* | state(var)?`,
+  so a payload runs straight into the next message's key, and the last payload
+  of one component into the next component's path, both unguarded. Prepending
+  the byte length before every variable-length field makes the encoding
+  injective and lets the marker be deleted, removing a special case rather than
+  adding one. A `write_framed` helper beside `HashFnv1a64` would keep the call
+  sites honest.
+
+- **Transcendental math is not portable, and CI would not notice.** The world
+  hash depends on `sin`, `cos`, `sin_cos`, `asin`, and `atan2`, most directly
+  in the unicycle integration that feeds every pose, and again in the
+  quaternion and Euler conversions. IEEE 754 requires correct rounding for
+  `sqrt` but not for any of those, so glibc, the MSVC CRT, macOS libm, and
+  different architectures may each return different last bits. `powi` and
+  `rem_euclid` are exact and safe. Worse, **CI never compares hashes across
+  platforms**: each matrix job prints its hash and nothing reads the values
+  back, so two jobs could disagree and the run would still be green. In this
+  order: make CI compare the hashes it already produces, then add arm64 and
+  macOS agents, then route the transcendentals through the `libm` crate only
+  if either step diverges. Doing the last one first would change the hash
+  without ever learning whether it needed to.
+
+### Wire format
+
+- **A compact binary mode alongside JSON, chosen like debug versus release.**
+  JSON stays the readable mode for development, inspection, and the event log;
+  binary becomes the mode for throughput. The hash is taken over the wire
+  bytes, so naively the two modes would disagree about a run's identity, which
+  is the opposite of what the debug/release comparison promises. Resolution:
+  make the canonical binary encoding the hash input in **both** modes. Binary
+  mode hashes bytes it already produced at no extra cost; JSON mode serializes
+  a second time purely for the hash and eats that cost, because throughput is
+  not what the readable mode is for. `StepCtx::publish` takes the *value*
+  rather than pre-serialized bytes, so both encodings come from one value with
+  no re-parsing and no float round-trip question. `Component::state_bytes` is
+  the loose end: it is documented as canonical JSON and would have to become
+  canonical binary in both modes.
+
+  Format: CBOR, staying self-describing so logs remain inspectable and the
+  Python viewer needs no generated schema. Naming CBOR does **not** pin the
+  bytes, which was measured: encoding `Vec3 { x: 40.0, y: 0.0, z: 0.0 }` gives
+  16 bytes under `ciborium` (which narrows floats to f16 when lossless, per RFC
+  8949 §4.2.2) and 34 under `minicbor-serde` (which always emits f64), sharing
+  no bytes. So the crate and version become part of the fingerprint's
+  definition. **Prefer owning the encoder** and using a crate only to decode,
+  since determinism constrains only the bytes we produce. The decisive reason
+  is non-finite floats: JSON collapses every NaN to `null`, while CBOR encodes
+  the payload bits faithfully, so two values that are both `NaN` produce
+  different bytes, and NaN payload propagation is a classic x86-versus-ARM
+  difference. An owned encoder can reject non-finite floats outright. Golden
+  byte tests are required either way.
+
+### Features
+
 - **A component asking to retire itself**: `StepCtx` has no way back to the
   conductor, so nothing can say "I am done" (see `Component`'s TODO).
   Milestone 4 expected its spawner to need this and it did not. Worth
@@ -555,7 +649,5 @@ what the system *is* rather than the history of how it got there.
 - **Snapshot/restore**: via FMI 3.0 `SerializeFMUState` for FMUs plus a
   serialize hook for native components, only if replay-from-log proves
   insufficient.
-- **Binary wire encoding**: per-transport option if JSON throughput ever
-  becomes the bottleneck.
 - **External (non-deterministic) ego participation**: a relaxed admission mode
   for a live AV stack under test, after milestone 7.

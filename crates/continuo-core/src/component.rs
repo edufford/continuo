@@ -131,6 +131,10 @@ impl<'a> StepCtx<'a> {
     /// time. Visibility to other components follows the delivery rule
     /// (PLAN.md): later-ordered siblings within the same composite see it
     /// this instant; everyone else from their next step.
+    // TODO(PLAN "Deferred"): a non-finite float does not fail here. serde_json
+    // writes `NaN` and `±inf` as `null`, which then fails to decode at whichever
+    // consumer reads it next, far from whoever produced it. Reject them at the
+    // source instead.
     pub fn publish<T: Serialize>(&mut self, key: KeyExpr, value: &T) -> Result<(), CoreError> {
         let payload = serde_json::to_vec(value).map_err(|source| CoreError::PayloadSerialize {
             key: key.as_str().to_string(),
