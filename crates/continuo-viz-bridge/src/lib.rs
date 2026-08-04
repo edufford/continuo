@@ -57,13 +57,9 @@ const SHUTDOWN_POLL: Duration = Duration::from_millis(20);
 /// Attach [`Self::message_callback`] to a `MonitorTransport` (or use
 /// [`Self::wrap_transport`]) and [`Self::membership_callback`] to
 /// `Conductor::add_membership_callback`.
-///
-/// Observers accumulate, so recording a run and watching it are not mutually
-/// exclusive: a `Recorder` and a bridge each add their own callback and both
-/// are invoked.
 pub struct VizBridge {
     tx: SyncSender<VizFrame>,
-    dropped: Arc<AtomicU64>,
+    dropped_frames: Arc<AtomicU64>,
     /// Set by [`VizBridge::finish`] to end the worker.
     ///
     /// The worker cannot simply wait for the channel to close, because every
@@ -107,7 +103,7 @@ impl VizBridge {
         // happens on the thread that is stepping the world.
         VizBridge {
             tx,
-            dropped: Arc::new(AtomicU64::new(0)),
+            dropped_frames: Arc::new(AtomicU64::new(0)),
             shutdown,
             worker: Some(worker),
         }
@@ -122,7 +118,7 @@ impl VizBridge {
     /// The transport tap, for composing with other monitors by hand.
     pub fn message_callback(&self) -> impl FnMut(&Message) + Send + 'static {
         let tx = self.tx.clone();
-        let dropped = self.dropped.clone();
+        let dropped_frames = self.dropped_frames.clone();
 
         // Return the tap, holding its own handle on the queue.
         move |m: &Message| {
@@ -131,7 +127,7 @@ impl VizBridge {
                 payload: m.payload.clone(),
                 metadata: message_line(m),
             };
-            offer(&tx, &dropped, frame);
+            try_queue(&tx, &dropped_frames, frame);
         }
     }
 
@@ -142,7 +138,7 @@ impl VizBridge {
         world_name: &str,
     ) -> impl FnMut(&MembershipChange) + Send + 'static {
         let tx = self.tx.clone();
-        let dropped = self.dropped.clone();
+        let dropped_frames = self.dropped_frames.clone();
         let key = membership_key(world_name).to_string();
 
         // Return the tap, holding its own handle on the queue.
@@ -153,7 +149,7 @@ impl VizBridge {
                 payload: line.clone(),
                 metadata: line,
             };
-            offer(&tx, &dropped, frame);
+            try_queue(&tx, &dropped_frames, frame);
         }
     }
 
@@ -161,8 +157,8 @@ impl VizBridge {
     ///
     /// Diagnostic only. Dropping is the designed behavior rather than a
     /// failure, since a live view wants the latest state and not a backlog.
-    pub fn dropped(&self) -> u64 {
-        self.dropped.load(Ordering::Relaxed)
+    pub fn dropped_frames(&self) -> u64 {
+        self.dropped_frames.load(Ordering::Relaxed)
     }
 
     /// Closes the queue and waits for the sink to finish.
@@ -185,11 +181,11 @@ impl Drop for VizBridge {
 }
 
 /// Queues a frame, counting it as dropped rather than waiting for room.
-fn offer(tx: &SyncSender<VizFrame>, dropped: &AtomicU64, frame: VizFrame) {
+fn try_queue(tx: &SyncSender<VizFrame>, dropped_frames: &AtomicU64, frame: VizFrame) {
     match tx.try_send(frame) {
         Ok(()) => {}
         Err(TrySendError::Full(_)) | Err(TrySendError::Disconnected(_)) => {
-            dropped.fetch_add(1, Ordering::Relaxed);
+            dropped_frames.fetch_add(1, Ordering::Relaxed);
         }
     }
 }

@@ -110,7 +110,7 @@ fn a_viewer_that_stops_draining_is_dropped_rather_than_waited_for() {
     for seq in 0..500 {
         tap(&pose_message(seq));
     }
-    let dropped = bridge.dropped();
+    let dropped = bridge.dropped_frames();
 
     // Release the worker *before* asserting. A failed assertion unwinds
     // through `Drop`, which joins the worker, so leaving it parked on the

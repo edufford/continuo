@@ -20,7 +20,7 @@ pub struct ZenohSink {
     session: Session,
     /// Counted rather than propagated, because a publish failure is the
     /// viewer's problem and never the run's.
-    failures: u64,
+    num_failures: u64,
 }
 
 impl ZenohSink {
@@ -32,13 +32,13 @@ impl ZenohSink {
         // Return the sink, ready to publish.
         Ok(ZenohSink {
             session,
-            failures: 0,
+            num_failures: 0,
         })
     }
 
     /// How many publishes failed.
-    pub fn failures(&self) -> u64 {
-        self.failures
+    pub fn num_failures(&self) -> u64 {
+        self.num_failures
     }
 }
 
@@ -50,15 +50,15 @@ impl VizSink for ZenohSink {
             .attachment(frame.metadata.clone())
             .wait();
         if put.is_err() {
-            self.failures += 1;
+            self.num_failures += 1;
         }
     }
 
     fn flush(&mut self) {
-        if self.failures > 0 {
+        if self.num_failures > 0 {
             warn!(
                 target: "continuo::viz",
-                failures = self.failures,
+                num_failures = self.num_failures,
                 "some viewer frames could not be published"
             );
         }
