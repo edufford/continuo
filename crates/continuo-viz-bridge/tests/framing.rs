@@ -6,6 +6,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Barrier};
+use std::time::{Duration, Instant};
 
 use continuo_conductor::{MembershipChange, RecordedJoin, RecordedLeave, membership_key};
 use continuo_core::{ComponentPath, KeyExpr, Message, SimTime};
@@ -121,5 +122,36 @@ fn a_viewer_that_stops_draining_is_dropped_rather_than_waited_for() {
     assert!(
         dropped > 0,
         "a full queue must drop frames, not wait for room"
+    );
+}
+
+/// Never returns from `deliver`, standing in for a sink wedged on a socket.
+struct WedgedSink;
+
+impl VizSink for WedgedSink {
+    fn deliver(&mut self, _frame: &VizFrame) {
+        loop {
+            std::thread::sleep(Duration::from_secs(3600));
+        }
+    }
+}
+
+#[test]
+fn a_wedged_sink_is_detached_rather_than_waited_for_forever() {
+    // `shutdown` also runs from `Drop`, so an unbounded join would turn a
+    // stuck sink into a program that never exits. Giving up and detaching is
+    // the only option Rust offers, and the right one: the run is over and the
+    // frames still held are of no interest.
+    let bridge = VizBridge::with_capacity(WedgedSink, 1);
+    let mut tap = bridge.message_callback();
+    tap(&pose_message(0));
+
+    let started = Instant::now();
+    bridge.finish();
+    let waited = started.elapsed();
+
+    assert!(
+        waited < Duration::from_secs(30),
+        "finish must give up on a wedged sink, but waited {waited:?}"
     );
 }

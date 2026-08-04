@@ -27,13 +27,14 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{RecvTimeoutError, SyncSender, TrySendError, sync_channel};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use continuo_conductor::record::{LogEvent, RecordedMessage};
 use continuo_conductor::{MembershipChange, membership_key};
 use continuo_core::Message;
 use continuo_transport::{MonitorTransport, Transport};
 use serde_json::value::RawValue;
+use tracing::{debug, warn};
 
 pub use sink::{CollectingSink, VizFrame, VizSink, WriterSink};
 
@@ -51,6 +52,20 @@ const DEFAULT_CAPACITY: usize = 4096;
 /// Short enough that finishing a run is not perceptibly delayed, long enough
 /// that an idle bridge is not spinning.
 const SHUTDOWN_POLL: Duration = Duration::from_millis(20);
+
+/// Thread name for the delivery worker, so it is identifiable in a panic
+/// message, a debugger, or a process listing.
+const WORKER_THREAD_NAME: &str = "continuo-viz";
+
+/// How long [`VizBridge::shutdown`] waits for the worker before detaching it.
+///
+/// Generous enough that an ordinary sink finishes its queue, short enough
+/// that a wedged one does not hold up process exit. A viewer is never worth
+/// blocking a program for.
+const JOIN_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// How often the shutdown wait re-checks whether the worker has finished.
+const JOIN_POLL: Duration = Duration::from_millis(5);
 
 /// Observes a run and hands framed events to a [`VizSink`].
 ///
@@ -79,31 +94,44 @@ impl VizBridge {
     pub fn with_capacity(mut sink: impl VizSink + 'static, capacity: usize) -> Self {
         let (tx, rx) = sync_channel::<VizFrame>(capacity);
         let shutdown = Arc::new(AtomicBool::new(false));
+        let dropped_frames = Arc::new(AtomicU64::new(0));
         let worker = {
             let shutdown = shutdown.clone();
-            std::thread::spawn(move || {
-                loop {
-                    match rx.recv_timeout(SHUTDOWN_POLL) {
-                        Ok(frame) => sink.deliver(&frame),
-                        // Nothing queued. Only now is it safe to stop, since
-                        // anything still in flight has been delivered.
-                        Err(RecvTimeoutError::Timeout) => {
-                            if shutdown.load(Ordering::Acquire) {
-                                break;
+            let dropped_frames = dropped_frames.clone();
+            std::thread::Builder::new()
+                // Named so it is identifiable in a panic message, a debugger,
+                // or a process listing, none of which show a closure.
+                .name(WORKER_THREAD_NAME.to_string())
+                .spawn(move || {
+                    loop {
+                        match rx.recv_timeout(SHUTDOWN_POLL) {
+                            Ok(frame) => sink.deliver(&frame),
+                            // Nothing queued. Only now is it safe to stop,
+                            // since anything still in flight has been
+                            // delivered.
+                            Err(RecvTimeoutError::Timeout) => {
+                                if shutdown.load(Ordering::Acquire) {
+                                    break;
+                                }
                             }
+                            Err(RecvTimeoutError::Disconnected) => break,
                         }
-                        Err(RecvTimeoutError::Disconnected) => break,
                     }
-                }
-                sink.flush();
-            })
+                    sink.flush();
+                    debug!(
+                        target: "continuo::viz",
+                        dropped_frames = dropped_frames.load(Ordering::Relaxed),
+                        "viz bridge worker stopping"
+                    );
+                })
+                .expect("spawning the viz worker thread")
         };
 
         // Return a bridge whose worker owns the sink, so delivery never
         // happens on the thread that is stepping the world.
         VizBridge {
             tx,
-            dropped_frames: Arc::new(AtomicU64::new(0)),
+            dropped_frames,
             shutdown,
             worker: Some(worker),
         }
@@ -166,11 +194,39 @@ impl VizBridge {
         self.shutdown();
     }
 
+    /// Ends the worker and waits for it, but only up to [`JOIN_TIMEOUT`].
+    ///
+    /// Bounded because this also runs from `Drop`, so a sink wedged inside
+    /// `deliver` would otherwise hang the whole program at exit rather than
+    /// just the bridge. `JoinHandle` has no timed join, hence polling
+    /// `is_finished` to a deadline.
+    ///
+    /// Giving up detaches the thread rather than killing it, which is the
+    /// only option Rust offers and the right outcome anyway: the sink is
+    /// stuck, the run is over, and the frames it still holds are of no
+    /// interest to anyone.
     fn shutdown(&mut self) {
-        if let Some(worker) = self.worker.take() {
-            self.shutdown.store(true, Ordering::Release);
-            let _ = worker.join();
+        let Some(worker) = self.worker.take() else {
+            return;
+        };
+        self.shutdown.store(true, Ordering::Release);
+
+        let deadline = Instant::now() + JOIN_TIMEOUT;
+        while !worker.is_finished() {
+            if Instant::now() >= deadline {
+                warn!(
+                    target: "continuo::viz",
+                    timeout_ms = JOIN_TIMEOUT.as_millis() as u64,
+                    "viz bridge worker did not stop in time; detaching it"
+                );
+
+                // Return without joining, leaving the thread detached.
+                return;
+            }
+            std::thread::sleep(JOIN_POLL);
         }
+        debug!(target: "continuo::viz", "joining the viz bridge worker");
+        let _ = worker.join();
     }
 }
 
