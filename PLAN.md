@@ -604,6 +604,51 @@ three times.
   if either step diverges. Doing the last one first would change the hash
   without ever learning whether it needed to.
 
+- **A consolidated scene view, and a switch to turn raw relay off.** The
+  scene half already exists as a design: `continuo/{world}/scene` is in the key
+  table above, and "Fixed-interval world services" describes a scene-graph
+  publisher aggregating latest poses at 1/60 s as an **ordinary component**.
+  Build it when the viewer exists and there is something to measure it
+  against. The viz bridge then relays that like any other message, so the
+  consolidated view and raw traffic coexist rather than trading off.
+
+  The other half is a switch on the bridge, so a run using the scene component
+  can stop paying for per-message relay. Worth building only once there is a
+  scene component to switch to; adding the option first is building the choice
+  before the thing it selects between.
+
+  The distinction that decides how each is treated: **the scene publisher is a
+  component, so enabling it changes the world hash**, while the bridge's switch
+  cannot, being outside the sim. They look like two settings and are not the
+  same kind of knob.
+
+- **Getting large payloads out of a viewer's way.** A camera frame or lidar
+  sweep is canonical JSON like everything else, so it travels base64-encoded
+  inside a JSON string: about a third larger than the raw bytes, UTF-8
+  validated and re-wrapped on the way through the bridge, and copied per
+  frame. The event log has the same problem for the same reason. The binary
+  serialization item above is where large payloads stop being text, and
+  PLAN.md's **decoupled** sub-components exist precisely so a camera can be
+  placed on its own host, so both are part of the answer.
+
+  What is still open is how a viewer avoids carrying sensor traffic it will
+  never draw. Three shapes, none chosen:
+  1. **A size threshold at the bridge.** Simplest, and arbitrary: no single
+     number is right for both a pose and a point cloud.
+  2. **The viewer declares which signals it wants.** Precise, but it is a
+     filter the native Zenoh path does not have, so the two diverge. It only
+     filters *relay* rather than production, so it costs fidelity rather than
+     determinism.
+  3. **Components skip work nothing subscribes to.** The most efficient and
+     the most dangerous: published bytes feed the tick hash, so a component
+     that produces less when unobserved makes the **world hash depend on who
+     is watching**. That is the exact property the bridge is a transport
+     monitor to protect. Recoverable only by excluding conditional output from
+     the fingerprint, at which point what is hashed depends on runtime
+     subscription state, which is worse. If it is ever wanted, the scenario
+     should declare which outputs are optional, so the decision is static and
+     reproducible rather than dependent on who happened to connect.
+
 ### Wire format
 
 - **A compact binary mode alongside JSON, chosen like debug versus release.**
