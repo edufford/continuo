@@ -42,7 +42,7 @@ impl Component for UnicyclePhysics {
     }
 
     fn subscriptions(&self) -> Vec<KeyExpr> {
-        vec![KeyExpr::new(format!("continuo/*/actor/{}/cmd", self.actor_name)).expect("valid key")]
+        vec![KeyExpr::new_rooted(format!("*/actor/{}/cmd", self.actor_name)).expect("valid key")]
     }
 
     fn step(&mut self, ctx: &mut StepCtx) -> SimTime {
