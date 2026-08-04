@@ -59,13 +59,12 @@ pub struct DespawnTrafficRequest {
 
 /// Key the spawner publishes [`SpawnTrafficRequest`]s on.
 pub fn traffic_spawn_key(world_name: &str) -> KeyExpr {
-    KeyExpr::new(format!("continuo/{world_name}/traffic_spawner/spawn")).expect("valid spawn key")
+    KeyExpr::new_rooted(format!("{world_name}/traffic_spawner/spawn")).expect("valid spawn key")
 }
 
 /// Key the spawner publishes [`DespawnTrafficRequest`]s on.
 pub fn traffic_despawn_key(world_name: &str) -> KeyExpr {
-    KeyExpr::new(format!("continuo/{world_name}/traffic_spawner/despawn"))
-        .expect("valid despawn key")
+    KeyExpr::new_rooted(format!("{world_name}/traffic_spawner/despawn")).expect("valid despawn key")
 }
 
 /// Keeps the road ahead of the ego populated and retires what it has left
@@ -167,7 +166,7 @@ impl Component for TrafficSpawner {
     fn subscriptions(&self) -> Vec<KeyExpr> {
         // Every actor's pose, the ego's included: the spawner's decisions
         // are all relative positions along the road.
-        vec![KeyExpr::new("continuo/*/actor/**/pose").expect("valid key")]
+        vec![KeyExpr::new_rooted("*/actor/**/pose").expect("valid key")]
     }
 
     fn step(&mut self, ctx: &mut StepCtx) -> SimTime {
