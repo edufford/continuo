@@ -35,7 +35,9 @@
 //! Serializing in the sink rather than in the tap also keeps that work off the
 //! thread stepping the world.
 
-mod sink;
+mod protocol;
+mod viz_sink;
+mod writer_sink;
 
 #[cfg(feature = "zenoh")]
 mod zenoh_sink;
@@ -52,7 +54,9 @@ use continuo_core::{KEY_ROOT, Message, SimTime};
 use continuo_transport::{MonitorTransport, Transport};
 use tracing::{debug, warn};
 
-pub use sink::{MessageType, Metadata, VizFrame, VizSink, WriterSink};
+pub use protocol::{MessageType, Metadata, VizFrame};
+pub use viz_sink::VizSink;
+pub use writer_sink::WriterSink;
 
 #[cfg(feature = "zenoh")]
 pub use zenoh_sink::{ZenohSink, ZenohSinkError};

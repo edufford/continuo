@@ -23,7 +23,8 @@ pub enum ZenohSinkError {
     OpenSession(String),
 }
 
-use crate::sink::{VizFrame, VizSink};
+use crate::protocol::VizFrame;
+use crate::viz_sink::VizSink;
 
 /// Publishes frames onto a Zenoh session.
 pub struct ZenohSink {
