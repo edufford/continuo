@@ -33,7 +33,8 @@ pub const KEY_ROOT: &str = "continuo";
 pub struct KeyExpr(String);
 
 impl KeyExpr {
-    /// Validates a **complete** key expression, exactly as given.
+    /// A validated key expression from a **complete** key, taken exactly as
+    /// given.
     ///
     /// Nothing is added: this is also the deserialization path, where a key
     /// arrives already whole. For building one under the simulation root, use
