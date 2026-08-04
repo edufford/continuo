@@ -132,8 +132,17 @@ Key expression conventions (draft):
 | `continuo/{world}/tick/done`            | `TickDone`                 |
 | `continuo/{world}/actor/{id}/pose`      | actor pose                 |
 | `continuo/{world}/scene`                | scene-graph state update (fixed-period publisher for renderers) |
-| `continuo/{world}/conductor/join`       | registration request       |
-| `continuo/{world}/conductor/leave`      | departure notice           |
+| `continuo/{world}/conductor/membership/join_request`  | registration request |
+| `continuo/{world}/conductor/membership/leave_request` | departure request    |
+| `continuo/{world}/conductor/membership/status`        | applied join or leave |
+
+Membership is nested one level deeper than the rest so that *asking* and
+*having happened* are separated by structure rather than by remembering which
+verb means which. A request is something a component or host sends inward and
+the conductor may reject; a status is the conductor saying it already did it,
+which is what an observer subscribes to. The earlier flat
+`conductor/join` and `conductor/leave` blurred that, and called one a request
+and the other a notice for no reason beyond the order they were written in.
 
 ## Determinism rules
 

@@ -115,10 +115,14 @@ pub enum MembershipChange {
 /// Key expression an applied [`MembershipChange`] is published on, for
 /// observers outside the process.
 ///
-/// Deliberately not PLAN.md's `continuo/{world}/conductor/join`, which is the
-/// channel for *asking* to join once requests cross a transport. This one says
-/// a join or leave already happened, which is what a viewer needs in order to
-/// stop drawing a component that has retired.
+/// **Status, not request.** The sibling keys
+/// `continuo/{world}/conductor/membership/join_request` and
+/// `.../leave_request` are what a component or host sends *inward* and the
+/// conductor may reject. This one is the conductor saying it already
+/// happened, which is what an observer subscribes to: a viewer needs it to
+/// stop drawing a component that has retired. The distinction is carried by
+/// the key structure rather than by remembering which verb implies which
+/// direction.
 ///
 /// It lives here rather than with any particular publisher because it is wire
 /// vocabulary, and an observer that defined it would leave the conductor
@@ -126,10 +130,13 @@ pub enum MembershipChange {
 // TODO(M7): when join and leave cross the transport, this and the
 // `RecordedJoin`/`RecordedLeave` types plausibly move to `continuo-core`
 // together, alongside `TickStart`/`TickDone` and their keys. One move then
-// rather than two half-moves now.
+// rather than two half-moves now. The two `*_request` keys above land at the
+// same time, since nothing sends a request until there is a transport to
+// send it over.
 pub fn membership_key(world_name: &str) -> KeyExpr {
-    // Return the world's membership notification key.
-    KeyExpr::new(format!("continuo/{world_name}/membership")).expect("valid membership key")
+    // Return the world's applied-membership status key.
+    KeyExpr::new(format!("continuo/{world_name}/conductor/membership/status"))
+        .expect("valid membership key")
 }
 
 /// A step that ran over the wall-clock budget its component declared.
