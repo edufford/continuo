@@ -85,7 +85,7 @@ impl Component for PathFollowController {
         // TODO(PLAN "Scenario configuration"): once scenarios instantiate
         // components, pass the world name at construction and subscribe
         // precisely (same in UnicyclePhysics).
-        vec![KeyExpr::new(format!("continuo/*/actor/{}/pose", self.actor_name)).expect("valid key")]
+        vec![KeyExpr::new_rooted(format!("*/actor/{}/pose", self.actor_name)).expect("valid key")]
     }
 
     fn step(&mut self, ctx: &mut StepCtx) -> SimTime {

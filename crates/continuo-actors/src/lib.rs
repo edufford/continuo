@@ -26,6 +26,8 @@ mod path;
 mod physics;
 mod traffic_spawner;
 
+use continuo_core::KeyExpr;
+
 pub use controller::{Cmd, PathFollowController};
 pub use logger::PoseLogger;
 pub use path::Waypoints;
@@ -36,13 +38,11 @@ pub use traffic_spawner::{
 };
 
 /// Key for an actor's pose in `world`.
-pub fn pose_key(world_name: &str, actor_name: &str) -> continuo_core::KeyExpr {
-    continuo_core::KeyExpr::new(format!("continuo/{world_name}/actor/{actor_name}/pose"))
-        .expect("valid pose key")
+pub fn pose_key(world_name: &str, actor_name: &str) -> KeyExpr {
+    KeyExpr::new_rooted(format!("{world_name}/actor/{actor_name}/pose")).expect("valid pose key")
 }
 
 /// Key for an actor's drive command in `world`.
-pub fn cmd_key(world_name: &str, actor_name: &str) -> continuo_core::KeyExpr {
-    continuo_core::KeyExpr::new(format!("continuo/{world_name}/actor/{actor_name}/cmd"))
-        .expect("valid cmd key")
+pub fn cmd_key(world_name: &str, actor_name: &str) -> KeyExpr {
+    KeyExpr::new_rooted(format!("{world_name}/actor/{actor_name}/cmd")).expect("valid cmd key")
 }

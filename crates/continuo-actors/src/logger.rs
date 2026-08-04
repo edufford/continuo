@@ -50,7 +50,7 @@ impl Component for PoseLogger {
     }
 
     fn subscriptions(&self) -> Vec<KeyExpr> {
-        vec![KeyExpr::new("continuo/*/actor/*/pose").expect("valid key")]
+        vec![KeyExpr::new_rooted("*/actor/*/pose").expect("valid key")]
     }
 
     fn step(&mut self, ctx: &mut StepCtx) -> SimTime {
