@@ -1,2 +1,10 @@
 /target
 *.jsonl
+
+# Python viewer. `uv.lock` is deliberately *not* here: pinning the viewer's
+# dependencies is the same reasoning that pins the Rust ones.
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
