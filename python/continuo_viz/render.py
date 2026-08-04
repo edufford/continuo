@@ -31,10 +31,18 @@ from .scene import Scene
 
 # Nominal car footprint in metres, length by width.
 #
-# TODO(scene-graph): the simulation does not publish extents. `Pose` is a
+# TODO(scene-graph): the simulation does not publish extents. A pose is a
 # position and an orientation, so every drawn body is this one guess. The
 # deferred `continuo/{world}/map` and scene-graph work is where a real size
 # comes from; until then a lorry and a hatchback are the same rectangle.
+#
+# Extents are also what occlusion would need, whenever a world has anything to
+# occlude. Poses carry a `z`, but `PoseTopDown` drops it because physics
+# hardcodes it to zero, so today nothing is above anything else and there is
+# nothing to order. A bridge over a road would need the bridge's footprint and
+# height, not just a centre height, so depth ordering arrives with extents
+# rather than before them, and it will want a stated rule rather than the
+# incidental one below.
 CAR_LENGTH = 4.5
 CAR_WIDTH = 1.8
 
@@ -208,6 +216,13 @@ class Renderer:
         # Ordered by position so labels are placed left to right, which makes
         # which one gets dropped in a crowd predictable instead of dependent
         # on dictionary order.
+        #
+        # Bodies inherit that order, so a car further along the road paints
+        # over one behind it. Cars do overlap on screen, two in a lane a few
+        # metres apart, and this is what decides them. It is stable rather
+        # than chosen: nothing here reasons about which car should be on top,
+        # because at one elevation there is no answer. See the extents note
+        # above for when there is.
         in_view = sorted(scene.actors.values(), key=lambda actor: actor.pose.x)
         for actor in in_view:
             self._draw_body(camera, actor, focused=actor.name == follow)

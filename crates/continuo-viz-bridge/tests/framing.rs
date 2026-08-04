@@ -125,8 +125,8 @@ fn a_message_is_framed_as_payload_plus_metadata() {
 fn a_writer_sink_reassembles_the_event_logs_msg_line() {
     // The other half of splitting payload from metadata: a sink that wants
     // one self-contained line puts them back together, and what it writes has
-    // to stay byte-compatible with what `Recorder` writes, or a bridge-written
-    // file and a recorded log stop being read by the same parser.
+    // to stay byte-compatible with what `Recorder` writes, or its lines and a
+    // recorded log's stop being read by the same parser.
     let written = Arc::new(Mutex::new(Vec::new()));
     let bridge = VizBridge::new(&config(), WriterSink::new(SharedBuffer(written.clone())));
     let mut tap = bridge.message_callback();

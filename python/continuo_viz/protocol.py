@@ -13,6 +13,8 @@ say it from, so a move is only a correction to these references.
 
 from __future__ import annotations
 
+import json
+import re
 from enum import Enum
 
 # Root chunk every simulation key sits under: `continuo/{world}/...`.
@@ -31,6 +33,33 @@ VIZ_KEY_ROOT = "continuo_viz"
 #
 # Rust: written by `continuo_conductor::Recorder`, which has no constant for it.
 LOG_VERSION = 1
+
+
+class UnsupportedLogVersion(Exception):
+    """A file is not a log this viewer can read."""
+
+
+def check_log_header(line: str) -> None:
+    """Raises unless ``line`` is a header declaring a version this viewer reads.
+
+    Both halves of the rule are here, since they are one rule: a file with no
+    header is refused exactly like a file whose header names a version we do
+    not know. Splitting them let a headerless file past a gate that a
+    misversioned one could not pass, which is the same as having no gate.
+    """
+    try:
+        header = json.loads(line)
+    except json.JSONDecodeError:
+        header = None
+    if not isinstance(header, dict) or "version" not in header:
+        raise UnsupportedLogVersion(
+            'not a recorded log: the first line is not a {"version": ...} header'
+        )
+    version = header["version"]
+    if version != LOG_VERSION:
+        raise UnsupportedLogVersion(
+            f"log declares version {version!r}, this viewer reads {LOG_VERSION}"
+        )
 
 
 class MessageType(str, Enum):
@@ -74,3 +103,25 @@ class MessageType(str, Enum):
             return cls(raw)
         except ValueError:
             return None
+
+
+# `continuo/{world}/actor/{name}/{signal}`. Anchored at both ends so a longer
+# key cannot match by accident.
+_ACTOR_KEY = re.compile(
+    rf"^{re.escape(KEY_ROOT)}/[^/]+/actor/(?P<actor>[^/]+)/(?P<signal>[^/]+)$"
+)
+
+
+def parse_actor_key(key: str) -> tuple[str, str] | None:
+    """Splits an actor key into its actor name and signal name.
+
+    ``continuo/demo/actor/ego/pose`` gives ``("ego", "pose")``.
+
+    Returns ``None`` for anything that is not an actor key, which is how
+    world-level traffic and conductor notifications are ignored without
+    listing them.
+    """
+    match = _ACTOR_KEY.match(key)
+    if match is None:
+        return None
+    return match["actor"], match["signal"]

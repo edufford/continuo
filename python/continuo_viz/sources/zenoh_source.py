@@ -16,8 +16,8 @@ from __future__ import annotations
 from collections import deque
 from typing import Any
 
+from ..events import Event, event_from_sample
 from ..protocol import VIZ_KEY_ROOT
-from ..record import Event, event_from_sample
 
 # How many samples may wait between frames before the oldest are discarded.
 #
@@ -68,10 +68,14 @@ class ZenohSource:
     def _on_sample(self, sample: Any) -> None:
         """Called on a Zenoh thread, so it parses and queues and nothing else."""
         attachment = sample.attachment
+        if attachment is None:
+            # Zenoh types this as optional, and every frame the bridge sends
+            # carries metadata, so a sample without it was published by
+            # something else that found its way onto the side channel.
+            return
         try:
             event = event_from_sample(
-                bytes(sample.payload.to_bytes()),
-                bytes(attachment.to_bytes()) if attachment is not None else None,
+                bytes(sample.payload.to_bytes()), bytes(attachment.to_bytes())
             )
         except (ValueError, KeyError, UnicodeDecodeError):
             # A sample this viewer cannot read is not worth ending a live

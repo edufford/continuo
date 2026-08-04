@@ -15,7 +15,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from .record import Join, Leave
+from .events import Join, Leave
 from .scene import Scene
 from .sources import LogSource, read_log
 

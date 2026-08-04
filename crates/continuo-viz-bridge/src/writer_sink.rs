@@ -15,8 +15,11 @@ use crate::viz_sink::VizSink;
 
 /// Writes one JSON line per frame to any [`Write`].
 ///
-/// The line is the event-log `msg` shape, so a file written here and a log
-/// written by `Recorder` are read by the same parser.
+/// Every line is an event-log line, `msg` assembled and membership passed
+/// through, so one parser reads these and a recorded log. A file of them is
+/// still not a recorded log, though: it has no version header, and the
+/// viewer's replay refuses headerless files so nothing bypasses the version
+/// gate.
 pub struct WriterSink<W: Write + Send> {
     writer: W,
     /// Counted rather than propagated, and reported once at flush. A failing

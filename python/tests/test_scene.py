@@ -13,17 +13,16 @@ import math
 
 import pytest
 
-from continuo_viz.record import (
+from continuo_viz.events import (
+    Event,
     Join,
     Leave,
     Message,
-    Pose,
-    UnsupportedLogVersion,
-    actor_signal,
     event_from_log_line,
     event_from_sample,
-    pose_from_payload,
 )
+from continuo_viz.pose import PoseTopDown, pose_from_payload
+from continuo_viz.protocol import UnsupportedLogVersion, parse_actor_key
 from continuo_viz.scene import Scene
 from continuo_viz.sources.log_source import read_log
 
@@ -148,11 +147,11 @@ def test_a_second_publisher_moves_an_actor_without_taking_ownership():
     assert scene.actors["ego"].pose_source == "ego/physics"
 
 
-def test_actor_signal_only_matches_actor_keys():
-    assert actor_signal("continuo/demo/actor/ego/pose") == ("ego", "pose")
-    assert actor_signal("continuo/demo/actor/ego/cmd") == ("ego", "cmd")
-    assert actor_signal("continuo/demo/conductor/membership/status") is None
-    assert actor_signal("continuo/demo/actor/ego/pose/extra") is None
+def test_parse_actor_key_only_matches_actor_keys():
+    assert parse_actor_key("continuo/demo/actor/ego/pose") == ("ego", "pose")
+    assert parse_actor_key("continuo/demo/actor/ego/cmd") == ("ego", "cmd")
+    assert parse_actor_key("continuo/demo/conductor/membership/status") is None
+    assert parse_actor_key("continuo/demo/actor/ego/pose/extra") is None
 
 
 def test_yaw_comes_out_of_the_quaternion():
@@ -246,14 +245,6 @@ def test_a_message_type_this_viewer_does_not_know_is_ignored():
     assert event_from_sample(payload.encode(), attachment.encode()) is None
 
 
-def test_a_sample_with_no_metadata_is_ignored():
-    # Every publisher attaches metadata, so one that did not is something this
-    # viewer has no contract with. Ignoring it beats guessing.
-    line = json.dumps({"leave": {"path": "traffic1/physics", "leaves_at": 11.5}})
-
-    assert event_from_sample(line.encode(), None) is None
-
-
 def test_lines_the_viewer_has_no_use_for_are_skipped():
     assert (
         event_from_log_line(
@@ -273,10 +264,11 @@ def test_a_log_from_an_unknown_version_is_refused(tmp_path):
         list(read_log(log))
 
 
-def test_a_headerless_log_still_reads(tmp_path):
-    # A file written by the bridge's `WriterSink` is a stream of frames with
-    # no header, unlike one written by `Recorder`.
-    log = tmp_path / "frames.jsonl"
+def test_a_log_without_a_header_is_refused(tmp_path):
+    # A `WriterSink` capture is exactly this shape: valid log lines with no
+    # header. Accepting it would let any headerless file bypass the version
+    # gate, so refusal is the point rather than a limitation.
+    log = tmp_path / "headerless.jsonl"
     log.write_text(
         json.dumps(
             {
@@ -289,16 +281,44 @@ def test_a_headerless_log_still_reads(tmp_path):
                 }
             }
         )
-        + "\n"
+        + "\n",
+        encoding="utf-8",
     )
 
-    events = list(read_log(log))
-    assert len(events) == 1
-    assert isinstance(events[0], Message)
+    with pytest.raises(UnsupportedLogVersion):
+        list(read_log(log))
+
+
+def test_an_empty_file_is_not_a_log(tmp_path):
+    log = tmp_path / "empty.jsonl"
+    log.write_text("", encoding="utf-8")
+
+    with pytest.raises(UnsupportedLogVersion):
+        list(read_log(log))
 
 
 def test_pose_is_hashable_and_comparable():
     # Frozen with slots, so a scene can be diffed cheaply and a pose cannot be
     # mutated out from under a frame that is mid-draw.
-    assert Pose(1.0, 2.0, 3.0, 0.0) == Pose(1.0, 2.0, 3.0, 0.0)
-    assert len({Pose(1.0, 2.0, 3.0, 0.0), Pose(1.0, 2.0, 3.0, 0.0)}) == 1
+    assert PoseTopDown(1.0, 2.0, 0.0) == PoseTopDown(1.0, 2.0, 0.0)
+    assert len({PoseTopDown(1.0, 2.0, 0.0), PoseTopDown(1.0, 2.0, 0.0)}) == 1
+
+
+def test_every_event_reports_the_instant_it_belongs_at():
+    # Each kind names its instant differently, and `LogSource` paces on the
+    # one thing they share.
+    assert pose_message("ego", 1.0, time=2.5).event_time == 2.5
+    assert Join(path="ego/physics", first_due=4.0).event_time == 4.0
+    assert Leave(path="ego/physics", leaves_at=9.0).event_time == 9.0
+
+
+def test_an_event_kind_cannot_exist_without_an_instant():
+    # The reason `Event` is abstract rather than a union alias. Pacing read
+    # the instant off whichever known field it found and fell back to zero,
+    # so a kind that forgot one would silently pace at the start of the run.
+    # Now it cannot be constructed at all.
+    class Undated(Event):
+        __slots__ = ()
+
+    with pytest.raises(TypeError, match="abstract"):
+        Undated()

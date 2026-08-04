@@ -10,8 +10,15 @@ Reading a recorded log needs nothing beyond the standard library. Drawing needs
 the parser and the scene can be tested anywhere.
 """
 
-from .protocol import KEY_ROOT, LOG_VERSION, VIZ_KEY_ROOT, MessageType
-from .record import Event, Join, Leave, Message, Pose
+from .events import Event, Join, Leave, Message
+from .pose import PoseTopDown
+from .protocol import (
+    KEY_ROOT,
+    LOG_VERSION,
+    VIZ_KEY_ROOT,
+    MessageType,
+    UnsupportedLogVersion,
+)
 from .scene import Actor, Scene
 
 __all__ = [
@@ -24,6 +31,7 @@ __all__ = [
     "Leave",
     "Message",
     "MessageType",
-    "Pose",
+    "PoseTopDown",
     "Scene",
+    "UnsupportedLogVersion",
 ]

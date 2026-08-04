@@ -18,7 +18,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .record import Event, Join, Leave, Message, Pose, actor_signal, pose_from_payload
+from .events import Event, Join, Leave, Message
+from .pose import PoseTopDown, pose_from_payload
+from .protocol import parse_actor_key
 
 
 @dataclass
@@ -35,7 +37,7 @@ class Actor:
 
     name: str
     pose_source: str
-    pose: Pose
+    pose: PoseTopDown
     updated_at: float
     """Sim time of the most recent pose, for the HUD and for drawing staleness."""
 
@@ -84,10 +86,10 @@ class Scene:
         self.messages_seen += 1
         self.sim_time = max(self.sim_time, message.sim_time)
 
-        split = actor_signal(message.key)
-        if split is None:
+        parsed = parse_actor_key(message.key)
+        if parsed is None:
             return
-        name, signal = split
+        name, signal = parsed
         # Commands travel on the same side channel and are not drawable. The
         # viewer subscribes to poses only over Zenoh, but a recorded log holds
         # everything, so the filter has to exist here too.

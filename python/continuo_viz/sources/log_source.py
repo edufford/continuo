@@ -8,12 +8,12 @@ ever being held in memory.
 
 from __future__ import annotations
 
-import json
 import time
 from collections.abc import Iterator
 from pathlib import Path
 
-from ..record import Event, check_log_version, event_from_log_line
+from ..events import Event, event_from_log_line
+from ..protocol import check_log_header
 
 
 def read_log(path: Path | str) -> Iterator[Event]:
@@ -22,32 +22,18 @@ def read_log(path: Path | str) -> Iterator[Event]:
     Unpaced on purpose. This is what a test or a headless check wants, and it
     is what :class:`LogSource` wraps to add a clock.
 
-    The header is validated when present. A log written by ``Recorder`` opens
-    with ``{"version": 1, ...}``; a file written by the bridge's ``WriterSink``
-    is a stream of the same lines with no header, so a missing one is accepted
-    rather than treated as corruption.
+    The first line must be the header ``Recorder`` writes, declaring a version
+    this viewer reads. A headerless stream, a ``WriterSink`` capture for
+    instance, is refused rather than tolerated: the version gate only means
+    something if there is no unversioned way past it.
     """
     with Path(path).open(encoding="utf-8") as lines:
-        for lineno, line in enumerate(lines, start=1):
-            if lineno == 1:
-                stripped = line.strip()
-                if stripped:
-                    first = json.loads(stripped)
-                    if isinstance(first, dict) and "version" in first:
-                        check_log_version(first)
-                        continue
+        check_log_header(next(lines, ""))
+
+        for line in lines:
             event = event_from_log_line(line)
             if event is not None:
                 yield event
-
-
-def event_time(event: Event) -> float:
-    """The sim instant an event belongs at, for pacing."""
-    for attribute in ("sim_time", "first_due", "leaves_at"):
-        instant = getattr(event, attribute, None)
-        if instant is not None:
-            return float(instant)
-    return 0.0
 
 
 class LogSource:
@@ -78,14 +64,14 @@ class LogSource:
         now = time.monotonic()
         if self._wall_origin is None:
             self._wall_origin = now
-            self._sim_origin = event_time(self._pending)
+            self._sim_origin = self._pending.event_time
         assert self._sim_origin is not None
 
         # Where the replay has got to, in the log's own time base.
         reached = self._sim_origin + (now - self._wall_origin) * self._speed
 
         ready: list[Event] = []
-        while self._pending is not None and event_time(self._pending) <= reached:
+        while self._pending is not None and self._pending.event_time <= reached:
             ready.append(self._pending)
             self._pending = next(self._events, None)
 

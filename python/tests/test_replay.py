@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 
 from continuo_viz.scene import Scene
-from continuo_viz.sources.log_source import LogSource, event_time, read_log
+from continuo_viz.sources.log_source import LogSource, read_log
 
 IDENTITY = {"w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0}
 
@@ -109,7 +109,7 @@ def test_a_scene_read_partway_through_still_holds_the_retired_car(tmp_path):
 
     scene = Scene()
     for event in read_log(log):
-        if event_time(event) > 2.0:
+        if event.event_time > 2.0:
             break
         scene.apply(event)
 
@@ -141,7 +141,10 @@ def test_the_first_drain_is_not_delayed_by_a_late_starting_log(tmp_path):
     # Sim time is the log's own, so a run whose first event is at t=1000 must
     # begin immediately rather than after a thousand seconds of nothing.
     log = tmp_path / "late.jsonl"
-    log.write_text(msg_line("ego", 5.0, 1000.0) + "\n", encoding="utf-8")
+    header = json.dumps({"version": 1, "world_name": "demo", "world_seed": 42})
+    log.write_text(
+        header + "\n" + msg_line("ego", 5.0, 1000.0) + "\n", encoding="utf-8"
+    )
 
     source = LogSource(log, speed=1.0)
     assert len(source.drain()) == 1

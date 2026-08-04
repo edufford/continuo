@@ -1,4 +1,4 @@
-"""What a viewer reads, independent of where it came from.
+"""The events a viewer reads, and the two arrangements they arrive in.
 
 A recorded log line and a live Zenoh sample carry the same information in two
 arrangements, so both are parsed into the types here and nothing downstream
@@ -23,20 +23,37 @@ actors the same way for a live run and a replay.
 from __future__ import annotations
 
 import json
-import math
-import re
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
 
-from .protocol import KEY_ROOT, LOG_VERSION, MessageType
+from .protocol import MessageType
 
 
-class UnsupportedLogVersion(Exception):
-    """A log declares a format this viewer does not know how to read."""
+class Event(ABC):
+    """Something that happened in the world, at a knowable instant.
+
+    Each kind names its instant with its own field, because they mean
+    different things: a message was published *at* one, a join first steps
+    *at* one, a leave first *stops* at one. :attr:`event_time` is what they
+    have in common, and it is abstract so that a new kind of event cannot
+    exist without answering when it belongs.
+
+    ``__slots__`` is empty so subclasses declared with ``slots=True`` keep
+    theirs. Inheriting from a slotless base would hand every event a
+    ``__dict__`` back and quietly undo them.
+    """
+
+    __slots__ = ()
+
+    @property
+    @abstractmethod
+    def event_time(self) -> float:
+        """The sim instant this belongs at, for ordering and pacing."""
 
 
 @dataclass(frozen=True, slots=True)
-class Message:
+class Message(Event):
     """One published message, with the metadata a raw payload lacks."""
 
     sim_time: float
@@ -45,17 +62,26 @@ class Message:
     seq: int
     payload: dict[str, Any]
 
+    @property
+    def event_time(self) -> float:
+        return self.sim_time
+
 
 @dataclass(frozen=True, slots=True)
-class Join:
+class Join(Event):
     """A component admitted to the world."""
 
     path: str
     first_due: float
+    """The instant the newcomer first steps."""
+
+    @property
+    def event_time(self) -> float:
+        return self.first_due
 
 
 @dataclass(frozen=True, slots=True)
-class Leave:
+class Leave(Event):
     """A component removed from the world.
 
     The exact event a viewer needs in order to stop drawing something. Without
@@ -65,80 +91,11 @@ class Leave:
 
     path: str
     leaves_at: float
+    """The first instant the component does not step."""
 
-
-Event = Message | Join | Leave
-
-# `continuo/{world}/actor/{name}/{signal}`. Anchored at both ends so a longer
-# key cannot match by accident.
-_ACTOR_KEY = re.compile(
-    rf"^{re.escape(KEY_ROOT)}/[^/]+/actor/(?P<actor>[^/]+)/(?P<signal>[^/]+)$"
-)
-
-
-def actor_signal(key: str) -> tuple[str, str] | None:
-    """Splits an actor key into its actor name and signal.
-
-    Returns ``None`` for anything else, which is how world-level traffic and
-    conductor notifications are ignored without listing them.
-    """
-    match = _ACTOR_KEY.match(key)
-    if match is None:
-        return None
-    return match["actor"], match["signal"]
-
-
-@dataclass(frozen=True, slots=True)
-class Pose:
-    """A pose flattened to what a top-down view can draw.
-
-    The simulation works in three dimensions and a full quaternion. A plan view
-    needs two of the axes and one angle, so the conversion happens once here
-    rather than in the renderer every frame.
-    """
-
-    x: float
-    y: float
-    z: float
-    yaw: float
-    """Heading in radians, counter-clockwise from the +x axis."""
-
-
-def pose_from_payload(payload: dict[str, Any]) -> Pose | None:
-    """Reads a pose payload, or ``None`` if it is not one.
-
-    Returning ``None`` rather than raising keeps an unexpected payload on a
-    pose key from ending a live session. A viewer that stops at the first
-    surprise is worse than one that draws what it understood.
-    """
-    position = payload.get("position")
-    orientation = payload.get("orientation")
-    if not isinstance(position, dict) or not isinstance(orientation, dict):
-        return None
-    try:
-        x = float(position["x"])
-        y = float(position["y"])
-        z = float(position["z"])
-        w = float(orientation["w"])
-        qx = float(orientation["x"])
-        qy = float(orientation["y"])
-        qz = float(orientation["z"])
-    except (KeyError, TypeError, ValueError):
-        return None
-
-    # Yaw about +z, the only rotation a plan view can show. The standard
-    # extraction, and stable for the near-level orientations a road produces.
-    yaw = math.atan2(2.0 * (w * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz))
-    return Pose(x=x, y=y, z=z, yaw=yaw)
-
-
-def check_log_version(header: dict[str, Any]) -> None:
-    """Raises unless a log header declares a format this viewer reads."""
-    version = header.get("version")
-    if version != LOG_VERSION:
-        raise UnsupportedLogVersion(
-            f"log declares version {version!r}, this viewer reads {LOG_VERSION}"
-        )
+    @property
+    def event_time(self) -> float:
+        return self.leaves_at
 
 
 def event_from_log_line(line: str) -> Event | None:
@@ -153,11 +110,11 @@ def event_from_log_line(line: str) -> Event | None:
     stripped = line.strip()
     if not stripped:
         return None
-    event = json.loads(stripped)
-    if not isinstance(event, dict):
+    event_dict = json.loads(stripped)
+    if not isinstance(event_dict, dict):
         return None
 
-    if (msg := event.get("msg")) is not None:
+    if (msg := event_dict.get("msg")) is not None:
         # TODO: the log spells this `time` and live metadata spells it
         # `sim_time`, for the same instant. `msg` is the only timestamped log
         # line that does not already say `sim_time`: `tick` and the `observed`
@@ -171,14 +128,14 @@ def event_from_log_line(line: str) -> Event | None:
             seq=int(msg["seq"]),
             payload=msg["payload"],
         )
-    if (join := event.get("join")) is not None:
+    if (join := event_dict.get("join")) is not None:
         return Join(path=str(join["path"]), first_due=float(join["first_due"]))
-    if (leave := event.get("leave")) is not None:
+    if (leave := event_dict.get("leave")) is not None:
         return Leave(path=str(leave["path"]), leaves_at=float(leave["leaves_at"]))
     return None
 
 
-def event_from_sample(payload: bytes, attachment: bytes | None) -> Event | None:
+def event_from_sample(payload: bytes, attachment: bytes) -> Event | None:
     """Parses one live sample into the same event a log line would give.
 
     The two halves are recombined here: a sample arrives as payload bytes with
@@ -195,11 +152,6 @@ def event_from_sample(payload: bytes, attachment: bytes | None) -> Event | None:
     further types, and a viewer that predates them should ignore them rather
     than read them as something they are not.
     """
-    if attachment is None:
-        # Only a publisher that predates the metadata contract, which is not
-        # something this viewer can interpret.
-        return None
-
     meta = json.loads(attachment.decode("utf-8"))
     message_type = MessageType.parse(meta.get("message_type"))
 
