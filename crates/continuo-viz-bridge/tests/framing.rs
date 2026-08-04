@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use continuo_conductor::{ConductorConfig, MembershipChange, Pacing, RecordedJoin, RecordedLeave};
 use continuo_core::{ComponentPath, KeyExpr, Message, SimTime};
-use continuo_viz_bridge::{VizBridge, VizFrame, VizSink};
+use continuo_viz_bridge::{VizBridge, VizFrame, VizSink, WriterSink};
 
 /// Collects frames in memory so a test can assert on what was delivered.
 ///
@@ -44,6 +44,26 @@ impl VizSink for CollectingSink {
     }
 }
 
+/// A `Write` a test can read back after the worker thread has finished with
+/// it, since `WriterSink` consumes the writer it is given.
+struct SharedBuffer(Arc<Mutex<Vec<u8>>>);
+
+impl std::io::Write for SharedBuffer {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0
+            .lock()
+            .expect("buffer mutex is never poisoned")
+            .extend_from_slice(buf);
+
+        // Return the whole slice as written; a Vec never takes a short write.
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 fn config() -> ConductorConfig {
     ConductorConfig {
         world_name: "demo".into(),
@@ -63,7 +83,7 @@ fn pose_message(seq: u64) -> Message {
 }
 
 #[test]
-fn a_message_is_framed_as_the_event_logs_msg_line() {
+fn a_message_is_framed_as_payload_plus_provenance() {
     let sink = CollectingSink::new();
     let bridge = VizBridge::new(&config(), sink.clone());
     let mut tap = bridge.message_callback();
@@ -81,17 +101,60 @@ fn a_message_is_framed_as_the_event_logs_msg_line() {
     assert_eq!(frame.key, "continuo/demo/viz/actor/car1/pose");
     assert_eq!(frame.payload, pose_message(7).payload);
 
-    // The metadata line is what a recorded log holds, so one parser reads
-    // both.
-    let line: serde_json::Value =
-        serde_json::from_slice(&frame.metadata).expect("metadata is JSON");
+    // The metadata carries what a raw payload cannot, and *only* that. The
+    // original key is not lost: it rides here, which is where a viewer reads
+    // it from for every source.
+    let meta = frame
+        .meta
+        .as_ref()
+        .expect("a message frame carries metadata");
+    let sent: serde_json::Value =
+        serde_json::from_slice(&meta.to_bytes()).expect("metadata is JSON");
+    assert_eq!(sent["key"], "continuo/demo/actor/car1/pose");
+    assert_eq!(sent["publisher"], "car1/physics");
+    assert_eq!(sent["seq"], 7);
+    assert_eq!(sent["time"], 0.5);
+
+    // The payload travels once. Repeating it inside the metadata would double
+    // every byte on the wire, and no native publisher at milestone 7 would
+    // nest its own payload inside its own provenance, so a viewer written
+    // against that shape would need changing at exactly the moment this
+    // design promises it will not.
+    assert_eq!(
+        sent.as_object().expect("metadata is an object").len(),
+        4,
+        "metadata carries time, key, publisher, and seq, and nothing else"
+    );
+}
+
+#[test]
+fn a_writer_sink_reassembles_the_event_logs_msg_line() {
+    // The other half of splitting payload from provenance: a sink that wants
+    // one self-contained line puts them back together, and what it writes has
+    // to stay byte-compatible with what `Recorder` writes, or a bridge-written
+    // file and a recorded log stop being read by the same parser.
+    let written = Arc::new(Mutex::new(Vec::new()));
+    let bridge = VizBridge::new(&config(), WriterSink::new(SharedBuffer(written.clone())));
+    let mut tap = bridge.message_callback();
+    tap(&pose_message(7));
+    bridge.finish();
+
+    let bytes = written
+        .lock()
+        .expect("buffer mutex is never poisoned")
+        .clone();
+    let text = String::from_utf8(bytes).expect("a written line is UTF-8");
+    let line: serde_json::Value = serde_json::from_str(text.trim()).expect("the line is JSON");
+
     let msg = &line["msg"];
-    // The original key is not lost: it rides in the metadata, which is where
-    // a viewer reads it from for every source.
     assert_eq!(msg["key"], "continuo/demo/actor/car1/pose");
     assert_eq!(msg["publisher"], "car1/physics");
     assert_eq!(msg["seq"], 7);
-    assert_eq!(msg["payload"]["position"]["x"], 1.5);
+    assert_eq!(msg["time"], 0.5);
+    assert_eq!(
+        msg["payload"]["position"]["x"], 1.5,
+        "the payload is spliced back in, so the line stands alone"
+    );
 }
 
 #[test]
@@ -116,13 +179,19 @@ fn membership_changes_are_framed_as_join_and_leave_lines() {
             frame.key, "continuo/demo/viz/conductor/membership/status",
             "membership goes down the same side channel as everything else"
         );
+        // A notification's payload is the complete log line, with nothing
+        // attached, because naming the path and the instant is all there is
+        // to say. Metadata would only repeat it.
+        assert!(
+            frame.meta.is_none(),
+            "a self-describing notification carries no separate provenance"
+        );
     }
 
-    let join: serde_json::Value =
-        serde_json::from_slice(&frames[0].metadata).expect("join is JSON");
+    let join: serde_json::Value = serde_json::from_slice(&frames[0].payload).expect("join is JSON");
     assert_eq!(join["join"]["path"], "traffic7/physics");
     let leave: serde_json::Value =
-        serde_json::from_slice(&frames[1].metadata).expect("leave is JSON");
+        serde_json::from_slice(&frames[1].payload).expect("leave is JSON");
     assert_eq!(leave["leave"]["path"], "traffic7/physics");
 }
 

@@ -25,6 +25,13 @@
 //! echoed straight back onto the key it came from. The original key is not
 //! lost: it travels in the frame's metadata, which is where a viewer reads it
 //! from anyway, alongside the sim time, publisher, and sequence number.
+//!
+//! A payload crosses the wire once. The bridge frames a message as its bytes
+//! plus [`MessageMeta`] and hands both to the sink, which decides what to do
+//! with them: `ZenohSink` publishes the payload and attaches the metadata,
+//! while `WriterSink` reassembles the two into the event log's `msg` line.
+//! Serializing in the sink rather than in the tap also keeps that work off the
+//! thread stepping the world.
 
 mod sink;
 
@@ -37,14 +44,13 @@ use std::sync::mpsc::{RecvTimeoutError, SyncSender, TrySendError, sync_channel};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use continuo_conductor::record::{LogEvent, RecordedMessage};
+use continuo_conductor::record::LogEvent;
 use continuo_conductor::{ConductorConfig, MembershipChange, membership_key};
 use continuo_core::Message;
 use continuo_transport::{MonitorTransport, Transport};
-use serde_json::value::RawValue;
 use tracing::{debug, warn};
 
-pub use sink::{VizFrame, VizSink, WriterSink};
+pub use sink::{MessageMeta, VizFrame, VizSink, WriterSink};
 
 #[cfg(feature = "zenoh")]
 pub use zenoh_sink::{ZenohSink, ZenohSinkError};
@@ -164,6 +170,10 @@ impl VizBridge {
     }
 
     /// The transport tap, for composing with other monitors by hand.
+    ///
+    /// Runs on the thread stepping the world, so it does as little as it can:
+    /// copy the payload, note where the message came from, and queue it.
+    /// Serializing anything is the sink's job, on the worker.
     pub fn message_callback(&self) -> impl FnMut(&Message) + Send + 'static {
         let tx = self.tx.clone();
         let dropped_frames = self.dropped_frames.clone();
@@ -174,7 +184,12 @@ impl VizBridge {
             let frame = VizFrame {
                 key: viz_key(&world_name, m.key.as_str()),
                 payload: m.payload.clone(),
-                metadata: message_line(m),
+                meta: Some(MessageMeta {
+                    time: m.time,
+                    key: m.key.to_string(),
+                    publisher: m.publisher.to_string(),
+                    seq: m.seq,
+                }),
             };
             try_queue(&tx, &dropped_frames, frame);
         }
@@ -189,11 +204,12 @@ impl VizBridge {
 
         // Return the tap, holding its own handle on the queue.
         move |change: &MembershipChange| {
-            let line = membership_line(change);
             let frame = VizFrame {
                 key: key.clone(),
-                payload: line.clone(),
-                metadata: line,
+                payload: membership_line(change),
+                // Self-describing already: a join or leave line names the
+                // path and the instant, which is everything there is to say.
+                meta: None,
             };
             try_queue(&tx, &dropped_frames, frame);
         }
@@ -281,39 +297,19 @@ fn try_queue(tx: &SyncSender<VizFrame>, dropped_frames: &AtomicU64, frame: VizFr
     }
 }
 
-/// Frames a message as the event log's `msg` line, so a live stream and a
-/// recorded log are read by the same parser.
-///
-/// The *field* set is structural: this builds [`LogEvent::Msg`] from
-/// [`RecordedMessage`], so adding or removing a field there breaks
-/// compilation here. What is not structural is the *serde* shape, meaning the
-/// tag names and how `payload` is embedded, which could change in
-/// `continuo-conductor::record` without touching this file. That gap is what
-/// `a_message_is_framed_as_the_event_logs_msg_line` in `tests/framing.rs`
-/// pins, by asserting the emitted line parses as
-/// `{"msg": {key, publisher, seq, payload}}`.
-fn message_line(m: &Message) -> Vec<u8> {
-    let payload_text = std::str::from_utf8(&m.payload)
-        .expect("payloads are serialized JSON, which is always valid UTF-8");
-    let payload = RawValue::from_string(payload_text.to_string()).expect("payloads are valid JSON");
-    let event = LogEvent::Msg(RecordedMessage {
-        time: m.time,
-        key: m.key.to_string(),
-        publisher: m.publisher.to_string(),
-        seq: m.seq,
-        payload,
-    });
-
-    // Return the serialized line; a viewer frame is never large enough for
-    // this to be worth reusing a buffer for.
-    serde_json::to_vec(&event).expect("a recorded message always serializes")
-}
-
 /// Frames a membership change as the event log's `join` or `leave` line.
 ///
-/// Coupled to [`LogEvent`] the same way [`message_line`] is, and pinned the
-/// same way by `membership_changes_are_framed_as_join_and_leave_lines` in
-/// `tests/framing.rs`.
+/// Unlike a message, this is serialized here rather than in the sink, because
+/// there is no separate payload to hold it apart from: the line *is* the
+/// payload. It is cheap and rare, two of them per component for a whole run,
+/// against a pose every 10 ms.
+///
+/// The *field* set is structural, since this builds [`LogEvent`] itself, so
+/// adding or removing a field breaks compilation here. What is not structural
+/// is the *serde* shape, meaning the tag names, which could change in
+/// `continuo-conductor::record` without touching this file. That gap is what
+/// `membership_changes_are_framed_as_join_and_leave_lines` in
+/// `tests/framing.rs` pins.
 fn membership_line(change: &MembershipChange) -> Vec<u8> {
     let event = match change {
         MembershipChange::Joined(join) => LogEvent::Join(join.clone()),
