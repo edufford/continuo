@@ -39,17 +39,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or(30);
 
     let config = traffic_world::config_paced(Pacing::real_time());
-    let sink = ZenohSink::new()?;
-    let bridge = VizBridge::new(&config, sink);
+    let zenoh_sink = ZenohSink::new()?;
+    let viz_bridge = VizBridge::new(&config, zenoh_sink);
 
     // Two observers on the transport: the request handler the scenario needs
     // in order to run at all, wrapped by the bridge that watches it.
     let traffic_request_handler = TrafficRequestHandler::default();
     let transport =
-        bridge.wrap_transport(traffic_request_handler.wrap_transport(InProcTransport::new()));
+        viz_bridge.wrap_transport(traffic_request_handler.wrap_transport(InProcTransport::new()));
 
     let mut conductor = Conductor::new(config, transport)?;
-    conductor.add_membership_callback(bridge.membership_callback());
+    conductor.add_membership_callback(viz_bridge.membership_callback());
     traffic_world::setup_live_traffic_scenario(&mut conductor)?;
 
     println!(
@@ -83,13 +83,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Frames are dropped rather than queued without bound when a viewer
     // cannot keep up, so this is the number that says whether it did.
-    let dropped = bridge.dropped_frames();
-    if dropped > 0 {
-        println!("viewer: {dropped} frames dropped; the viewer was not keeping up");
+    let dropped_viz_frames = viz_bridge.dropped_frames();
+    if dropped_viz_frames > 0 {
+        println!("viewer: {dropped_viz_frames} frames dropped; the viewer was not keeping up");
     } else {
         println!("viewer: no frames dropped");
     }
-    bridge.finish();
+    viz_bridge.finish();
 
     // Return success for the completed run.
     Ok(())

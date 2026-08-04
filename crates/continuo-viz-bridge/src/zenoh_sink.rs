@@ -22,7 +22,7 @@ use zenoh::{Session, Wait};
 #[derive(Debug, Error)]
 pub enum ZenohSinkError {
     #[error("opening the Zenoh session failed: {0}")]
-    Open(String),
+    OpenSession(String),
 }
 
 use crate::sink::{VizFrame, VizSink};
@@ -56,7 +56,7 @@ impl ZenohSink {
     pub fn with_config(config: zenoh::Config) -> Result<Self, ZenohSinkError> {
         let session = zenoh::open(config)
             .wait()
-            .map_err(|source| ZenohSinkError::Open(source.to_string()))?;
+            .map_err(|source| ZenohSinkError::OpenSession(source.to_string()))?;
 
         // Return the sink, ready to publish.
         Ok(ZenohSink {
