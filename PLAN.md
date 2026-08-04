@@ -131,7 +131,7 @@ Key expression conventions (draft):
 | `continuo/{world}/actor/{id}/pose` | actor pose | built |
 | `continuo/{world}/actor/{id}/cmd` | drive command | built |
 | `continuo/{world}/conductor/membership/status` | applied join or leave | built (M5) |
-| `continuo/{world}/viz/**` | observer side channel, mirroring the key beneath it | built (M5) |
+| `continuo_viz/{world}/**` | observer side channel, mirroring `continuo/{world}/**` beneath it | built (M5) |
 | `continuo/{world}/tick` | `TickStart` | M7 |
 | `continuo/{world}/tick/done` | `TickDone` | M7 |
 | `continuo/{world}/conductor/membership/join_request` | registration request | M7 |

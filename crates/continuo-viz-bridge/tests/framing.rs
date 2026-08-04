@@ -98,7 +98,7 @@ fn a_message_is_framed_as_payload_plus_provenance() {
     // key it came from, which is what stops a bridged message colliding with
     // a component publishing the same key, or echoing one that arrived over
     // the transport.
-    assert_eq!(frame.key, "continuo/demo/viz/actor/car1/pose");
+    assert_eq!(frame.key, "continuo_viz/demo/actor/car1/pose");
     assert_eq!(frame.payload, pose_message(7).payload);
 
     // The metadata carries what a raw payload cannot, and *only* that. The
@@ -176,7 +176,7 @@ fn membership_changes_are_framed_as_join_and_leave_lines() {
     assert_eq!(frames.len(), 2);
     for frame in &frames {
         assert_eq!(
-            frame.key, "continuo/demo/viz/conductor/membership/status",
+            frame.key, "continuo_viz/demo/conductor/membership/status",
             "membership goes down the same side channel as everything else"
         );
         // A notification's payload is the complete log line, with nothing

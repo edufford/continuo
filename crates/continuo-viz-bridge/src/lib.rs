@@ -18,13 +18,15 @@
 //! are dropped when it is full, because a slow or absent viewer must not
 //! become back pressure on a step.
 //!
-//! Everything published here goes under `continuo/{world}/viz/`, a side
-//! channel no simulation component reads. Relaying onto the *original* key
-//! would collide with components that publish it themselves once there is a
-//! Zenoh transport, and worse, a message that arrived over Zenoh would be
-//! echoed straight back onto the key it came from. The original key is not
-//! lost: it travels in the frame's metadata, which is where a viewer reads it
-//! from anyway, alongside the sim time, publisher, and sequence number.
+//! Everything published here goes under `continuo_viz/`, a side channel no
+//! simulation component reads, mirroring `continuo/` segment for segment
+//! beneath it. Relaying onto the *original* key would collide with components
+//! that publish it themselves once there is a Zenoh transport, and worse, a
+//! message that arrived over Zenoh would be echoed straight back onto the key
+//! it came from. Rooting the mirror outside `continuo/` makes that impossible
+//! rather than merely unlikely. The original key is not lost: it travels in the
+//! frame's metadata, which is where a viewer reads it from anyway, alongside
+//! the sim time, publisher, and sequence number.
 //!
 //! A payload crosses the wire once. The bridge frames a message as its bytes
 //! plus [`MessageMeta`] and hands both to the sink, which decides what to do
@@ -46,7 +48,7 @@ use std::time::{Duration, Instant};
 
 use continuo_conductor::record::LogEvent;
 use continuo_conductor::{ConductorConfig, MembershipChange, membership_key};
-use continuo_core::Message;
+use continuo_core::{KEY_ROOT, Message};
 use continuo_transport::{MonitorTransport, Transport};
 use tracing::{debug, warn};
 
@@ -75,6 +77,13 @@ const SHUTDOWN_POLL: Duration = Duration::from_millis(20);
 /// Thread name for the delivery worker, so it is identifiable in a panic
 /// message, a debugger, or a process listing.
 const WORKER_THREAD_NAME: &str = "continuo-viz";
+
+/// Root the viewer side channel sits under, mirroring [`KEY_ROOT`] segment for
+/// segment beneath it.
+///
+/// Namespaced to this project rather than a bare `viz/`, which on a Zenoh
+/// network shared with anything else would be claiming a very general name.
+pub const VIZ_KEY_ROOT: &str = "continuo_viz";
 
 /// How long [`VizBridge::shutdown`] waits for the worker before detaching it.
 ///
@@ -177,12 +186,11 @@ impl VizBridge {
     pub fn message_callback(&self) -> impl FnMut(&Message) + Send + 'static {
         let tx = self.tx.clone();
         let dropped_frames = self.dropped_frames.clone();
-        let world_name = self.world_name.clone();
 
         // Return the tap, holding its own handle on the queue.
         move |m: &Message| {
             let frame = VizFrame {
-                key: viz_key(&world_name, m.key.as_str()),
+                key: viz_key(m.key.as_str()),
                 payload: m.payload.clone(),
                 meta: Some(MessageMeta {
                     time: m.time,
@@ -200,7 +208,7 @@ impl VizBridge {
     pub fn membership_callback(&self) -> impl FnMut(&MembershipChange) + Send + 'static {
         let tx = self.tx.clone();
         let dropped_frames = self.dropped_frames.clone();
-        let key = viz_key(&self.world_name, membership_key(&self.world_name).as_str());
+        let key = viz_key(membership_key(&self.world_name).as_str());
 
         // Return the tap, holding its own handle on the queue.
         move |change: &MembershipChange| {
@@ -270,21 +278,28 @@ impl Drop for VizBridge {
     }
 }
 
-/// Maps a key a component published on to the viewer's side channel.
+/// The side-channel key a publication is relayed onto.
 ///
 /// `continuo/demo/actor/car1/pose` becomes
-/// `continuo/demo/viz/actor/car1/pose`. Keys that do not carry the expected
-/// world prefix are nested whole rather than rewritten, so an unconventional
-/// key is still separated from live traffic instead of being relayed onto
-/// itself.
-fn viz_key(world_name: &str, published_key: &str) -> String {
-    let prefix = format!("continuo/{world_name}/");
+/// `continuo_viz/demo/actor/car1/pose`: one root swapped for the other, every
+/// segment beneath it untouched.
+///
+/// Swapping roots rather than nesting inside the world is what keeps this two
+/// constants and no world-dependent parsing. Components publish under
+/// [`KEY_ROOT`] and the side channel is rooted outside it, so no relayed key
+/// can equal a published one and a message cannot be echoed back onto the key
+/// it arrived on. A key that is not under [`KEY_ROOT`] at all is nested whole,
+/// which lands it on the side channel just the same.
+fn viz_key(published_key: &str) -> String {
+    // The separator is required, not merely stripped if present, so a world
+    // named `continuoX` cannot match the root and be handed back as `X/...`.
+    let rest = published_key
+        .strip_prefix(KEY_ROOT)
+        .and_then(|rest| rest.strip_prefix('/'))
+        .unwrap_or(published_key);
 
     // Return the side-channel key for this publication.
-    match published_key.strip_prefix(&prefix) {
-        Some(rest) => format!("continuo/{world_name}/viz/{rest}"),
-        None => format!("continuo/{world_name}/viz/{published_key}"),
-    }
+    format!("{VIZ_KEY_ROOT}/{rest}")
 }
 
 /// Queues a frame, counting it as dropped rather than waiting for room.
@@ -318,4 +333,61 @@ fn membership_line(change: &MembershipChange) -> Vec<u8> {
 
     // Return the serialized line, matching what `Recorder` would have written.
     serde_json::to_vec(&event).expect("a membership change always serializes")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_the_root_segment_changes() {
+        assert_eq!(
+            viz_key("continuo/demo/actor/car1/pose"),
+            "continuo_viz/demo/actor/car1/pose"
+        );
+    }
+
+    #[test]
+    fn a_key_outside_the_root_is_nested_whole() {
+        // Still lands on the side channel, so a key that does not follow the
+        // convention cannot be relayed back onto itself. The integration tests
+        // only ever see conventional keys, so this would otherwise go
+        // unexercised.
+        assert_eq!(viz_key("elsewhere/pose"), "continuo_viz/elsewhere/pose");
+    }
+
+    #[test]
+    fn a_world_whose_name_extends_the_root_is_not_mistaken_for_it() {
+        // The separator is required when stripping, so `continuoX` is a key
+        // outside the root and is nested whole, rather than having `continuo`
+        // shaved off it to leave `X/demo/...`.
+        assert_eq!(
+            viz_key("continuoX/demo/actor/car1/pose"),
+            "continuo_viz/continuoX/demo/actor/car1/pose"
+        );
+    }
+
+    #[test]
+    fn a_relayed_key_can_never_equal_a_published_one() {
+        // The property the whole scheme rests on: components publish under
+        // `continuo/`, the side channel is rooted outside it, so a message
+        // cannot be echoed back onto the key it arrived on. That matters once
+        // there is a real Zenoh transport and the bridge is subscribed to the
+        // same network it publishes to.
+        for published in [
+            "continuo/demo/actor/car1/pose",
+            "continuo/demo/conductor/membership/status",
+            "elsewhere/pose",
+        ] {
+            let relayed = viz_key(published);
+            assert_ne!(relayed, published);
+
+            // Compared chunk by chunk rather than by prefix, because
+            // `continuo_viz` *does* start with `continuo`. What has to differ
+            // is the root chunk, not the leading characters.
+            let root = relayed.split('/').next().expect("a key has a first chunk");
+            assert_eq!(root, VIZ_KEY_ROOT);
+            assert_ne!(root, KEY_ROOT);
+        }
+    }
 }

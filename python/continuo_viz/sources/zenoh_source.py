@@ -60,8 +60,8 @@ class ZenohSource:
     def key_expressions(world: str) -> list[str]:
         """What a viewer subscribes to, and nothing more."""
         return [
-            f"continuo/{world}/viz/actor/*/pose",
-            f"continuo/{world}/viz/conductor/membership/status",
+            f"continuo_viz/{world}/actor/*/pose",
+            f"continuo_viz/{world}/conductor/membership/status",
         ]
 
     def _on_sample(self, sample: Any) -> None:

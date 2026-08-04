@@ -139,7 +139,7 @@ pub enum MembershipChange {
 // send it over.
 pub fn membership_key(world_name: &str) -> KeyExpr {
     // Return the world's applied-membership status key.
-    KeyExpr::new(format!("continuo/{world_name}/conductor/membership/status"))
+    KeyExpr::new_rooted(format!("{world_name}/conductor/membership/status"))
         .expect("valid membership key")
 }
 

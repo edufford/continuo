@@ -8,9 +8,9 @@
 //!   cargo run -p continuo-examples --features viz --example traffic_viz -- 30
 //!
 //! Then, in another terminal, anything subscribing to
-//! `continuo/demo/viz/**` will see it. Poses arrive on
-//! `continuo/demo/viz/actor/{name}/pose`, and joins and leaves on
-//! `continuo/demo/viz/conductor/membership/status`. Each sample carries the
+//! `continuo_viz/demo/**` will see it. Poses arrive on
+//! `continuo_viz/demo/actor/{name}/pose`, and joins and leaves on
+//! `continuo_viz/demo/conductor/membership/status`. Each sample carries the
 //! sim time, publisher, and sequence number as a Zenoh attachment, in the
 //! same shape a recorded event log holds, so one parser reads both.
 //!
@@ -53,7 +53,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     traffic_world::setup_live_traffic_scenario(&mut conductor)?;
 
     println!(
-        "publishing to continuo/{}/viz/** ; start a viewer to watch",
+        "publishing to continuo_viz/{}/** ; start a viewer to watch",
         conductor.world_name()
     );
 
