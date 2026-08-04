@@ -12,7 +12,7 @@ use continuo_conductor::record::{LogEvent, RecordedMessage};
 use continuo_core::SimTime;
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
-use tracing::warn;
+use tracing::{debug, warn};
 
 /// What kind of thing a payload is, so a reader never has to infer it.
 ///
@@ -156,6 +156,8 @@ impl<W: Write + Send> VizSink for WriterSink<W> {
             MessageType::SimData => match log_line(metadata, payload) {
                 Some(line) => line,
                 None => {
+                    // `log_line` has already said which way it failed, since
+                    // it is the only one that knows.
                     self.num_failures += 1;
 
                     // Return without writing; a line that cannot be assembled
@@ -199,10 +201,40 @@ impl<W: Write + Send> VizSink for WriterSink<W> {
 /// Takes both halves by value, so the payload buffer and the metadata's
 /// strings move into the line rather than being copied into it.
 ///
-/// Returns `None` for a payload that is not JSON text. Not expected, and not
-/// worth taking the worker thread down over.
+/// Returns `None` for a payload that is not JSON text, after logging which way
+/// it failed. Not expected, and not worth taking the worker thread down over.
 fn log_line(metadata: Metadata, payload: Vec<u8>) -> Option<Vec<u8>> {
-    let payload = RawValue::from_string(String::from_utf8(payload).ok()?).ok()?;
+    // At `debug` rather than `warn` because a destination that fails does so
+    // on every frame, and the bridge is deliberately fed at full message rate.
+    // `WriterSink::flush` reports the total once.
+    let log_unusable = |reason: &str, error: &dyn std::fmt::Display| {
+        debug!(
+            target: "continuo::viz",
+            key = %metadata.key,
+            publisher = %metadata.publisher,
+            seq = metadata.seq,
+            %error,
+            "{reason}; cannot assemble a log line for it"
+        );
+    };
+
+    let text = match String::from_utf8(payload) {
+        Ok(text) => text,
+        Err(error) => {
+            log_unusable("payload is not UTF-8", &error);
+
+            // Return nothing; the caller counts this like any other failure.
+            return None;
+        }
+    };
+    let payload = match RawValue::from_string(text) {
+        Ok(payload) => payload,
+        Err(error) => {
+            log_unusable("payload is not valid JSON", &error);
+            return None;
+        }
+    };
+
     let event = LogEvent::Msg(RecordedMessage {
         time: metadata.sim_time,
         key: metadata.key,

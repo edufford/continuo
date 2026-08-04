@@ -9,7 +9,7 @@
 //! it is, so a subscriber reads the same fields off everything.
 
 use thiserror::Error;
-use tracing::warn;
+use tracing::{debug, warn};
 use zenoh::{Session, Wait};
 
 /// Why a [`ZenohSink`] could not be opened.
@@ -83,7 +83,15 @@ impl VizSink for ZenohSink {
             .put(key, payload)
             .attachment(metadata.to_bytes())
             .wait();
-        if published.is_err() {
+        if let Err(error) = published {
+            debug!(
+                target: "continuo::viz",
+                key = %metadata.key,
+                publisher = %metadata.publisher,
+                seq = metadata.seq,
+                %error,
+                "publishing a viewer frame failed"
+            );
             self.num_failures += 1;
         }
     }
