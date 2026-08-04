@@ -62,6 +62,13 @@ pub struct TickFingerprint {
 /// embedded as raw JSON so the log stays readable.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RecordedMessage {
+    // TODO: rename to `sim_time`. This is the only timestamped log line that
+    // does not already say so, since `tick` and the `observed` lines do, as
+    // does the viz bridge's wire metadata, which leaves the Python viewer
+    // mapping one name onto the other on the way in. Renaming changes the log
+    // format and invalidates existing recordings, so it belongs with the next
+    // version bump. `Message::time` upstream in `continuo-core` carries the
+    // same name but is never serialized, so that half is free whenever.
     pub time: SimTime,
     pub key: String,
     pub publisher: String,

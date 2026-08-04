@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use continuo_conductor::{ConductorConfig, MembershipChange, Pacing, RecordedJoin, RecordedLeave};
 use continuo_core::{ComponentPath, KeyExpr, Message, SimTime};
-use continuo_viz_bridge::{VizBridge, VizFrame, VizSink, WriterSink};
+use continuo_viz_bridge::{MessageType, Metadata, VizBridge, VizFrame, VizSink, WriterSink};
 
 /// Collects frames in memory so a test can assert on what was delivered.
 ///
@@ -83,7 +83,7 @@ fn pose_message(seq: u64) -> Message {
 }
 
 #[test]
-fn a_message_is_framed_as_payload_plus_provenance() {
+fn a_message_is_framed_as_payload_plus_metadata() {
     let sink = CollectingSink::new();
     let bridge = VizBridge::new(&config(), sink.clone());
     let mut tap = bridge.message_callback();
@@ -104,32 +104,26 @@ fn a_message_is_framed_as_payload_plus_provenance() {
     // The metadata carries what a raw payload cannot, and *only* that. The
     // original key is not lost: it rides here, which is where a viewer reads
     // it from for every source.
-    let meta = frame
-        .meta
-        .as_ref()
-        .expect("a message frame carries metadata");
     let sent: serde_json::Value =
-        serde_json::from_slice(&meta.to_bytes()).expect("metadata is JSON");
+        serde_json::from_slice(&frame.metadata.to_bytes()).expect("metadata is JSON");
+    assert_eq!(sent["message_type"], "sim_data");
     assert_eq!(sent["key"], "continuo/demo/actor/car1/pose");
     assert_eq!(sent["publisher"], "car1/physics");
     assert_eq!(sent["seq"], 7);
-    assert_eq!(sent["time"], 0.5);
+    assert_eq!(sent["sim_time"], 0.5);
 
-    // The payload travels once. Repeating it inside the metadata would double
-    // every byte on the wire, and no native publisher at milestone 7 would
-    // nest its own payload inside its own provenance, so a viewer written
-    // against that shape would need changing at exactly the moment this
-    // design promises it will not.
+    // The payload travels once. Repeating it inside the metadata would put
+    // every byte on the wire twice.
     assert_eq!(
         sent.as_object().expect("metadata is an object").len(),
-        4,
-        "metadata carries time, key, publisher, and seq, and nothing else"
+        5,
+        "metadata carries the message type, sim time, key, publisher, and seq"
     );
 }
 
 #[test]
 fn a_writer_sink_reassembles_the_event_logs_msg_line() {
-    // The other half of splitting payload from provenance: a sink that wants
+    // The other half of splitting payload from metadata: a sink that wants
     // one self-contained line puts them back together, and what it writes has
     // to stay byte-compatible with what `Recorder` writes, or a bridge-written
     // file and a recorded log stop being read by the same parser.
@@ -157,6 +151,76 @@ fn a_writer_sink_reassembles_the_event_logs_msg_line() {
     );
 }
 
+/// A frame carrying whatever payload bytes are given, so a test can hand a
+/// sink something no component would ever publish.
+fn sim_data_frame(payload: Vec<u8>) -> VizFrame {
+    VizFrame {
+        key: "continuo_viz/demo/actor/car1/pose".into(),
+        payload,
+        metadata: Metadata {
+            message_type: MessageType::SimData,
+            sim_time: SimTime::from_millis(500),
+            key: "continuo/demo/actor/car1/pose".into(),
+            publisher: "car1/physics".into(),
+            seq: 7,
+        },
+    }
+}
+
+#[test]
+fn a_payload_that_is_not_json_text_is_counted_and_not_written() {
+    // Every payload is canonical JSON today, so this is an invariant rather
+    // than an expected case. It is still the wrong place to assert one: the
+    // worker thread would take the whole bridge down over a frame nobody would
+    // miss, so a line that cannot be assembled is counted like any other
+    // delivery failure and nothing is written.
+    let written = Arc::new(Mutex::new(Vec::new()));
+    let mut sink = WriterSink::new(SharedBuffer(written.clone()));
+
+    // Invalid UTF-8, and valid UTF-8 that is not JSON: the two ways the
+    // assembly can fail, which `log_line` distinguishes when it reports them.
+    sink.deliver(sim_data_frame(vec![0xff, 0xfe]));
+    sink.deliver(sim_data_frame(b"not json at all".to_vec()));
+
+    assert_eq!(sink.num_failures(), 2);
+    assert!(
+        written
+            .lock()
+            .expect("buffer mutex is never poisoned")
+            .is_empty(),
+        "a frame that cannot be assembled must not write a partial line"
+    );
+}
+
+#[test]
+fn a_writer_sink_passes_a_membership_line_through_unwrapped() {
+    // The other branch of the same dispatch: a notification's payload is
+    // already a complete log line, so wrapping it in a `msg` envelope would
+    // produce a file no log reader could make sense of.
+    let written = Arc::new(Mutex::new(Vec::new()));
+    let bridge = VizBridge::new(&config(), WriterSink::new(SharedBuffer(written.clone())));
+    let mut tap = bridge.membership_callback();
+    tap(&MembershipChange::Left(RecordedLeave {
+        path: "traffic7/physics".into(),
+        leaves_at: SimTime::from_secs(9),
+    }));
+    bridge.finish();
+
+    let bytes = written
+        .lock()
+        .expect("buffer mutex is never poisoned")
+        .clone();
+    let text = String::from_utf8(bytes).expect("a written line is UTF-8");
+    let line: serde_json::Value = serde_json::from_str(text.trim()).expect("the line is JSON");
+
+    assert_eq!(line["leave"]["path"], "traffic7/physics");
+    assert_eq!(line["leave"]["leaves_at"], 9.0);
+    assert!(
+        line.get("msg").is_none(),
+        "a notification is a `leave` line, not a `msg` carrying one"
+    );
+}
+
 #[test]
 fn membership_changes_are_framed_as_join_and_leave_lines() {
     let sink = CollectingSink::new();
@@ -174,19 +238,33 @@ fn membership_changes_are_framed_as_join_and_leave_lines() {
 
     let frames = sink.frames();
     assert_eq!(frames.len(), 2);
+    // Every frame carries metadata, whatever kind it is, so a subscriber reads
+    // the same fields off everything and switches on the stated type rather
+    // than inferring one from which fields turned up.
     for frame in &frames {
         assert_eq!(
             frame.key, "continuo_viz/demo/conductor/membership/status",
             "membership goes down the same side channel as everything else"
         );
-        // A notification's payload is the complete log line, with nothing
-        // attached, because naming the path and the instant is all there is
-        // to say. Metadata would only repeat it.
-        assert!(
-            frame.meta.is_none(),
-            "a self-describing notification carries no separate provenance"
+        assert_eq!(
+            frame.metadata.message_type,
+            MessageType::MembershipStatus,
+            "the kind is stated, not deduced"
+        );
+        assert_eq!(frame.metadata.publisher, "conductor");
+        assert_eq!(
+            frame.metadata.key,
+            "continuo/demo/conductor/membership/status"
         );
     }
+
+    // Sim time is the instant the change takes effect. `seq` is a stub that
+    // counts notifications, standing in until the conductor stamps a real one
+    // at milestone 7.
+    assert_eq!(frames[0].metadata.sim_time, SimTime::from_millis(250));
+    assert_eq!(frames[1].metadata.sim_time, SimTime::from_secs(9));
+    assert_eq!(frames[0].metadata.seq, 0);
+    assert_eq!(frames[1].metadata.seq, 1);
 
     let join: serde_json::Value = serde_json::from_slice(&frames[0].payload).expect("join is JSON");
     assert_eq!(join["join"]["path"], "traffic7/physics");

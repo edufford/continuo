@@ -43,7 +43,7 @@ def read_log(path: Path | str) -> Iterator[Event]:
 
 def event_time(event: Event) -> float:
     """The sim instant an event belongs at, for pacing."""
-    for attribute in ("time", "first_due", "leaves_at"):
+    for attribute in ("sim_time", "first_due", "leaves_at"):
         instant = getattr(event, attribute, None)
         if instant is not None:
             return float(instant)

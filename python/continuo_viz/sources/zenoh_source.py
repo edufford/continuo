@@ -16,6 +16,7 @@ from __future__ import annotations
 from collections import deque
 from typing import Any
 
+from ..protocol import VIZ_KEY_ROOT
 from ..record import Event, event_from_sample
 
 # How many samples may wait between frames before the oldest are discarded.
@@ -60,8 +61,8 @@ class ZenohSource:
     def key_expressions(world: str) -> list[str]:
         """What a viewer subscribes to, and nothing more."""
         return [
-            f"continuo_viz/{world}/actor/*/pose",
-            f"continuo_viz/{world}/conductor/membership/status",
+            f"{VIZ_KEY_ROOT}/{world}/actor/*/pose",
+            f"{VIZ_KEY_ROOT}/{world}/conductor/membership/status",
         ]
 
     def _on_sample(self, sample: Any) -> None:

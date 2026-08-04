@@ -82,7 +82,7 @@ class Scene:
 
     def _apply_message(self, message: Message) -> None:
         self.messages_seen += 1
-        self.sim_time = max(self.sim_time, message.time)
+        self.sim_time = max(self.sim_time, message.sim_time)
 
         split = actor_signal(message.key)
         if split is None:
@@ -115,7 +115,7 @@ class Scene:
                 name=name,
                 pose_source=message.publisher,
                 pose=pose,
-                updated_at=message.time,
+                updated_at=message.sim_time,
             )
             self.actors_seen += 1
             return
@@ -123,7 +123,7 @@ class Scene:
         # A second publisher on the same actor's key does not steal ownership,
         # so lifetime stays bound to whoever established the actor.
         existing.pose = pose
-        existing.updated_at = message.time
+        existing.updated_at = message.sim_time
 
     def _apply_leave(self, leave: Leave) -> None:
         self.departed.add(leave.path)

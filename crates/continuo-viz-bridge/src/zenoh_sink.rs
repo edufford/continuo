@@ -4,14 +4,9 @@
 //! is observed and how it is framed, lives in the default build, so the
 //! schema is exercised by tests that never link Zenoh.
 //!
-//! A frame is published with the component's payload bytes unchanged, and the
-//! sim time, original key, publisher, and sequence number ride along as a
-//! Zenoh attachment. That is what makes the viewer final: at milestone 7
-//! components publish those same payloads themselves, and only the
-//! attachment's provenance changes.
-//!
-//! A conductor notification carries no attachment, because its payload is
-//! already a complete event-log line.
+//! A frame is published with its payload bytes unchanged, and the metadata
+//! rides along as a Zenoh attachment. Every frame carries both, whatever kind
+//! it is, so a subscriber reads the same fields off everything.
 
 use thiserror::Error;
 use tracing::warn;
@@ -78,12 +73,16 @@ impl VizSink for ZenohSink {
     fn deliver(&mut self, frame: VizFrame) {
         // Taking the frame by value means the payload moves straight into
         // `put`, so the bytes are copied once into the frame and never again.
-        let VizFrame { key, payload, meta } = frame;
-        let put = self.session.put(key, payload);
-        let published = match meta {
-            Some(meta) => put.attachment(meta.to_bytes()).wait(),
-            None => put.wait(),
-        };
+        let VizFrame {
+            key,
+            payload,
+            metadata,
+        } = frame;
+        let published = self
+            .session
+            .put(key, payload)
+            .attachment(metadata.to_bytes())
+            .wait();
         if published.is_err() {
             self.num_failures += 1;
         }

@@ -41,7 +41,7 @@ def pose_message(
     actor: str, x: float, time: float = 0.0, part: str = "physics"
 ) -> Message:
     return Message(
-        time=time,
+        sim_time=time,
         key=f"continuo/demo/actor/{actor}/pose",
         publisher=f"{actor}/{part}",
         seq=0,
@@ -111,7 +111,7 @@ def test_world_level_components_are_never_drawn():
     scene.apply(Join(path="traffic_spawner", first_due=0.0))
     scene.apply(
         Message(
-            time=1.0,
+            sim_time=1.0,
             key="continuo/demo/conductor/membership/status",
             publisher="conductor",
             seq=0,
@@ -126,7 +126,7 @@ def test_commands_are_not_poses():
     scene = Scene()
     scene.apply(
         Message(
-            time=1.0,
+            sim_time=1.0,
             key="continuo/demo/actor/ego/cmd",
             publisher="ego/controller",
             seq=0,
@@ -176,8 +176,8 @@ def test_a_malformed_payload_is_ignored_rather_than_fatal():
 
 
 def test_a_log_line_and_a_live_sample_parse_to_the_same_event():
-    # The whole point of splitting payload from provenance: two arrangements
-    # of the same information, one record type, so the scene cannot tell which
+    # The whole point of splitting payload from metadata: two arrangements of
+    # the same information, one record type, so the scene cannot tell which
     # source is attached.
     payload = pose_payload(1.5)
     line = json.dumps(
@@ -193,7 +193,8 @@ def test_a_log_line_and_a_live_sample_parse_to_the_same_event():
     )
     attachment = json.dumps(
         {
-            "time": 0.5,
+            "message_type": "sim_data",
+            "sim_time": 0.5,
             "key": "continuo/demo/actor/car1/pose",
             "publisher": "car1/physics",
             "seq": 7,
@@ -206,12 +207,51 @@ def test_a_log_line_and_a_live_sample_parse_to_the_same_event():
     assert from_log == from_live
 
 
-def test_a_sample_without_an_attachment_is_a_notification():
-    line = json.dumps({"leave": {"path": "traffic1/physics", "leaves_at": 11.5}})
+def test_a_membership_sample_is_identified_by_its_stated_type():
+    # Not by its key, and not by having no metadata. The type is on the wire
+    # so that a key moving or a field being added cannot change how a sample
+    # is read.
+    payload = json.dumps({"leave": {"path": "traffic1/physics", "leaves_at": 11.5}})
+    attachment = json.dumps(
+        {
+            "message_type": "membership_status",
+            "sim_time": 11.5,
+            "key": "continuo/demo/conductor/membership/status",
+            "publisher": "conductor",
+            "seq": 3,
+        }
+    )
 
-    assert event_from_sample(line.encode(), None) == Leave(
+    assert event_from_sample(payload.encode(), attachment.encode()) == Leave(
         path="traffic1/physics", leaves_at=11.5
     )
+
+
+def test_a_message_type_this_viewer_does_not_know_is_ignored():
+    # M7 adds the tick protocol and the join and leave requests as further
+    # types. A viewer that predates them must skip them, not read them as a
+    # pose: falling through to `Message` would be the same mistake as
+    # inferring the kind from which fields turned up.
+    payload = json.dumps({"tick": 1})
+    attachment = json.dumps(
+        {
+            "message_type": "tick_start",
+            "sim_time": 0.5,
+            "key": "continuo/demo/tick",
+            "publisher": "conductor",
+            "seq": 0,
+        }
+    )
+
+    assert event_from_sample(payload.encode(), attachment.encode()) is None
+
+
+def test_a_sample_with_no_metadata_is_ignored():
+    # Every publisher attaches metadata, so one that did not is something this
+    # viewer has no contract with. Ignoring it beats guessing.
+    line = json.dumps({"leave": {"path": "traffic1/physics", "leaves_at": 11.5}})
+
+    assert event_from_sample(line.encode(), None) is None
 
 
 def test_lines_the_viewer_has_no_use_for_are_skipped():

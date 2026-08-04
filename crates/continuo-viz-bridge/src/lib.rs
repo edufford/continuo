@@ -29,7 +29,7 @@
 //! the sim time, publisher, and sequence number.
 //!
 //! A payload crosses the wire once. The bridge frames a message as its bytes
-//! plus [`MessageMeta`] and hands both to the sink, which decides what to do
+//! plus [`Metadata`] and hands both to the sink, which decides what to do
 //! with them: `ZenohSink` publishes the payload and attaches the metadata,
 //! while `WriterSink` reassembles the two into the event log's `msg` line.
 //! Serializing in the sink rather than in the tap also keeps that work off the
@@ -48,11 +48,11 @@ use std::time::{Duration, Instant};
 
 use continuo_conductor::record::LogEvent;
 use continuo_conductor::{ConductorConfig, MembershipChange, membership_key};
-use continuo_core::{KEY_ROOT, Message};
+use continuo_core::{KEY_ROOT, Message, SimTime};
 use continuo_transport::{MonitorTransport, Transport};
 use tracing::{debug, warn};
 
-pub use sink::{MessageMeta, VizFrame, VizSink, WriterSink};
+pub use sink::{MessageType, Metadata, VizFrame, VizSink, WriterSink};
 
 #[cfg(feature = "zenoh")]
 pub use zenoh_sink::{ZenohSink, ZenohSinkError};
@@ -84,6 +84,13 @@ const WORKER_THREAD_NAME: &str = "continuo-viz";
 /// Namespaced to this project rather than a bare `viz/`, which on a Zenoh
 /// network shared with anything else would be claiming a very general name.
 pub const VIZ_KEY_ROOT: &str = "continuo_viz";
+
+/// Publisher name on membership metadata.
+// TODO(M7): the conductor applies the change, so it is named as the publisher,
+// but the bridge is what puts the bytes on the wire today. When membership
+// status crosses the transport the conductor publishes it itself and stamps
+// its own name, and this goes away with the sequence counter beside it.
+const MEMBERSHIP_PUBLISHER: &str = "conductor";
 
 /// How long [`VizBridge::shutdown`] waits for the worker before detaching it.
 ///
@@ -192,12 +199,13 @@ impl VizBridge {
             let frame = VizFrame {
                 key: viz_key(m.key.as_str()),
                 payload: m.payload.clone(),
-                meta: Some(MessageMeta {
-                    time: m.time,
+                metadata: Metadata {
+                    message_type: MessageType::SimData,
+                    sim_time: m.time,
                     key: m.key.to_string(),
                     publisher: m.publisher.to_string(),
                     seq: m.seq,
-                }),
+                },
             };
             try_queue(&tx, &dropped_frames, frame);
         }
@@ -208,17 +216,31 @@ impl VizBridge {
     pub fn membership_callback(&self) -> impl FnMut(&MembershipChange) + Send + 'static {
         let tx = self.tx.clone();
         let dropped_frames = self.dropped_frames.clone();
-        let key = viz_key(membership_key(&self.world_name).as_str());
+        let published_key = membership_key(&self.world_name).to_string();
+        let frame_key = viz_key(&published_key);
+
+        // A stub, so membership metadata has the same shape as everything
+        // else. It counts notifications and nothing more: a real `seq` is
+        // stamped by the conductor, decides `(publisher, seq)` delivery order,
+        // and feeds the tick hash, and none of that is true here.
+        // TODO(M7): membership status crosses the transport, so the conductor
+        // stamps it centrally like any other publication and this goes away.
+        let mut seq: u64 = 0;
 
         // Return the tap, holding its own handle on the queue.
         move |change: &MembershipChange| {
             let frame = VizFrame {
-                key: key.clone(),
+                key: frame_key.clone(),
                 payload: membership_line(change),
-                // Self-describing already: a join or leave line names the
-                // path and the instant, which is everything there is to say.
-                meta: None,
+                metadata: Metadata {
+                    message_type: MessageType::MembershipStatus,
+                    sim_time: membership_takes_effect_at(change),
+                    key: published_key.clone(),
+                    publisher: MEMBERSHIP_PUBLISHER.to_string(),
+                    seq,
+                },
             };
+            seq += 1;
             try_queue(&tx, &dropped_frames, frame);
         }
     }
@@ -312,6 +334,23 @@ fn try_queue(tx: &SyncSender<VizFrame>, dropped_frames: &AtomicU64, frame: VizFr
     }
 }
 
+/// The instant a membership change takes effect, which is what its metadata
+/// reports as the sim time.
+///
+/// The *declared* instant, and deliberately not the one the change was
+/// applied at. "Applied" is the moment the conductor processed the request,
+/// which `RecordedJoin` and `RecordedLeave` refuse to record because it varies
+/// with delivery. The declared instant is chosen by whoever asked, so it is
+/// stable however early or late the request arrived.
+fn membership_takes_effect_at(change: &MembershipChange) -> SimTime {
+    // Return the instant the newcomer first steps, or the first instant the
+    // departing component does not.
+    match change {
+        MembershipChange::Joined(join) => join.first_due,
+        MembershipChange::Left(leave) => leave.leaves_at,
+    }
+}
+
 /// Frames a membership change as the event log's `join` or `leave` line.
 ///
 /// Unlike a message, this is serialized here rather than in the sink, because
@@ -357,17 +396,6 @@ mod tests {
     }
 
     #[test]
-    fn a_world_whose_name_extends_the_root_is_not_mistaken_for_it() {
-        // The separator is required when stripping, so `continuoX` is a key
-        // outside the root and is nested whole, rather than having `continuo`
-        // shaved off it to leave `X/demo/...`.
-        assert_eq!(
-            viz_key("continuoX/demo/actor/car1/pose"),
-            "continuo_viz/continuoX/demo/actor/car1/pose"
-        );
-    }
-
-    #[test]
     fn a_relayed_key_can_never_equal_a_published_one() {
         // The property the whole scheme rests on: components publish under
         // `continuo/`, the side channel is rooted outside it, so a message
@@ -389,5 +417,16 @@ mod tests {
             assert_eq!(root, VIZ_KEY_ROOT);
             assert_ne!(root, KEY_ROOT);
         }
+    }
+
+    #[test]
+    fn a_world_whose_name_extends_the_root_is_not_mistaken_for_it() {
+        // The separator is required when stripping, so `continuoX` is a key
+        // outside the root and is nested whole, rather than having `continuo`
+        // shaved off it to leave `X/demo/...`.
+        assert_eq!(
+            viz_key("continuoX/demo/actor/car1/pose"),
+            "continuo_viz/continuoX/demo/actor/car1/pose"
+        );
     }
 }

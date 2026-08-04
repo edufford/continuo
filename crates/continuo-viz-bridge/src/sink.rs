@@ -14,64 +14,81 @@ use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 use tracing::warn;
 
-/// Provenance a raw payload does not carry: the sim instant, the key it was
-/// published on, who published it, and their sequence number.
+/// What kind of thing a payload is, so a reader never has to infer it.
 ///
-/// This is [`RecordedMessage`] *without* the payload, because a frame already
-/// carries the payload bytes and repeating them here would put every byte on
-/// the wire twice. A sink that wants a self-contained event-log line
-/// reassembles the two, which is what [`WriterSink`] does.
+/// Stated rather than deduced from the key, which would make every consumer
+/// re-implement the same string matching and break the moment a key moves.
 ///
-/// Keeping it separate is also what makes a viewer final across milestone 7.
-/// Once components publish these keys natively, a payload is just a payload
-/// with provenance alongside it, and nothing native would ever nest its own
-/// payload inside its own metadata. A subscriber written against this shape
-/// keeps working when the bridge stops being in the middle.
+/// The axis is what produced the payload: the simulated world, or the
+/// conductor running it.
+// TODO(M7): the tick protocol and the join and leave *requests* land here as
+// further variants when they cross the wire, and this leaves the bridge with
+// [`Metadata`], whose note explains where to and why.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MessageType {
+    /// A component publishing what it simulated, such as a pose or a command.
+    SimData,
+    /// The conductor announcing a membership change it has applied.
+    MembershipStatus,
+}
+
+/// What a payload does not say about itself: what kind of thing it is, when it
+/// happened, what it was published on, by whom, and where it sits in that
+/// publisher's sequence.
+///
+/// Every frame carries one, whatever kind of payload it is, so a subscriber
+/// reads the same fields off everything and switches on `message_type`.
+// TODO(M7): this and [`MessageType`] move out of the bridge together. They are
+// wire vocabulary rather than anything a viewer owns, and live here only
+// because the bridge is currently the one thing putting these on a wire.
+// `membership_key` in `continuo-conductor` carries the same note and names the
+// destination, `continuo-core`, so all of it should move at once rather than
+// as a series of half-moves.
+//
+// Whether this survives as a type of its own depends on `Message`, which
+// already carries sim time, publisher, and seq for *all* traffic and has to
+// get them across somehow once components publish remotely. If it gains a
+// metadata section, that subsumes this and a sink stops attaching one.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct MessageMeta {
-    pub time: SimTime,
+pub struct Metadata {
+    pub message_type: MessageType,
+    pub sim_time: SimTime,
+    /// The key the payload was published on, before relaying onto the viewer
+    /// side channel. This is the one a subscriber should read.
     pub key: String,
     pub publisher: String,
     pub seq: u64,
 }
 
-impl MessageMeta {
+impl Metadata {
     /// The bytes a sink sends alongside the payload.
     ///
-    /// Deliberately untagged, unlike an event-log line. A log line needs
-    /// `{"msg": ...}` because lines of every kind share one file, whereas this
-    /// only ever travels attached to a message, so a tag would be ceremony a
-    /// native publisher would not repeat.
+    /// Untagged, unlike an event-log line, which needs `{"msg": ...}` only
+    /// because lines of every kind share one file.
     pub fn to_bytes(&self) -> Vec<u8> {
         // Return the serialized metadata; every field is plain data, so the
         // only way this fails is a bug in serde itself.
-        serde_json::to_vec(self).expect("message metadata always serializes")
+        serde_json::to_vec(self).expect("metadata always serializes")
     }
 }
 
 /// One framed event on its way to a viewer.
 ///
 /// `key` routes it (a Zenoh publication key, or just a label for a writer) and
-/// `payload` is the bytes a subscriber receives, byte-identical to what the
-/// component published.
+/// `payload` is the bytes a subscriber receives, byte-identical to what was
+/// published.
 ///
 /// Framing stops there. Turning these into whatever shape a destination wants
 /// is the sink's job, on the worker thread, because everything upstream of the
 /// queue runs on the thread stepping the world.
-// TODO(M7): `meta` is a placeholder, not a settled wire format. `Message`
-// carries time, publisher, and seq for *all* traffic, and those have to cross
-// the wire somehow once components publish remotely. Whatever is chosen there
-// should subsume this: if `Message` gains a metadata section of its own, a
-// sink stops needing to attach one.
+// TODO(M7): `metadata` is a first cut, not a settled wire format. See
+// [`Metadata`] for where it goes and what may replace it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct VizFrame {
     pub key: String,
     pub payload: Vec<u8>,
-    /// Provenance for a published message.
-    ///
-    /// `None` for a conductor notification, whose payload is already a
-    /// complete event-log line and needs nothing alongside it.
-    pub meta: Option<MessageMeta>,
+    pub metadata: Metadata,
 }
 
 /// Somewhere framed events can be delivered.
@@ -129,9 +146,14 @@ impl<W: Write + Send> WriterSink<W> {
 
 impl<W: Write + Send> VizSink for WriterSink<W> {
     fn deliver(&mut self, frame: VizFrame) {
-        let VizFrame { payload, meta, .. } = frame;
-        let line = match meta {
-            Some(meta) => match log_line(&meta, &payload) {
+        let VizFrame {
+            payload, metadata, ..
+        } = frame;
+        // A membership notification's payload is already a complete log line;
+        // a component's payload is bare and has to be wrapped in one.
+        let line = match metadata.message_type {
+            MessageType::MembershipStatus => payload,
+            MessageType::SimData => match log_line(metadata, payload) {
                 Some(line) => line,
                 None => {
                     self.num_failures += 1;
@@ -141,8 +163,6 @@ impl<W: Write + Send> VizSink for WriterSink<W> {
                     return;
                 }
             },
-            // A conductor notification is already a complete line.
-            None => payload,
         };
 
         // A viewer sink never propagates an error into the run, so a failed
@@ -172,24 +192,22 @@ impl<W: Write + Send> VizSink for WriterSink<W> {
 
 /// Rebuilds the event log's `msg` line from a frame's two halves.
 ///
-/// This is where the schema coupling lives, and it is load-bearing rather than
-/// decorative: the line is built by constructing [`RecordedMessage`] itself, so
-/// a field added there stops this compiling until it is carried in
-/// [`MessageMeta`] too. `tests/framing.rs` pins the resulting *serde* shape,
-/// which the type system cannot.
+/// Built by constructing [`RecordedMessage`] itself, so a field added there
+/// stops this compiling until [`Metadata`] carries it too. `tests/framing.rs`
+/// pins the serde shape, which the type system cannot.
 ///
-/// Returns `None` for a payload that is not valid JSON text. Every payload is
-/// canonical JSON today, so this is an invariant rather than an expected case,
-/// but a viewer is the wrong place to assert one: the worker thread would take
-/// the whole bridge down with it, over a frame nobody would miss.
-fn log_line(meta: &MessageMeta, payload: &[u8]) -> Option<Vec<u8>> {
-    let text = std::str::from_utf8(payload).ok()?;
-    let payload = RawValue::from_string(text.to_string()).ok()?;
+/// Takes both halves by value, so the payload buffer and the metadata's
+/// strings move into the line rather than being copied into it.
+///
+/// Returns `None` for a payload that is not JSON text. Not expected, and not
+/// worth taking the worker thread down over.
+fn log_line(metadata: Metadata, payload: Vec<u8>) -> Option<Vec<u8>> {
+    let payload = RawValue::from_string(String::from_utf8(payload).ok()?).ok()?;
     let event = LogEvent::Msg(RecordedMessage {
-        time: meta.time,
-        key: meta.key.clone(),
-        publisher: meta.publisher.clone(),
-        seq: meta.seq,
+        time: metadata.sim_time,
+        key: metadata.key,
+        publisher: metadata.publisher,
+        seq: metadata.seq,
         payload,
     });
 
