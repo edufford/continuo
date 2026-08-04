@@ -33,6 +33,12 @@ pub const KEY_ROOT: &str = "continuo";
 pub struct KeyExpr(String);
 
 impl KeyExpr {
+    /// Validates a **complete** key expression, exactly as given.
+    ///
+    /// Nothing is added: this is also the deserialization path, where a key
+    /// arrives already whole. For building one under the simulation root, use
+    /// [`Self::new_rooted`], which is what almost every publisher wants and
+    /// which saves spelling [`KEY_ROOT`] out.
     pub fn new(expr: impl Into<String>) -> Result<Self, CoreError> {
         let expr = expr.into();
         let err = |reason: &str| CoreError::InvalidKeyExpr {
