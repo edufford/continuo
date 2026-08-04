@@ -7,7 +7,8 @@
 //! feature.
 
 use std::io::Write;
-use std::sync::{Arc, Mutex};
+
+use tracing::warn;
 
 /// One framed event on its way to a viewer.
 ///
@@ -16,6 +17,11 @@ use std::sync::{Arc, Mutex};
 /// sim time, publisher, and sequence number that a raw payload does not
 /// contain, so a sink can attach it out of band and leave the payload bytes
 /// byte-identical to what the component published.
+// TODO(M7): the metadata split is a placeholder, not a settled wire format.
+// `Message` carries time, publisher, and seq for *all* traffic, and those
+// have to cross the wire somehow once components publish remotely. Whatever
+// is chosen there should subsume this: if `Message` gains a metadata section
+// of its own, a sink stops needing to attach one.
 #[derive(Debug, Clone, PartialEq)]
 pub struct VizFrame {
     pub key: String,
@@ -30,9 +36,22 @@ pub struct VizFrame {
 /// problem, so a sink swallows its own failures and reports them by counting
 /// rather than by returning.
 pub trait VizSink: Send {
-    fn deliver(&mut self, frame: &VizFrame);
+    /// Hands one frame to whatever is downstream.
+    ///
+    /// Called on the bridge's worker thread, never on the thread stepping the
+    /// world, so taking a while here costs frames rather than sim time. Takes
+    /// the frame **by value** because the worker has no use for it afterwards
+    /// and a sink usually wants to move the bytes onward: borrowing would
+    /// force every implementation to clone what it was given.
+    ///
+    /// Failures are the sink's own to handle. Count them and report at
+    /// [`Self::flush`] rather than logging per frame, since a broken
+    /// destination fails on *every* frame and the bridge is deliberately fed
+    /// at full message rate.
+    fn deliver(&mut self, frame: VizFrame);
 
-    /// Called once when the run is finished, for sinks that buffer.
+    /// Called once when the run is finished, for sinks that buffer or that
+    /// have failures worth summarizing.
     fn flush(&mut self) {}
 }
 
@@ -43,53 +62,49 @@ pub trait VizSink: Send {
 /// written by `Recorder` are read by the same parser.
 pub struct WriterSink<W: Write + Send> {
     writer: W,
+    /// Counted rather than propagated, and reported once at flush. A failing
+    /// writer fails on every frame, so logging each one would be its own
+    /// denial of service.
+    num_failures: u64,
 }
 
 impl<W: Write + Send> WriterSink<W> {
     pub fn new(writer: W) -> Self {
-        WriterSink { writer }
+        WriterSink {
+            writer,
+            num_failures: 0,
+        }
+    }
+
+    /// How many frames could not be written.
+    pub fn num_failures(&self) -> u64 {
+        self.num_failures
     }
 }
 
 impl<W: Write + Send> VizSink for WriterSink<W> {
-    fn deliver(&mut self, frame: &VizFrame) {
+    fn deliver(&mut self, frame: VizFrame) {
         // A viewer sink never propagates an error into the run, so a failed
-        // write is dropped as deliberately as a full channel is.
-        let _ = self.writer.write_all(&frame.metadata);
-        let _ = self.writer.write_all(b"\n");
+        // write is counted as deliberately as a full channel is.
+        let wrote = self
+            .writer
+            .write_all(&frame.metadata)
+            .and_then(|()| self.writer.write_all(b"\n"));
+        if wrote.is_err() {
+            self.num_failures += 1;
+        }
     }
 
     fn flush(&mut self) {
-        let _ = self.writer.flush();
-    }
-}
-
-/// Collects frames in memory, for tests that assert on what was observed.
-#[derive(Clone, Default)]
-pub struct CollectingSink {
-    frames: Arc<Mutex<Vec<VizFrame>>>,
-}
-
-impl CollectingSink {
-    pub fn new() -> Self {
-        CollectingSink::default()
-    }
-
-    /// Every frame delivered so far.
-    pub fn frames(&self) -> Vec<VizFrame> {
-        // Return a snapshot, so a caller can assert without holding the lock.
-        self.frames
-            .lock()
-            .expect("collecting sink mutex is never poisoned")
-            .clone()
-    }
-}
-
-impl VizSink for CollectingSink {
-    fn deliver(&mut self, frame: &VizFrame) {
-        self.frames
-            .lock()
-            .expect("collecting sink mutex is never poisoned")
-            .push(frame.clone());
+        if self.writer.flush().is_err() {
+            self.num_failures += 1;
+        }
+        if self.num_failures > 0 {
+            warn!(
+                target: "continuo::viz",
+                num_failures = self.num_failures,
+                "some viewer frames could not be written"
+            );
+        }
     }
 }

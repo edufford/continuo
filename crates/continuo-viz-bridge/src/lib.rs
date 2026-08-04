@@ -17,6 +17,14 @@
 //! The sim is never blocked by a viewer. Frames go onto a bounded channel and
 //! are dropped when it is full, because a slow or absent viewer must not
 //! become back pressure on a step.
+//!
+//! Everything published here goes under `continuo/{world}/viz/`, a side
+//! channel no simulation component reads. Relaying onto the *original* key
+//! would collide with components that publish it themselves once there is a
+//! Zenoh transport, and worse, a message that arrived over Zenoh would be
+//! echoed straight back onto the key it came from. The original key is not
+//! lost: it travels in the frame's metadata, which is where a viewer reads it
+//! from anyway, alongside the sim time, publisher, and sequence number.
 
 mod sink;
 
@@ -30,13 +38,13 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use continuo_conductor::record::{LogEvent, RecordedMessage};
-use continuo_conductor::{MembershipChange, membership_key};
+use continuo_conductor::{ConductorConfig, MembershipChange, membership_key};
 use continuo_core::Message;
 use continuo_transport::{MonitorTransport, Transport};
 use serde_json::value::RawValue;
 use tracing::{debug, warn};
 
-pub use sink::{CollectingSink, VizFrame, VizSink, WriterSink};
+pub use sink::{VizFrame, VizSink, WriterSink};
 
 #[cfg(feature = "zenoh")]
 pub use zenoh_sink::ZenohSink;
@@ -73,6 +81,10 @@ const JOIN_POLL: Duration = Duration::from_millis(5);
 /// [`Self::wrap_transport`]) and [`Self::membership_callback`] to
 /// `Conductor::add_membership_callback`.
 pub struct VizBridge {
+    /// Names the side channel this bridge publishes under. Taken from the
+    /// run's own config, so a viewer can never be pointed at a world the
+    /// conductor is not running, the same reason `Recorder` takes it.
+    world_name: String,
     tx: SyncSender<VizFrame>,
     dropped_frames: Arc<AtomicU64>,
     /// Set by [`VizBridge::finish`] to end the worker.
@@ -86,12 +98,17 @@ pub struct VizBridge {
 }
 
 impl VizBridge {
-    /// Starts a bridge delivering to `sink` on its own thread.
-    pub fn new(sink: impl VizSink + 'static) -> Self {
-        VizBridge::with_capacity(sink, DEFAULT_CAPACITY)
+    /// Starts a bridge for the run `config` describes, delivering to `sink`
+    /// on its own thread.
+    pub fn new(config: &ConductorConfig, sink: impl VizSink + 'static) -> Self {
+        VizBridge::with_capacity(config, sink, DEFAULT_CAPACITY)
     }
 
-    pub fn with_capacity(mut sink: impl VizSink + 'static, capacity: usize) -> Self {
+    pub fn with_capacity(
+        config: &ConductorConfig,
+        mut sink: impl VizSink + 'static,
+        capacity: usize,
+    ) -> Self {
         let (tx, rx) = sync_channel::<VizFrame>(capacity);
         let shutdown = Arc::new(AtomicBool::new(false));
         let dropped_frames = Arc::new(AtomicU64::new(0));
@@ -105,7 +122,7 @@ impl VizBridge {
                 .spawn(move || {
                     loop {
                         match rx.recv_timeout(SHUTDOWN_POLL) {
-                            Ok(frame) => sink.deliver(&frame),
+                            Ok(frame) => sink.deliver(frame),
                             // Nothing queued. Only now is it safe to stop,
                             // since anything still in flight has been
                             // delivered.
@@ -130,6 +147,7 @@ impl VizBridge {
         // Return a bridge whose worker owns the sink, so delivery never
         // happens on the thread that is stepping the world.
         VizBridge {
+            world_name: config.world_name.clone(),
             tx,
             dropped_frames,
             shutdown,
@@ -147,11 +165,12 @@ impl VizBridge {
     pub fn message_callback(&self) -> impl FnMut(&Message) + Send + 'static {
         let tx = self.tx.clone();
         let dropped_frames = self.dropped_frames.clone();
+        let world_name = self.world_name.clone();
 
         // Return the tap, holding its own handle on the queue.
         move |m: &Message| {
             let frame = VizFrame {
-                key: m.key.to_string(),
+                key: viz_key(&world_name, m.key.as_str()),
                 payload: m.payload.clone(),
                 metadata: message_line(m),
             };
@@ -161,13 +180,10 @@ impl VizBridge {
 
     /// The membership tap, so a viewer learns exactly when a component left
     /// rather than inferring it from silence.
-    pub fn membership_callback(
-        &self,
-        world_name: &str,
-    ) -> impl FnMut(&MembershipChange) + Send + 'static {
+    pub fn membership_callback(&self) -> impl FnMut(&MembershipChange) + Send + 'static {
         let tx = self.tx.clone();
         let dropped_frames = self.dropped_frames.clone();
-        let key = membership_key(world_name).to_string();
+        let key = viz_key(&self.world_name, membership_key(&self.world_name).as_str());
 
         // Return the tap, holding its own handle on the queue.
         move |change: &MembershipChange| {
@@ -236,6 +252,23 @@ impl Drop for VizBridge {
     }
 }
 
+/// Maps a key a component published on to the viewer's side channel.
+///
+/// `continuo/demo/actor/car1/pose` becomes
+/// `continuo/demo/viz/actor/car1/pose`. Keys that do not carry the expected
+/// world prefix are nested whole rather than rewritten, so an unconventional
+/// key is still separated from live traffic instead of being relayed onto
+/// itself.
+fn viz_key(world_name: &str, published_key: &str) -> String {
+    let prefix = format!("continuo/{world_name}/");
+
+    // Return the side-channel key for this publication.
+    match published_key.strip_prefix(&prefix) {
+        Some(rest) => format!("continuo/{world_name}/viz/{rest}"),
+        None => format!("continuo/{world_name}/viz/{published_key}"),
+    }
+}
+
 /// Queues a frame, counting it as dropped rather than waiting for room.
 fn try_queue(tx: &SyncSender<VizFrame>, dropped_frames: &AtomicU64, frame: VizFrame) {
     match tx.try_send(frame) {
@@ -248,6 +281,15 @@ fn try_queue(tx: &SyncSender<VizFrame>, dropped_frames: &AtomicU64, frame: VizFr
 
 /// Frames a message as the event log's `msg` line, so a live stream and a
 /// recorded log are read by the same parser.
+///
+/// The *field* set is structural: this builds [`LogEvent::Msg`] from
+/// [`RecordedMessage`], so adding or removing a field there breaks
+/// compilation here. What is not structural is the *serde* shape, meaning the
+/// tag names and how `payload` is embedded, which could change in
+/// `continuo-conductor::record` without touching this file. That gap is what
+/// `a_message_is_framed_as_the_event_logs_msg_line` in `tests/framing.rs`
+/// pins, by asserting the emitted line parses as
+/// `{"msg": {key, publisher, seq, payload}}`.
 fn message_line(m: &Message) -> Vec<u8> {
     let payload_text = std::str::from_utf8(&m.payload)
         .expect("payloads are serialized JSON, which is always valid UTF-8");
@@ -266,6 +308,10 @@ fn message_line(m: &Message) -> Vec<u8> {
 }
 
 /// Frames a membership change as the event log's `join` or `leave` line.
+///
+/// Coupled to [`LogEvent`] the same way [`message_line`] is, and pinned the
+/// same way by `membership_changes_are_framed_as_join_and_leave_lines` in
+/// `tests/framing.rs`.
 fn membership_line(change: &MembershipChange) -> Vec<u8> {
     let event = match change {
         MembershipChange::Joined(join) => LogEvent::Join(join.clone()),

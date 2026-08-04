@@ -5,12 +5,52 @@
 //! of keeping framing and delivery apart.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Barrier};
+use std::sync::{Arc, Barrier, Mutex};
 use std::time::{Duration, Instant};
 
-use continuo_conductor::{MembershipChange, RecordedJoin, RecordedLeave, membership_key};
+use continuo_conductor::{ConductorConfig, MembershipChange, Pacing, RecordedJoin, RecordedLeave};
 use continuo_core::{ComponentPath, KeyExpr, Message, SimTime};
-use continuo_viz_bridge::{CollectingSink, VizBridge, VizFrame, VizSink};
+use continuo_viz_bridge::{VizBridge, VizFrame, VizSink};
+
+/// Collects frames in memory so a test can assert on what was delivered.
+///
+/// Lives here rather than in the crate because it exists only for these
+/// tests, and shipping it would put a test double in the public API.
+#[derive(Clone, Default)]
+struct CollectingSink {
+    frames: Arc<Mutex<Vec<VizFrame>>>,
+}
+
+impl CollectingSink {
+    fn new() -> Self {
+        CollectingSink::default()
+    }
+
+    /// A snapshot, so a caller can assert without holding the lock.
+    fn frames(&self) -> Vec<VizFrame> {
+        self.frames
+            .lock()
+            .expect("collecting sink mutex is never poisoned")
+            .clone()
+    }
+}
+
+impl VizSink for CollectingSink {
+    fn deliver(&mut self, frame: VizFrame) {
+        self.frames
+            .lock()
+            .expect("collecting sink mutex is never poisoned")
+            .push(frame);
+    }
+}
+
+fn config() -> ConductorConfig {
+    ConductorConfig {
+        world_name: "demo".into(),
+        world_seed: 0,
+        pacing: Pacing::FreeRun,
+    }
+}
 
 fn pose_message(seq: u64) -> Message {
     Message {
@@ -25,7 +65,7 @@ fn pose_message(seq: u64) -> Message {
 #[test]
 fn a_message_is_framed_as_the_event_logs_msg_line() {
     let sink = CollectingSink::new();
-    let bridge = VizBridge::new(sink.clone());
+    let bridge = VizBridge::new(&config(), sink.clone());
     let mut tap = bridge.message_callback();
     tap(&pose_message(7));
     bridge.finish();
@@ -34,10 +74,11 @@ fn a_message_is_framed_as_the_event_logs_msg_line() {
     assert_eq!(frames.len(), 1);
     let frame = &frames[0];
 
-    // The key routes it, and the payload is the component's own bytes,
-    // unchanged. That is what lets a milestone 7 viewer subscribing to the
-    // same key see the same thing.
-    assert_eq!(frame.key, "continuo/demo/actor/car1/pose");
+    // Published onto the viewer's side channel rather than back onto the
+    // key it came from, which is what stops a bridged message colliding with
+    // a component publishing the same key, or echoing one that arrived over
+    // the transport.
+    assert_eq!(frame.key, "continuo/demo/viz/actor/car1/pose");
     assert_eq!(frame.payload, pose_message(7).payload);
 
     // The metadata line is what a recorded log holds, so one parser reads
@@ -45,6 +86,8 @@ fn a_message_is_framed_as_the_event_logs_msg_line() {
     let line: serde_json::Value =
         serde_json::from_slice(&frame.metadata).expect("metadata is JSON");
     let msg = &line["msg"];
+    // The original key is not lost: it rides in the metadata, which is where
+    // a viewer reads it from for every source.
     assert_eq!(msg["key"], "continuo/demo/actor/car1/pose");
     assert_eq!(msg["publisher"], "car1/physics");
     assert_eq!(msg["seq"], 7);
@@ -54,8 +97,8 @@ fn a_message_is_framed_as_the_event_logs_msg_line() {
 #[test]
 fn membership_changes_are_framed_as_join_and_leave_lines() {
     let sink = CollectingSink::new();
-    let bridge = VizBridge::new(sink.clone());
-    let mut tap = bridge.membership_callback("demo");
+    let bridge = VizBridge::new(&config(), sink.clone());
+    let mut tap = bridge.membership_callback();
     tap(&MembershipChange::Joined(RecordedJoin {
         path: "traffic7/physics".into(),
         first_due: SimTime::from_millis(250),
@@ -69,7 +112,10 @@ fn membership_changes_are_framed_as_join_and_leave_lines() {
     let frames = sink.frames();
     assert_eq!(frames.len(), 2);
     for frame in &frames {
-        assert_eq!(frame.key, membership_key("demo").to_string());
+        assert_eq!(
+            frame.key, "continuo/demo/viz/conductor/membership/status",
+            "membership goes down the same side channel as everything else"
+        );
     }
 
     let join: serde_json::Value =
@@ -87,7 +133,7 @@ struct BlockingSink {
 }
 
 impl VizSink for BlockingSink {
-    fn deliver(&mut self, _frame: &VizFrame) {
+    fn deliver(&mut self, _frame: VizFrame) {
         if !self.passed_the_gate.swap(true, Ordering::SeqCst) {
             self.gate.wait();
         }
@@ -103,7 +149,7 @@ fn a_viewer_that_stops_draining_is_dropped_rather_than_waited_for() {
         gate: gate.clone(),
         passed_the_gate: Arc::new(AtomicBool::new(false)),
     };
-    let bridge = VizBridge::with_capacity(sink, 2);
+    let bridge = VizBridge::with_capacity(&config(), sink, 2);
     let mut tap = bridge.message_callback();
 
     // Far more than the worker can hold while it is stuck on the first
@@ -129,7 +175,7 @@ fn a_viewer_that_stops_draining_is_dropped_rather_than_waited_for() {
 struct WedgedSink;
 
 impl VizSink for WedgedSink {
-    fn deliver(&mut self, _frame: &VizFrame) {
+    fn deliver(&mut self, _frame: VizFrame) {
         loop {
             std::thread::sleep(Duration::from_secs(3600));
         }
@@ -142,7 +188,7 @@ fn a_wedged_sink_is_detached_rather_than_waited_for_forever() {
     // stuck sink into a program that never exits. Giving up and detaching is
     // the only option Rust offers, and the right one: the run is over and the
     // frames still held are of no interest.
-    let bridge = VizBridge::with_capacity(WedgedSink, 1);
+    let bridge = VizBridge::with_capacity(&config(), WedgedSink, 1);
     let mut tap = bridge.message_callback();
     tap(&pose_message(0));
 
