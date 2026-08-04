@@ -5,7 +5,20 @@ use continuo_core::{ComponentPath, KeyExpr, Message};
 use crate::Transport;
 
 /// Deterministic in-process transport: `BTreeMap`-backed queues, no threads,
-/// no wall time. Message copies are queued per subscriber at publish time.
+/// no wall time.
+///
+/// A message is copied into a queue per matching subscriber rather than shared
+/// out of one queue, and that follows from [`Transport::drain`] taking a
+/// *per-subscriber* release condition. The visibility rule can release a
+/// same-instant message to one subscriber while holding it back for another,
+/// depending on where each sits in the composite tree, so there is no single
+/// order a shared queue would be consumed in. The copy is the queue design, not
+/// a decision about bytes.
+///
+/// It costs little while payloads are poses. Sharing them instead would mean
+/// `Message::payload` becoming an `Arc<[u8]>`, which leaves the queues alone
+/// and is worth revisiting with PLAN.md's deferred large-payload work, where a
+/// camera frame would otherwise be copied once per subscriber.
 #[derive(Debug, Default)]
 pub struct InProcTransport {
     /// Subscriber → subscribed key expressions.

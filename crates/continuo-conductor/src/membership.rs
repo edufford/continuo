@@ -8,11 +8,10 @@
 //! serves both once the request arrives over the transport instead of as a
 //! direct call.
 //!
-//! Both sides name the sim time they take effect at, and neither infers it
-//! from when the request turned up. That is what keeps a dynamic run
-//! reproducible: the requester chooses the instant, so the run is the same
-//! whether the request arrived a tick early or a hundred ticks early and,
-//! once these travel over a network, whatever the delivery did.
+//! Both sides name the sim time they take effect at rather than inferring it
+//! from when the request turned up, which is what keeps a dynamic run
+//! reproducible when arrival varies. DECISIONS.md, 2026-07-28, has the rest,
+//! including why the interval is half-open.
 
 use continuo_core::SimTime;
 
