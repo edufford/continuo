@@ -2,52 +2,36 @@
 //! component declares when it joins, and what the conductor does when one is
 //! passed.
 //!
-//! Two levels in one declaration, answering different questions (PLAN.md,
-//! "Per-component timing"):
+//! Two levels in one declaration, answering different questions:
 //!
 //! - **budget**: soft, and permanently so. Did *this component's* `step`
-//!   finish in time? Measured around the step itself, so it is attributable
-//!   to the component and to nothing else: not to whatever ran ahead of it
-//!   in the instant, and not to the schedule around it. A step over it is
-//!   logged and counted, and that is all. Nothing about the run changes, so
-//!   a run that misses every budget produces the identical world hash to one
-//!   that misses none.
-//! - **timeout**: hard, and what it does is declared with it: halt the
-//!   world, or remove the component. This one is the *conductor's* question,
-//!   how long it will wait to hear a step is done, which is why it is the
-//!   level that acts. "The conductor must never hang indefinitely waiting for
-//!   a `TickDone`" (PLAN.md) is exactly this limit.
+//!   finish in time? A step over it is logged and counted, and that is all,
+//!   so a run that misses every budget produces the identical world hash to
+//!   one that misses none.
+//! - **timeout**: hard, and what it does is declared with it: halt the world,
+//!   or remove the component. This is the *conductor's* wait, which is why it
+//!   is the level that acts.
 //!
-//! In-process the two quantities coincide, because the conductor's wait *is*
-//! the call: `step` is synchronous and there is nothing in between. That is
-//! why one measured duration is what both are judged against here.
-//! Distributed they separate: the budget is measured by the host running the
-//! step and rides back in its `TickDone`, while the timeout stays the
-//! conductor's own wait and takes the transport with it. Keeping the soft
-//! level permanently soft is what makes that split harmless: a limit that
-//! never acts never has to mean the same thing on two machines.
-//!
-//! They are **judged separately either way**, never collapsed into one
-//! worst-level verdict: each can be passed without the other, and the
-//! combination is what carries the diagnosis. Once a transport sits in
-//! between, a timeout with the budget intact says the network was slow, and a
-//! timeout with the budget missed says the component was.
+//! In-process the two coincide, because the conductor's wait *is* the call, so
+//! one measured duration is what both are judged against here. They separate
+//! at milestone 7, when the budget is measured by the host running the step
+//! and the timeout keeps the transport in it. They are judged separately
+//! either way, never collapsed into one verdict, because the pair is what
+//! carries the diagnosis.
 //!
 //! Neither level is milestone 3's pacing overrun, which asks whether *the
-//! schedule as a whole* tracked the wall clock and is attributable to no
-//! component in particular. The default declares neither limit, which is
-//! every component in a world that never mentions timing.
+//! schedule as a whole* tracked the wall clock and blames no component in
+//! particular. Nor is timing a pacing mode: a wedged component hangs the
+//! barrier in free-run just as readily. The default declares neither limit.
 //!
-//! Limits belong to **registration** ([`JoinMetadata`](crate::JoinMetadata))
-//! rather than to the `Component` trait: a deadline is a property of the
-//! deployment, not of the model (the same physics has one on a HIL rig and
-//! none in a batch run), and declaring it here keeps wall-clock types out of
-//! `continuo-core` entirely.
+//! Limits belong to registration ([`JoinMetadata`](crate::JoinMetadata))
+//! rather than to the `Component` trait, since a deadline is a property of the
+//! deployment and not of the model, which also keeps wall-clock types out of
+//! `continuo-core`.
 //!
-//! Timing is not a pacing mode. A budget measures what a step costs whether
-//! or not the run is gated to real time, and the timeout is what stops a
-//! wedged component hanging the barrier, which free-run needs every bit as
-//! much.
+//! DECISIONS.md, 2026-07-28, has the arguments: why the soft level is
+//! permanently soft, why a worst-level verdict was rejected, and what a
+//! timing verdict may not do to the tick it was measured in.
 
 use std::time::Duration;
 

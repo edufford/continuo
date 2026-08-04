@@ -177,8 +177,11 @@ retired once it falls 60 m behind, and a replacement spawns ahead. Over
 30 sim-seconds fourteen different cars pass through a world that holds six
 at a time, eight of them retired along the way.
 
-The world hash is the run's determinism fingerprint: identical for every
-run of the same seeded scenario, on every platform CI tests.
+The world hash is the run's determinism fingerprint: identical for every run
+of the same seeded scenario on a given machine, which CI checks. Across
+platforms it is unverified rather than established. The two CI jobs each print
+a hash and nothing compares them, and the trigonometry every pose depends on is
+not required to round identically on every libm. PLAN.md tracks both.
 
 Two observer details worth knowing: log lines carry the *message's* sim time
 (an observer is a world-level actor, so it receives time-T poses strictly
