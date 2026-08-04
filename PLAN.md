@@ -126,15 +126,22 @@ Zenoh keyexpr syntax from the start. Implementations:
 
 Key expression conventions (draft):
 
-| Key expression                          | Payload                    |
-| --------------------------------------- | -------------------------- |
-| `continuo/{world}/tick`                 | `TickStart`                |
-| `continuo/{world}/tick/done`            | `TickDone`                 |
-| `continuo/{world}/actor/{id}/pose`      | actor pose                 |
-| `continuo/{world}/scene`                | scene-graph state update (fixed-period publisher for renderers) |
-| `continuo/{world}/conductor/membership/join_request`  | registration request |
-| `continuo/{world}/conductor/membership/leave_request` | departure request    |
-| `continuo/{world}/conductor/membership/status`        | applied join or leave |
+| Key expression | Payload | Status |
+| -------------- | ------- | ------ |
+| `continuo/{world}/actor/{id}/pose` | actor pose | built |
+| `continuo/{world}/actor/{id}/cmd` | drive command | built |
+| `continuo/{world}/conductor/membership/status` | applied join or leave | built (M5) |
+| `continuo/{world}/viz/**` | observer side channel, mirroring the key beneath it | built (M5) |
+| `continuo/{world}/tick` | `TickStart` | M7 |
+| `continuo/{world}/tick/done` | `TickDone` | M7 |
+| `continuo/{world}/conductor/membership/join_request` | registration request | M7 |
+| `continuo/{world}/conductor/membership/leave_request` | departure request | M7 |
+| `continuo/{world}/scene` | scene-graph state update (fixed-period publisher for renderers) | deferred |
+
+The status column is there because the table previously mixed what exists
+with what is intended and said nothing about which was which. Scenario-owned
+keys are deliberately absent: the traffic demo's spawn and despawn requests
+live with the spawner, not here, for the reason recorded on 2026-07-31.
 
 Membership is nested one level deeper than the rest so that *asking* and
 *having happened* are separated by structure rather than by remembering which

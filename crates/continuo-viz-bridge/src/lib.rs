@@ -56,9 +56,14 @@ pub use zenoh_sink::ZenohSink;
 /// frames are of no interest to a live view anyway.
 const DEFAULT_CAPACITY: usize = 4096;
 
-/// How long the worker waits for a frame before re-checking for shutdown.
-/// Short enough that finishing a run is not perceptibly delayed, long enough
-/// that an idle bridge is not spinning.
+/// How long the worker waits for a frame before re-checking for shutdown,
+/// and therefore also how often [`VizBridge::shutdown`] re-checks whether it
+/// has finished. Short enough that finishing a run is not perceptibly
+/// delayed, long enough that an idle bridge is not spinning.
+///
+/// One constant rather than two because the second would be lying: the
+/// worker only observes the shutdown flag when this timeout expires, so a
+/// waiter polling faster cannot learn anything sooner.
 const SHUTDOWN_POLL: Duration = Duration::from_millis(20);
 
 /// Thread name for the delivery worker, so it is identifiable in a panic
@@ -71,9 +76,6 @@ const WORKER_THREAD_NAME: &str = "continuo-viz";
 /// that a wedged one does not hold up process exit. A viewer is never worth
 /// blocking a program for.
 const JOIN_TIMEOUT: Duration = Duration::from_secs(2);
-
-/// How often the shutdown wait re-checks whether the worker has finished.
-const JOIN_POLL: Duration = Duration::from_millis(5);
 
 /// Observes a run and hands framed events to a [`VizSink`].
 ///
@@ -239,7 +241,7 @@ impl VizBridge {
                 // Return without joining, leaving the thread detached.
                 return;
             }
-            std::thread::sleep(JOIN_POLL);
+            std::thread::sleep(SHUTDOWN_POLL);
         }
         debug!(target: "continuo::viz", "joining the viz bridge worker");
         let _ = worker.join();

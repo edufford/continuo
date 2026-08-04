@@ -115,12 +115,16 @@ pub enum MembershipChange {
 /// Key expression an applied [`MembershipChange`] is published on, for
 /// observers outside the process.
 ///
-/// **Status, not request.** The sibling keys
+/// **Status, not request.** This one is the conductor saying a join or leave
+/// already happened, which is what an observer subscribes to: a viewer needs
+/// it to stop drawing a component that has retired.
+///
+/// It is nested under `membership/` to leave room for the other direction.
+/// Requests still arrive as direct calls, so no request key exists yet, but
+/// when they cross a transport at M7 they land at
 /// `continuo/{world}/conductor/membership/join_request` and
-/// `.../leave_request` are what a component or host sends *inward* and the
-/// conductor may reject. This one is the conductor saying it already
-/// happened, which is what an observer subscribes to: a viewer needs it to
-/// stop drawing a component that has retired. The distinction is carried by
+/// `.../leave_request`: things a component or host sends *inward* and the
+/// conductor may reject. Nesting means that distinction will be carried by
 /// the key structure rather than by remembering which verb implies which
 /// direction.
 ///
