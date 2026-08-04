@@ -47,7 +47,7 @@ use tracing::{debug, warn};
 pub use sink::{VizFrame, VizSink, WriterSink};
 
 #[cfg(feature = "zenoh")]
-pub use zenoh_sink::ZenohSink;
+pub use zenoh_sink::{ZenohSink, ZenohSinkError};
 
 /// How many frames may be queued for the viewer before new ones are dropped.
 ///

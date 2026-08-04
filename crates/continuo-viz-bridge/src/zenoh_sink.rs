@@ -10,8 +10,20 @@
 //! viewer final: at milestone 7 components publish those same keys with those
 //! same payloads themselves, and only the attachment's provenance changes.
 
+use thiserror::Error;
 use tracing::warn;
 use zenoh::{Session, Wait};
+
+/// Why a [`ZenohSink`] could not be opened.
+///
+/// A named error rather than a boxed `dyn Error`, matching `CoreError` and
+/// `ConductorError`, so callers can use `?` from an ordinary
+/// `Box<dyn Error>` main without converting by hand.
+#[derive(Debug, Error)]
+pub enum ZenohSinkError {
+    #[error("opening the Zenoh session failed: {0}")]
+    Open(String),
+}
 
 use crate::sink::{VizFrame, VizSink};
 
@@ -30,7 +42,7 @@ impl ZenohSink {
     /// Convenience over [`Self::with_config`] for the demo case. Peer
     /// discovery on the local network is the right default for watching a
     /// run on one machine and the wrong one for anything deployed.
-    pub fn new() -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn new() -> Result<Self, ZenohSinkError> {
         // Return a sink on a default peer session.
         ZenohSink::with_config(zenoh::Config::default())
     }
@@ -41,10 +53,10 @@ impl ZenohSink {
     // scenario configuration rather than constructed in code, so a run's
     // topology is declared with the run rather than compiled into whoever
     // starts the viewer.
-    pub fn with_config(
-        config: zenoh::Config,
-    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        let session = zenoh::open(config).wait()?;
+    pub fn with_config(config: zenoh::Config) -> Result<Self, ZenohSinkError> {
+        let session = zenoh::open(config)
+            .wait()
+            .map_err(|source| ZenohSinkError::Open(source.to_string()))?;
 
         // Return the sink, ready to publish.
         Ok(ZenohSink {

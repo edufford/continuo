@@ -20,5 +20,6 @@ continuo-transport = { workspace = true }
 continuo-conductor = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+thiserror = { workspace = true }
 tracing = { workspace = true }
 zenoh = { workspace = true, optional = true }

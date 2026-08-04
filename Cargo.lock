@@ -314,6 +314,7 @@ dependencies = [
  "continuo-conductor",
  "continuo-core",
  "continuo-transport",
+ "continuo-viz-bridge",
  "tracing",
  "tracing-subscriber",
 ]
@@ -334,6 +335,7 @@ dependencies = [
  "continuo-transport",
  "serde",
  "serde_json",
+ "thiserror 2.0.18",
  "tracing",
  "zenoh",
 ]

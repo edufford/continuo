@@ -7,12 +7,23 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[features]
+# Off by default so the ordinary build, lint, and test of this crate never
+# pull Zenoh's dependency tree. Only `traffic_viz` needs it.
+default = []
+viz = ["dep:continuo-viz-bridge", "continuo-viz-bridge/zenoh"]
+
 [dependencies]
 continuo-core = { workspace = true }
 continuo-transport = { workspace = true }
 continuo-conductor = { workspace = true }
 continuo-actors = { workspace = true }
+continuo-viz-bridge = { workspace = true, optional = true }
 
 [dev-dependencies]
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+
+[[example]]
+name = "traffic_viz"
+required-features = ["viz"]
