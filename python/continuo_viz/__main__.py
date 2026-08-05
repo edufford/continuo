@@ -21,7 +21,7 @@ from pathlib import Path
 
 from .events import Join, Leave
 from .scene import Scene
-from .sources import LogSource, read_log
+from .sources import LogSource, ZenohSource, read_log
 
 DEFAULT_WORLD = "demo"
 DEFAULT_FOLLOW = "ego"
@@ -96,7 +96,7 @@ def run_check(path: Path) -> int:
     return 0
 
 
-def run_viewer(source, follow: str | None, status: str) -> int:
+def run_viewer(source, follow: str | None, status: str) -> None:
     """Drives the draw loop until the window closes or the source runs out."""
     from .render import Renderer
 
@@ -116,34 +116,37 @@ def run_viewer(source, follow: str | None, status: str) -> int:
         close = getattr(source, "close", None)
         if close is not None:
             close()
-    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    # `--follow` defaults to the ego. Passing an empty string is the documented
-    # way to ask for every actor instead of one, and the renderer spells that
-    # `None`, so this converts it and passes any real name straight through.
-    follow = args.follow or None
 
-    if args.log is not None:
-        if not args.log.exists():
-            print(f"no such log: {args.log}", file=sys.stderr)
-            return 1
-        if args.check:
-            return run_check(args.log)
-        return run_viewer(LogSource(args.log), follow, "replay")
-
-    if args.check:
+    # Everything that can refuse the arguments, before anything acts on them.
+    # `--check` needs a log and argparse has no way to say so.
+    if args.check and args.log is None:
         print(
             "--check reads a log; it has nothing to do with a live run",
             file=sys.stderr,
         )
         return 2
+    if args.log is not None and not args.log.exists():
+        print(f"no such log: {args.log}", file=sys.stderr)
+        return 1
 
-    from .sources import ZenohSource
+    if args.check:
+        return run_check(args.log)
 
-    return run_viewer(ZenohSource(args.world), follow, f"live {args.world}")
+    # `--follow` defaults to the ego. Passing an empty string is the documented
+    # way to ask for every actor instead of one, and the renderer spells that
+    # `None`, so this converts it and passes any real name straight through.
+    follow = args.follow or None
+    if args.log is not None:
+        source, status = LogSource(args.log), "replay"
+    else:
+        source, status = ZenohSource(args.world), f"live {args.world}"
+
+    run_viewer(source, follow, status)
+    return 0
 
 
 if __name__ == "__main__":
