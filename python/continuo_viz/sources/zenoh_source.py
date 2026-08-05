@@ -1,14 +1,12 @@
 """Watching a run as it happens, over Zenoh.
 
-Subscribes to the viewer side channel the bridge publishes on. Only poses and
-membership are asked for, which filters at Zenoh rather than in Python: a
-command is published ten times a second per actor and never drawn, so there is
-no reason for it to cross the process boundary at all.
+Subscribes to the viewer side channel, asking only for what gets drawn. That
+filters at Zenoh rather than in Python, so traffic the viewer would discard
+never crosses the process boundary.
 
-The bridge does no filtering of its own, deliberately. At milestone 7
-components publish these keys themselves and there is nothing in the middle to
-filter, so a subscriber choosing its own key expression is the arrangement that
-survives.
+The subscriber picks its own keys rather than relying on anything upstream to
+narrow the stream for it, which is what lets the same code work whether those
+keys are relayed or published at the source.
 """
 
 from __future__ import annotations
@@ -31,18 +29,32 @@ _QUEUE_LIMIT = 8192
 class ZenohSource:
     """Live events from a running world."""
 
-    def __init__(self, world: str, config: Any = None) -> None:
+    def __init__(self, world_name: str, zenoh_config: Any = None) -> None:
+        """Opens a session and subscribes to one world's viewer keys.
+
+        ``zenoh_config`` is handed straight to ``zenoh.open``. ``None`` takes
+        Zenoh's own default, which finds peers on the local network by
+        multicast and is what a viewer and a world on one machine need. Pass
+        one to reach a world somewhere else, or to pin a transport.
+
+        Its type is in the name rather than the annotation. Writing
+        ``zenoh.Config`` there would mean importing Zenoh at module scope,
+        which would load it for every replay as well, so the annotation can
+        only say ``Any``.
+        """
         # Imported here rather than at module scope so replaying a log does not
         # pay to load Zenoh. It is a plain dependency, so failing to import it
         # means a broken install.
         import zenoh
 
-        self.world = world
+        self.world_name = world_name
         self._queue: deque[Event] = deque(maxlen=_QUEUE_LIMIT)
-        self._session = zenoh.open(config if config is not None else zenoh.Config())
+        self._session = zenoh.open(
+            zenoh_config if zenoh_config is not None else zenoh.Config()
+        )
         self._subscribers = [
             self._session.declare_subscriber(expression, self._on_sample)
-            for expression in self.key_expressions(world)
+            for expression in self.subscription_keys(world_name)
         ]
 
     @property
@@ -55,11 +67,11 @@ class ZenohSource:
         return False
 
     @staticmethod
-    def key_expressions(world: str) -> list[str]:
+    def subscription_keys(world_name: str) -> list[str]:
         """What a viewer subscribes to, and nothing more."""
         return [
-            f"{VIZ_KEY_ROOT}/{world}/actor/*/pose",
-            f"{VIZ_KEY_ROOT}/{world}/conductor/membership/status",
+            f"{VIZ_KEY_ROOT}/{world_name}/actor/*/pose",
+            f"{VIZ_KEY_ROOT}/{world_name}/conductor/membership/status",
         ]
 
     def _on_sample(self, sample: Any) -> None:
