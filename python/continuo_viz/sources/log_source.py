@@ -78,3 +78,12 @@ class LogSource:
         if self._pending is None:
             self.done = True
         return ready
+
+    def close(self) -> None:
+        """Closes the log, whether or not it was read to the end.
+
+        Closing the generator closes the file it holds open. Without this the
+        file would stay open until the collector got to it, which for a viewer
+        abandoned partway through a long log is an arbitrary amount of time.
+        """
+        self._events.close()

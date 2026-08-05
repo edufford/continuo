@@ -170,8 +170,12 @@ class Renderer:
         self.height = height
         self.scale = width / VIEW_METRES
 
-    def pump(self) -> bool:
-        """Handles window events. Returns ``False`` when the user has quit."""
+    def process_events(self) -> bool:
+        """Handles pending window events.
+
+        Returns ``False`` once the user has asked to close the window, which is
+        the only thing that ends a viewing session.
+        """
         for event in self._pygame.event.get():
             if event.type == self._pygame.QUIT:
                 return False

@@ -35,13 +35,13 @@ def build_parser() -> argparse.ArgumentParser:
     # Not required, so giving neither means live. The group stays so that
     # `--live --log run.jsonl` is an error rather than a silent choice between
     # them.
-    source = parser.add_mutually_exclusive_group()
-    source.add_argument(
+    source_group = parser.add_mutually_exclusive_group()
+    source_group.add_argument(
         "--live",
         action="store_true",
         help="watch a running world over Zenoh (the default)",
     )
-    source.add_argument(
+    source_group.add_argument(
         "--log", type=Path, metavar="PATH", help="replay a recorded event log"
     )
 
@@ -96,26 +96,30 @@ def run_check(path: Path) -> int:
     return 0
 
 
-def run_viewer(source, follow: str | None, status: str) -> None:
-    """Drives the draw loop until the window closes or the source runs out."""
+def run_viewer(event_source, follow: str | None, status: str) -> None:
+    """Drives the draw loop until the user closes the window.
+
+    The event source running out does not end it. The loop keeps redrawing the
+    scene it already has, so a replay leaves its last frame up to be read rather
+    than vanishing the instant the log does. Only the HUD changes, to say the
+    replay is over rather than merely paused.
+    """
+    # Deferred so a `--check` run does not import the renderer at all. Unlike
+    # the sources, this module is not pulled in by the package.
     from .render import Renderer
 
     scene = Scene()
     renderer = Renderer()
     try:
-        while renderer.pump():
-            for event in source.drain():
+        while renderer.process_events():
+            for event in event_source.drain():
                 scene.apply(event)
-            renderer.draw(scene, follow, status)
-            if source.done:
-                # Keep the last frame on screen rather than vanishing the
-                # instant a replay ends, so what happened stays readable.
+            if event_source.done:
                 status = "replay finished"
+            renderer.draw(scene, follow, status)
     finally:
         renderer.close()
-        close = getattr(source, "close", None)
-        if close is not None:
-            close()
+        event_source.close()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -141,11 +145,11 @@ def main(argv: list[str] | None = None) -> int:
     # `None`, so this converts it and passes any real name straight through.
     follow = args.follow or None
     if args.log is not None:
-        source, status = LogSource(args.log), "replay"
+        event_source, status = LogSource(args.log), "replay"
     else:
-        source, status = ZenohSource(args.world), f"live {args.world}"
+        event_source, status = ZenohSource(args.world), f"live {args.world}"
 
-    run_viewer(source, follow, status)
+    run_viewer(event_source, follow, status)
     return 0
 
 

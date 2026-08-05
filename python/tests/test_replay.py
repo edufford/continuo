@@ -133,6 +133,26 @@ def test_real_time_pacing_withholds_what_its_clock_has_not_reached(tmp_path):
     assert not source.done, "four seconds of log cannot have arrived yet"
 
 
+def test_a_log_source_closes_the_file_it_holds_open(tmp_path):
+    # The draw loop closes in a `finally` and calls `source.close()` directly
+    # rather than probing for the method, so this has to exist, has to release
+    # the file even when the log was abandoned partway through, and has to
+    # tolerate being called on a source that is already closed.
+    log = tmp_path / "run.jsonl"
+    build_log(log)
+
+    source = LogSource(log)
+    source.drain()
+    source.close()
+    source.close()
+
+    # `read_log` holds the file open inside a generator, so a closed generator
+    # is a closed file. Asserted on the generator rather than by removing the
+    # log, because whether an open file can be removed is a property of the
+    # platform: a leak that one refuses would go unnoticed on another.
+    assert source._events.gi_frame is None
+
+
 def test_the_first_drain_is_not_delayed_by_a_late_starting_log(tmp_path):
     # Sim time is the log's own, so a run whose first event is at t=1000 must
     # begin immediately rather than after a thousand seconds of nothing.
