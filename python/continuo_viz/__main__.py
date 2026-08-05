@@ -1,10 +1,14 @@
 """Command line entry point.
 
-    python -m continuo_viz --live
-    python -m continuo_viz --log run.jsonl --speed 2
-    python -m continuo_viz --log run.jsonl --headless
+    python -m continuo_viz
+    python -m continuo_viz --log run.jsonl
+    python -m continuo_viz --log run.jsonl --check
 
-``--headless`` folds a whole log into a scene and prints what it found, without
+Watching a live world is what no arguments gets you, since a world is the thing
+you are most often already running. ``--log`` replays a recording instead, and
+``--live`` says the default out loud for a script that would rather be explicit.
+
+``--check`` folds a whole log into a scene and prints what it found, without
 opening a window. It exists so a replay can be checked in CI, where there is no
 display and installing one would be the only reason to.
 """
@@ -28,9 +32,14 @@ def build_parser() -> argparse.ArgumentParser:
         prog="continuo-viz",
         description="Watch a continuo run, live or replayed from a log.",
     )
-    source = parser.add_mutually_exclusive_group(required=True)
+    # Not required, so giving neither means live. The group stays so that
+    # `--live --log run.jsonl` is an error rather than a silent choice between
+    # them.
+    source = parser.add_mutually_exclusive_group()
     source.add_argument(
-        "--live", action="store_true", help="watch a running world over Zenoh"
+        "--live",
+        action="store_true",
+        help="watch a running world over Zenoh (the default)",
     )
     source.add_argument(
         "--log", type=Path, metavar="PATH", help="replay a recorded event log"
@@ -50,20 +59,14 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--speed",
-        type=float,
-        default=1.0,
-        help="replay rate against real time (default: 1.0)",
-    )
-    parser.add_argument(
-        "--headless",
+        "--check",
         action="store_true",
         help="fold the log into a scene and print a summary, drawing nothing",
     )
     return parser
 
 
-def run_headless(path: Path) -> int:
+def run_check(path: Path) -> int:
     """Replays a whole log as fast as it reads and reports the final scene."""
     scene = Scene()
     joins = leaves = 0
@@ -118,21 +121,22 @@ def run_viewer(source, follow: str | None, status: str) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    # `--follow` defaults to the ego. Passing an empty string is the documented
+    # way to ask for every actor instead of one, and the renderer spells that
+    # `None`, so this converts it and passes any real name straight through.
     follow = args.follow or None
 
     if args.log is not None:
         if not args.log.exists():
             print(f"no such log: {args.log}", file=sys.stderr)
             return 1
-        if args.headless:
-            return run_headless(args.log)
-        return run_viewer(
-            LogSource(args.log, speed=args.speed), follow, f"replay x{args.speed:g}"
-        )
+        if args.check:
+            return run_check(args.log)
+        return run_viewer(LogSource(args.log), follow, "replay")
 
-    if args.headless:
+    if args.check:
         print(
-            "--headless replays a log; it has nothing to do with --live",
+            "--check reads a log; it has nothing to do with a live run",
             file=sys.stderr,
         )
         return 2

@@ -117,24 +117,20 @@ def test_a_scene_read_partway_through_still_holds_the_retired_car(tmp_path):
     assert scene.actors["traffic1"].pose.x == 150.0
 
 
-def test_replay_pacing_releases_events_as_its_clock_reaches_them(tmp_path):
+def test_real_time_pacing_withholds_what_its_clock_has_not_reached(tmp_path):
+    # Withholding is the whole job, and it is observable on the first drain,
+    # so this asserts it directly rather than draining to completion. Draining
+    # to completion would have to wait out the log's four seconds, and would
+    # still only prove that the loop terminates.
     log = tmp_path / "run.jsonl"
     build_log(log)
 
-    # Fast enough that the whole four-second run is current immediately, which
-    # keeps the test from waiting on a wall clock.
-    source = LogSource(log, speed=100_000.0)
-    collected = []
-    while not source.done:
-        collected.extend(source.drain())
-    collected.extend(source.drain())
+    source = LogSource(log)
+    first = source.drain()
 
-    scene = Scene()
-    for event in collected:
-        scene.apply(event)
-
-    assert set(scene.actors) == {"ego", "traffic2", "traffic3"}
-    assert source.done
+    assert first, "whatever sits at the origin is current straight away"
+    assert all(event.event_time == 0.0 for event in first)
+    assert not source.done, "four seconds of log cannot have arrived yet"
 
 
 def test_the_first_drain_is_not_delayed_by_a_late_starting_log(tmp_path):
@@ -146,5 +142,5 @@ def test_the_first_drain_is_not_delayed_by_a_late_starting_log(tmp_path):
         header + "\n" + msg_line("ego", 5.0, 1000.0) + "\n", encoding="utf-8"
     )
 
-    source = LogSource(log, speed=1.0)
+    source = LogSource(log)
     assert len(source.drain()) == 1

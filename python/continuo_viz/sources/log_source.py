@@ -37,19 +37,16 @@ def read_log(path: Path | str) -> Iterator[Event]:
 
 
 class LogSource:
-    """A log replayed against a wall clock.
+    """A log replayed against a wall clock, one sim second per real second.
 
-    ``speed`` multiplies sim time against real time, so 1.0 replays a run at
-    the rate it was simulated and 2.0 at twice that. The first event's sim time
-    becomes the origin, so a log that does not start at zero still begins
-    immediately rather than after a wait.
+    Pacing is the only thing this adds to :func:`read_log`, which is what to
+    use when a log is being processed rather than watched. The first event's
+    sim time becomes the origin, so a log that does not start at zero still
+    begins immediately rather than after a wait.
     """
 
-    def __init__(self, path: Path | str, speed: float = 1.0) -> None:
-        if speed <= 0.0:
-            raise ValueError(f"replay speed must be positive, got {speed}")
+    def __init__(self, path: Path | str) -> None:
         self._events = read_log(path)
-        self._speed = speed
         self._pending: Event | None = next(self._events, None)
         self._sim_origin: float | None = None
         self._wall_origin: float | None = None
@@ -62,13 +59,16 @@ class LogSource:
             return []
 
         now = time.monotonic()
+        # Anchored on the first drain rather than in the constructor, so a
+        # replay does not lose time to whatever happened between being built
+        # and being asked for anything.
         if self._wall_origin is None:
             self._wall_origin = now
             self._sim_origin = self._pending.event_time
         assert self._sim_origin is not None
 
         # Where the replay has got to, in the log's own time base.
-        reached = self._sim_origin + (now - self._wall_origin) * self._speed
+        reached = self._sim_origin + (now - self._wall_origin)
 
         ready: list[Event] = []
         while self._pending is not None and self._pending.event_time <= reached:
