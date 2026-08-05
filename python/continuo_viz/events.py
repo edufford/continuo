@@ -101,11 +101,30 @@ class Leave(Event):
 def event_from_log_line(line: str) -> Event | None:
     """Parses one line of a recorded log.
 
-    Returns ``None`` for a line the viewer has no use for, which is most of
-    them: tick fingerprints outnumber everything, and observations describe
-    what the machine did rather than what the world did. Skipping by returning
-    ``None`` rather than by filtering on a list of known kinds means a log kind
-    added later is ignored instead of crashing a viewer that predates it.
+    ``line`` is one JSON object, whose single top-level key names its kind.
+    Three are read, and the trailing newline and any surrounding blank space
+    are not significant:
+
+    - ``{"msg": {"time", "key", "publisher", "seq", "payload"}}``, a published
+      message. Rust: ``continuo_conductor::RecordedMessage``.
+    - ``{"join": {"path", "first_due"}}``, a component admitted.
+      Rust: ``continuo_conductor::RecordedJoin``.
+    - ``{"leave": {"path", "leaves_at"}}``, a component removed.
+      Rust: ``continuo_conductor::RecordedLeave``.
+
+    Returns ``None`` for anything else, which is most of a log: tick
+    fingerprints outnumber everything, observations describe what the machine
+    did rather than what the world did, and the first line is the header.
+    Skipping by returning ``None`` rather than by filtering on a list of known
+    kinds means a log kind added later is ignored instead of crashing a viewer
+    that predates it.
+
+    These shapes stay here rather than in :mod:`~continuo_viz.protocol`, which
+    holds what is needed in more than one place or has no local derivation. A
+    line shape is read by exactly one branch below, so naming it elsewhere
+    would put the shape somewhere other than the only code that reads it. What
+    it borrows from that module is the convention of citing the Rust
+    counterpart, since these are equally a contract with the other side.
     """
     stripped = line.strip()
     if not stripped:
@@ -137,6 +156,20 @@ def event_from_log_line(line: str) -> Event | None:
 
 def event_from_sample(payload: bytes, attachment: bytes) -> Event | None:
     """Parses one live sample into the same event a log line would give.
+
+    Both arguments are UTF-8 encoded JSON, and nothing here decodes anything
+    else. That is the whole of what is assumed about the bytes:
+
+    - ``attachment`` is one JSON object, the metadata the bridge attaches.
+      Rust: ``continuo_viz_bridge::Metadata``, serialised.
+    - ``payload`` is the bytes the component published, forwarded unchanged.
+      For sim data that is whatever the component serialised; for membership it
+      is a complete log line, and is parsed as one.
+
+    Invalid UTF-8 raises ``UnicodeDecodeError`` and malformed JSON raises
+    ``ValueError``, both of which the caller is expected to catch, because a
+    live viewer that died on one bad sample would be worse than one that
+    skipped it.
 
     The two halves are recombined here: a sample arrives as payload bytes with
     metadata attached, so this is where they become the single record a log
