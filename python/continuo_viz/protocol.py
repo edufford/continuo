@@ -14,8 +14,11 @@ say it from, so a move is only a correction to these references.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from enum import Enum
+
+logger = logging.getLogger(__name__)
 
 # Root chunk every simulation key sits under: `continuo/{world}/...`.
 #
@@ -102,6 +105,7 @@ class MessageType(str, Enum):
         try:
             return cls(raw)
         except ValueError:
+            logger.debug("no message type named %r; sample ignored", raw)
             return None
 
 

@@ -11,11 +11,16 @@ you are most often already running. ``--log`` replays a recording instead, and
 ``--check`` folds a whole log into a scene and prints what it found, without
 opening a window. It exists so a replay can be checked in CI, where there is no
 display and installing one would be the only reason to.
+
+Anything the viewer skips over is skipped silently by design, since one
+unreadable sample is not worth ending a session for. ``--verbose`` is how you
+find out what was skipped and why.
 """
 
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
 from pathlib import Path
 
@@ -62,6 +67,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--check",
         action="store_true",
         help="fold the log into a scene and print a summary, drawing nothing",
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="also report every sample and payload the viewer could not read",
     )
     return parser
 
@@ -124,6 +134,15 @@ def run_viewer(event_source, follow: str | None, status: str) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+
+    # Configured here and nowhere else. The package logs through
+    # `logging.getLogger(__name__)` and chooses no destination, which is what
+    # lets anything embedding it decide where the lines go. This program is the
+    # one place entitled to answer that.
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format="%(levelname)s: %(message)s",
+    )
 
     # Everything that can refuse the arguments, before anything acts on them.
     # `--check` needs a log and argparse has no way to say so.

@@ -8,9 +8,12 @@ has to.
 
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,6 +47,7 @@ def pose_from_payload(payload: dict[str, Any]) -> PoseTopDown | None:
     position = payload.get("position")
     orientation = payload.get("orientation")
     if not isinstance(position, dict) or not isinstance(orientation, dict):
+        logger.debug("not a pose payload: %r", payload)
         return None
     try:
         x = float(position["x"])
@@ -55,7 +59,8 @@ def pose_from_payload(payload: dict[str, Any]) -> PoseTopDown | None:
         qx = float(orientation["x"])
         qy = float(orientation["y"])
         qz = float(orientation["z"])
-    except (KeyError, TypeError, ValueError):
+    except (KeyError, TypeError, ValueError) as unreadable:
+        logger.debug("pose payload %r cannot be read: %s", payload, unreadable)
         return None
 
     # Yaw about +z, the only rotation a plan view can show. The standard

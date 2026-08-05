@@ -11,11 +11,14 @@ keys are relayed or published at the source.
 
 from __future__ import annotations
 
+import logging
 from collections import deque
 from typing import Any
 
 from ..events import Event, event_from_sample
 from ..protocol import VIZ_KEY_ROOT
+
+logger = logging.getLogger(__name__)
 
 # How many samples may wait between frames before the oldest are discarded.
 #
@@ -49,13 +52,24 @@ class ZenohSource:
 
         self.world_name = world_name
         self._queue: deque[Event] = deque(maxlen=_QUEUE_LIMIT)
+
+        # Reported either side of the open, because this is where a live
+        # session hangs when discovery finds nothing: the first line is what
+        # tells you it got that far, and the absence of the second is the
+        # symptom.
+        logger.info("opening a Zenoh session")
         self._session = zenoh.open(
             zenoh_config if zenoh_config is not None else zenoh.Config()
         )
+        logger.info("Zenoh session open, watching world %r", world_name)
+
+        keys = self.subscription_keys(world_name)
         self._subscribers = [
             self._session.declare_subscriber(expression, self._on_sample)
-            for expression in self.subscription_keys(world_name)
+            for expression in keys
         ]
+        for key in keys:
+            logger.info("subscribed to %s", key)
 
     @property
     def done(self) -> bool:
@@ -81,14 +95,16 @@ class ZenohSource:
             # Zenoh types this as optional, and every frame the bridge sends
             # carries metadata, so a sample without it was published by
             # something else that found its way onto the side channel.
+            logger.debug("no metadata on a sample from %s; ignored", sample.key_expr)
             return
         try:
             event = event_from_sample(
                 bytes(sample.payload.to_bytes()), bytes(attachment.to_bytes())
             )
-        except (ValueError, KeyError, UnicodeDecodeError):
+        except (ValueError, KeyError, UnicodeDecodeError) as unreadable:
             # A sample this viewer cannot read is not worth ending a live
             # session over, and raising here would only kill a Zenoh thread.
+            logger.debug("unreadable sample from %s: %s", sample.key_expr, unreadable)
             return
         if event is not None:
             self._queue.append(event)
@@ -100,10 +116,12 @@ class ZenohSource:
         return received
 
     def close(self) -> None:
+        logger.info("closing the Zenoh session")
         for subscriber in self._subscribers:
             subscriber.undeclare()
         self._subscribers.clear()
         self._session.close()
+        logger.info("Zenoh session closed")
 
     def __enter__(self) -> ZenohSource:
         return self
