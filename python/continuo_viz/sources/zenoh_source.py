@@ -29,12 +29,7 @@ _QUEUE_LIMIT = 8192
 
 
 class ZenohSource:
-    """Live events from a running world.
-
-    ``done`` is always ``False``. A live run has no end a subscriber can
-    observe: silence means the world is paused, finished, or on the other side
-    of a network partition, and none of those are distinguishable from here.
-    """
+    """Live events from a running world."""
 
     def __init__(self, world: str, config: Any = None) -> None:
         # Imported here rather than at module scope so replaying a log does not
@@ -43,13 +38,21 @@ class ZenohSource:
         import zenoh
 
         self.world = world
-        self.done = False
         self._queue: deque[Event] = deque(maxlen=_QUEUE_LIMIT)
         self._session = zenoh.open(config if config is not None else zenoh.Config())
         self._subscribers = [
             self._session.declare_subscriber(expression, self._on_sample)
             for expression in self.key_expressions(world)
         ]
+
+    @property
+    def done(self) -> bool:
+        """Always ``False``: a live run has no end a subscriber can observe.
+
+        Silence means the world is paused, finished, or on the other side of a
+        network partition, and none of those are distinguishable from here.
+        """
+        return False
 
     @staticmethod
     def key_expressions(world: str) -> list[str]:

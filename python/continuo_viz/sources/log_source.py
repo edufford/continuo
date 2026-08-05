@@ -19,13 +19,11 @@ from ..protocol import check_log_header
 def read_log(path: Path | str) -> Iterator[Event]:
     """Yields every event in a log, as fast as the file reads.
 
-    Unpaced on purpose. This is what a test or a headless check wants, and it
+    Unpaced on purpose. This is what a test or a ``--check`` run wants, and it
     is what :class:`LogSource` wraps to add a clock.
 
     The first line must be the header ``Recorder`` writes, declaring a version
-    this viewer reads. A headerless stream, a ``WriterSink`` capture for
-    instance, is refused rather than tolerated: the version gate only means
-    something if there is no unversioned way past it.
+    this viewer reads. See :func:`~continuo_viz.protocol.check_log_header`.
     """
     with Path(path).open(encoding="utf-8") as lines:
         check_log_header(next(lines, ""))
@@ -47,15 +45,23 @@ class LogSource:
 
     def __init__(self, path: Path | str) -> None:
         self._events = read_log(path)
-        self._pending: Event | None = next(self._events, None)
+        self._pending_event: Event | None = next(self._events, None)
         self._sim_origin: float | None = None
         self._wall_origin: float | None = None
-        self.done = self._pending is None
+
+    @property
+    def done(self) -> bool:
+        """Whether the log has been read to the end.
+
+        Derived rather than stored, so it cannot fall out of step with what is
+        left to read. One event is always held back unreturned, so this is
+        false until that one has been handed out and nothing replaced it.
+        """
+        return self._pending_event is None
 
     def drain(self) -> list[Event]:
         """Every event whose sim time the replay clock has now reached."""
-        if self._pending is None:
-            self.done = True
+        if self._pending_event is None:
             return []
 
         now = time.monotonic()
@@ -64,20 +70,21 @@ class LogSource:
         # and being asked for anything.
         if self._wall_origin is None:
             self._wall_origin = now
-            self._sim_origin = self._pending.event_time
+            self._sim_origin = self._pending_event.event_time
         assert self._sim_origin is not None
 
-        # Where the replay has got to, in the log's own time base.
-        reached = self._sim_origin + (now - self._wall_origin)
+        # How far into the log's own time base the replay has got.
+        sim_time_reached = self._sim_origin + (now - self._wall_origin)
 
-        ready: list[Event] = []
-        while self._pending is not None and self._pending.event_time <= reached:
-            ready.append(self._pending)
-            self._pending = next(self._events, None)
+        due_events: list[Event] = []
+        while (
+            self._pending_event is not None
+            and self._pending_event.event_time <= sim_time_reached
+        ):
+            due_events.append(self._pending_event)
+            self._pending_event = next(self._events, None)
 
-        if self._pending is None:
-            self.done = True
-        return ready
+        return due_events
 
     def close(self) -> None:
         """Closes the log, whether or not it was read to the end.
