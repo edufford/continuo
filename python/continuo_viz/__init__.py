@@ -5,9 +5,10 @@ run, which is the same reason the Rust side observes the transport instead of
 joining the world as a component: a component's presence changes the world
 hash, and watching must not.
 
-Reading a recorded log needs nothing beyond the standard library. Drawing needs
-``pygame`` and watching a live run needs ``eclipse-zenoh``, both optional, so
-the parser and the scene can be tested anywhere.
+Reading a recorded log needs nothing beyond the standard library, so the parser
+and the scene can be tested anywhere. Drawing brings in ``pygame`` and watching
+a live run brings in ``eclipse-zenoh``; both install with the package, and both
+are imported only by the code that needs them.
 """
 
 from .events import Event, Join, Leave, Message

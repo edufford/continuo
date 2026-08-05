@@ -37,16 +37,10 @@ class ZenohSource:
     """
 
     def __init__(self, world: str, config: Any = None) -> None:
-        # Imported here rather than at module scope so the package stays
-        # importable, lintable, and testable without Zenoh installed. Only a
-        # live session needs it.
-        try:
-            import zenoh
-        except ImportError as missing:  # pragma: no cover - depends on install
-            raise RuntimeError(
-                "watching a live run needs the `live` extra: "
-                "pip install 'continuo-viz[live]'"
-            ) from missing
+        # Imported here rather than at module scope so replaying a log does not
+        # pay to load Zenoh. It is a plain dependency, so failing to import it
+        # means a broken install.
+        import zenoh
 
         self.world = world
         self.done = False

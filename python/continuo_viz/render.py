@@ -155,12 +155,10 @@ class Renderer:
     def __init__(
         self, width: int = 1400, height: int = 240, title: str = "continuo"
     ) -> None:
-        try:
-            import pygame
-        except ImportError as missing:  # pragma: no cover - depends on install
-            raise RuntimeError(
-                "drawing needs the `render` extra: pip install 'continuo-viz[render]'"
-            ) from missing
+        # Imported here rather than at module scope so a run that draws nothing
+        # pays neither the SDL setup nor pygame's import banner. It is a plain
+        # dependency, so failing to import it means a broken install.
+        import pygame
 
         self._pygame = pygame
         pygame.init()

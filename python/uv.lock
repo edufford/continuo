@@ -15,12 +15,8 @@ wheels = [
 name = "continuo-viz"
 version = "0.1.0"
 source = { editable = "." }
-
-[package.optional-dependencies]
-live = [
+dependencies = [
     { name = "eclipse-zenoh" },
-]
-render = [
     { name = "pygame" },
 ]
 
@@ -32,10 +28,9 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "eclipse-zenoh", marker = "extra == 'live'", specifier = ">=1.0" },
-    { name = "pygame", marker = "extra == 'render'", specifier = ">=2.5" },
+    { name = "eclipse-zenoh", specifier = ">=1.0" },
+    { name = "pygame", specifier = ">=2.5" },
 ]
-provides-extras = ["render", "live"]
 
 [package.metadata.requires-dev]
 dev = [
