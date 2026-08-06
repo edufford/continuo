@@ -65,8 +65,8 @@ class LogSource:
     """A log replayed against a wall clock, one sim second per real second.
 
     Pacing is the only thing this adds to :func:`read_log`, which is what to
-    use when a log is being processed rather than watched. The first event's
-    sim time becomes the origin, so a log that does not start at zero still
+    use when a log is being processed rather than watched. The earliest instant
+    the log names becomes the origin, so one that does not start at zero still
     begins immediately rather than after a wait.
 
     A log is in recording order, which is not the order things take effect in,
@@ -99,6 +99,27 @@ class LogSource:
         """
         return self._pending_event is None and not self._lookahead_events
 
+    def _earliest_instant(self) -> float:
+        """Where the log starts, which is what a replay's clock is anchored to.
+
+        Not simply the first line's instant. A log opens with the joins of
+        everything already in the world, and those name when each component
+        will first step, which can be later than the messages behind them.
+        Anchoring there would make everything earlier instantly due and hand a
+        replay its first moments in a single frame.
+
+        So it fills the lookahead and takes the earliest instant in it. Reading
+        that far costs nothing extra, since the lookahead is where those events
+        were going anyway.
+        """
+        while (
+            self._pending_event is not None
+            and len(self._lookahead_events) < _NUM_LOOKAHEAD_EVENTS
+        ):
+            self._lookahead_events.append(self._pending_event)
+            self._pending_event = next(self._events, None)
+        return min(event.event_time for event in self._lookahead_events)
+
     def drain(self) -> list[Event]:
         """Every event whose sim time the replay clock has now reached."""
         if self.done:
@@ -109,11 +130,8 @@ class LogSource:
         # replay does not lose time to whatever happened between being built
         # and being asked for anything.
         if self._wall_origin is None:
-            # Nothing can have been set aside yet, so `done` above returning
-            # false means there is an event here to take the origin from.
-            assert self._pending_event is not None
             self._wall_origin = now
-            self._sim_origin = self._pending_event.event_time
+            self._sim_origin = self._earliest_instant()
         assert self._sim_origin is not None
 
         # How far into the log's own time base the replay has got.

@@ -136,6 +136,33 @@ def test_real_time_pacing_withholds_what_its_clock_has_not_reached(tmp_path):
     assert not source.done, "four seconds of log cannot have arrived yet"
 
 
+def test_a_replay_starts_at_the_earliest_instant_not_the_first_line(tmp_path):
+    # A log opens with the joins of everything already in the world, and those
+    # name when each component first steps, which can be later than the poses
+    # behind them. Anchoring the clock on the first line would put the origin
+    # in the future and hand out everything before it at once.
+    log = tmp_path / "run.jsonl"
+    log.write_text(
+        "\n".join(
+            [
+                json.dumps({"version": 1, "world_name": "demo", "world_seed": 42}),
+                json.dumps({"join": {"path": "ego/physics", "first_due": 5.0}}),
+                msg_line("ego", 0.0, 0.0),
+                msg_line("ego", 1.0, 1.0),
+                msg_line("ego", 2.0, 2.0),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    source = LogSource(log)
+    released = source.drain()
+
+    assert [event.event_time for event in released] == [0.0]
+    assert not source.done, "five seconds of log cannot have arrived at once"
+
+
 def log_with_a_join_from_the_future(path) -> None:
     """Two poses due now, with a join for a much later instant between them."""
     path.write_text(
