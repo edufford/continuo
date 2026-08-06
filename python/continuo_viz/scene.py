@@ -5,6 +5,12 @@ path like ``traffic1/physics``, and keys like ``continuo/demo/actor/traffic1/
 pose``. A viewer draws *cars*, so it needs an entity that groups those, knows
 which message moves it, and knows when it is gone.
 
+Every part of that is worked out here rather than read off the wire, because
+nothing publishes it. See ``TODO(scene-graph)`` in :meth:`Scene._apply_message`
+for what would replace the inference, and the matching note in
+:mod:`~continuo_viz.render` for the extents the renderer guesses for the same
+reason.
+
 **Presence is added on a pose and removed on a leave**, and the asymmetry is
 deliberate. A live viewer can attach at any moment and Zenoh replays no
 history, so waiting for a join event would mean never learning about cars that
@@ -72,7 +78,7 @@ class Scene:
     """
 
     def apply(self, event: Event) -> None:
-        """Folds one event into the scene."""
+        """Brings the scene up to date with one event, from whichever source."""
         if isinstance(event, Message):
             self._apply_message(event)
         elif isinstance(event, Join):
@@ -90,9 +96,10 @@ class Scene:
         if parsed is None:
             return
         name, signal = parsed
-        # Commands travel on the same side channel and are not drawable. The
-        # viewer subscribes to poses only over Zenoh, but a recorded log holds
-        # everything, so the filter has to exist here too.
+        # A pose is the only signal there is anything to draw for. Every other
+        # one an actor publishes, commands today and whatever a later world
+        # adds, stops here. Over Zenoh the viewer asks for poses alone, but a
+        # recorded log holds every signal, so the filter has to exist here too.
         if signal != "pose":
             return
         if message.publisher in self.departed:
