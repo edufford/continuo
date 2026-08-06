@@ -63,7 +63,26 @@ def pose_from_payload(payload: dict[str, Any]) -> PoseTopDown | None:
         logger.debug("pose payload %r cannot be read: %s", payload, unreadable)
         return None
 
-    # Yaw about +z, the only rotation a plan view can show. The standard
-    # extraction, and stable for the near-level orientations a road produces.
+    # Scaled to unit length first, because the yaw below is not scale
+    # invariant: its `1 - 2(y*y + z*z)` term assumes a norm of 1, so a
+    # quaternion 5% off unit turns a 30 degree heading into 32.9 degrees.
+    #
+    # Rust: `continuo_core::Quat::normalized`, including the all-zero
+    # quaternion, which has no direction to preserve and becomes the identity
+    # on both sides. Without that case Python raises ZeroDivisionError here,
+    # where Rust would carry a NaN heading into every corner of a drawn body.
+    norm = math.sqrt(w * w + qx * qx + qy * qy + qz * qz)
+    if norm == 0.0:
+        w, qx, qy, qz = 1.0, 0.0, 0.0, 0.0
+    else:
+        w, qx, qy, qz = w / norm, qx / norm, qy / norm, qz / norm
+
+    # Yaw about +z, the only rotation a plan view can show, taken from the
+    # intrinsic Z-Y-X (aerospace 3-2-1) decomposition.
+    #
+    # Rust: the same expression as `continuo_core::Quat::to_euler`, which cites
+    # Diebel, "Representing Attitude: Euler Angles, Unit Quaternions, and
+    # Rotation Vectors" (2006), eq. 290, and Wikipedia "Conversion between
+    # quaternions and Euler angles" (Quaternion to ZYX Euler).
     yaw = math.atan2(2.0 * (w * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz))
     return PoseTopDown(x=x, y=y, yaw=yaw)

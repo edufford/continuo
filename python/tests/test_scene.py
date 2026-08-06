@@ -168,6 +168,39 @@ def test_yaw_comes_out_of_the_quaternion():
     assert pose.yaw == pytest.approx(quarter_turn)
 
 
+def test_a_quaternion_off_unit_length_still_gives_its_true_heading():
+    # The yaw expression is not scale invariant, so a quaternion that has
+    # drifted would otherwise read as a heading the car is not on. Matches
+    # `Quat::normalized` on the Rust side, which scales before converting.
+    quarter_turn = math.pi / 2
+    half = quarter_turn / 2
+    drifted = {
+        "w": math.cos(half) * 1.05,
+        "x": 0.0,
+        "y": 0.0,
+        "z": math.sin(half) * 1.05,
+    }
+
+    pose = pose_from_payload(pose_payload(0.0, orientation=drifted))
+
+    assert pose is not None
+    assert pose.yaw == pytest.approx(quarter_turn)
+
+
+def test_a_quaternion_with_no_direction_reads_as_no_rotation():
+    # All zeroes is not a rotation, and scaling it to unit length divides by
+    # zero. This guards the guard rather than the formula: the yaw expression
+    # answers 0 for it either way, and what would break is normalising without
+    # the case for it. `Quat::normalized` answers with the identity, so this
+    # does too.
+    no_direction = {"w": 0.0, "x": 0.0, "y": 0.0, "z": 0.0}
+
+    pose = pose_from_payload(pose_payload(0.0, orientation=no_direction))
+
+    assert pose is not None
+    assert pose.yaw == 0.0
+
+
 def test_a_malformed_payload_is_ignored_rather_than_fatal():
     assert pose_from_payload({}) is None
     assert pose_from_payload({"position": {"x": None, "y": 0, "z": 0}}) is None
