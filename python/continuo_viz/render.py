@@ -118,6 +118,24 @@ class Camera:
         )
 
 
+# Degrees around the color wheel, which is the space a hue is picked from.
+# Named because the two uses below have to be the same number: one picks a
+# degree, the other scales it to the 0 to 1 that `colorsys` wants.
+_HUE_DEGREES = 360
+
+# The saturation and brightness every derived actor color is drawn at.
+#
+# Held constant so that hue is the only thing that varies, which is the whole
+# point of going through HSV: one dial to turn, and two cars that differ do so
+# in a way that reads as identity rather than as lighting.
+#
+# Neither is at full. These two are chosen by eye, for colors that stay legible
+# both as a body against `_Color.ROAD` and as 15 px label text, and nothing
+# measured backs the exact values.
+_ACTOR_SATURATION = 0.55
+_ACTOR_BRIGHTNESS = 0.95
+
+
 def actor_color(name: str, focused: bool) -> tuple[int, int, int]:
     """A stable color per actor, so a car keeps its identity across frames.
 
@@ -125,15 +143,29 @@ def actor_color(name: str, focused: bool) -> tuple[int, int, int]:
     and a live view of the same run color the same cars the same way, and a
     late-attaching viewer agrees with one that watched from the start.
 
+    ``focused`` marks the actor the viewer is following, which takes the one
+    reserved color instead of a derived one so that the car you asked to watch
+    can be found without reading a label. It is the only actor whose color does
+    not follow from its name.
+
     ``crc32`` rather than the built-in ``hash``, which is seeded per process
     for strings: two viewers of one run are two processes, so ``hash`` would
-    have given each of them its own palette and quietly broken the property
-    this function exists for.
+    have given each its own palette and quietly broken the property above. A
+    fixed seed is not something this module can ask for either, since
+    ``PYTHONHASHSEED`` is read once at interpreter start and nothing here can
+    reach back before that. Any hash stable across processes would do, and
+    ``crc32`` is the cheapest in the standard library that hands back an int.
+
+    Two actors can still land on near enough the same hue, and that is not the
+    hash's doing: a handful of names over a wheel of 360 collide by birthday,
+    and blake2b and md5 cluster the demo's cast just as tightly. Spreading them
+    properly would mean assigning by arrival order, which is the one thing this
+    function must not do.
     """
     if focused:
         return _Color.FOCUS
-    hue = (zlib.crc32(name.encode("utf-8")) % 360) / 360.0
-    red, green, blue = colorsys.hsv_to_rgb(hue, 0.55, 0.95)
+    hue = (zlib.crc32(name.encode("utf-8")) % _HUE_DEGREES) / _HUE_DEGREES
+    red, green, blue = colorsys.hsv_to_rgb(hue, _ACTOR_SATURATION, _ACTOR_BRIGHTNESS)
     return (int(red * 255), int(green * 255), int(blue * 255))
 
 
