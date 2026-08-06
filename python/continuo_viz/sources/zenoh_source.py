@@ -82,7 +82,14 @@ class ZenohSource:
 
     @staticmethod
     def subscription_keys(world_name: str) -> list[str]:
-        """What a viewer subscribes to, and nothing more."""
+        """What a viewer subscribes to, and nothing more.
+
+        TODO(keys): this pair is what the demo needs, and is fixed because of
+        it. A pose is the only signal there is anything to draw for, and
+        membership is the only way to learn a car has gone. A world with
+        anything else worth watching wants these chosen by the caller rather
+        than written in here.
+        """
         return [
             f"{VIZ_KEY_ROOT}/{world_name}/actor/*/pose",
             f"{VIZ_KEY_ROOT}/{world_name}/conductor/membership/status",
