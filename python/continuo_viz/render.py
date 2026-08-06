@@ -15,10 +15,11 @@ from __future__ import annotations
 import colorsys
 import math
 import zlib
+from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import Enum
 
-from .scene import Scene
+from .scene import Actor, Scene
 
 # Nominal car footprint in meters, length by width.
 #
@@ -63,9 +64,12 @@ TARGET_FPS = 60
 
 # How wide a slice of road the camera shows, in meters.
 #
-# Traffic spawns and retires about 100 m either side of the ego, so this is
-# what it takes to see a car coming rather than have it appear alongside.
-VIEW_METERS = 200.0
+# Sixty either side of the followed car. The demo retires traffic sixty meters
+# behind the ego, so a car leaves the view as it leaves the world rather than
+# vanishing mid-screen. Traffic is seeded further ahead than any width worth
+# using, so cars arrive at the right edge either way, and a narrower slice at
+# least draws them large enough to tell apart.
+VIEW_METERS = 120.0
 
 # Pixels between the HUD and the road, leaving the top of the window to text.
 _HUD_HEIGHT = 46
@@ -182,6 +186,39 @@ def actor_color(name: str, focused: bool) -> tuple[int, int, int]:
     return (int(red * 255), int(green * 255), int(blue * 255))
 
 
+def actors_in_view(camera: Camera, actors: Iterable[Actor]) -> list[Actor]:
+    """The actors the window shows, ordered left to right along the road.
+
+    Culling matters more than it sounds, because a label does not fall off the
+    edge by itself: :meth:`Renderer._draw_labels` holds every name inside the
+    window so a car straddling the edge keeps its own. Without this, a car far
+    outside the view still puts its name against the edge with nothing under
+    it, which on the demo happens for cars over a hundred meters away.
+
+    Only the along-road axis is checked. The camera never leaves the road's own
+    axis, so nothing the viewer draws leaves the window vertically.
+
+    Ordered by position so labels are placed left to right, which makes which
+    one gets dropped in a crowd predictable rather than dependent on dictionary
+    order. Bodies inherit that order, so a car further along paints over one
+    behind it. Cars do overlap on screen, two in a lane a few meters apart, and
+    this is what decides them. Stable rather than chosen: nothing here reasons
+    about which car should be on top, because at one elevation there is no
+    answer. See the extents note above :data:`CAR_LENGTH` for when there is.
+    """
+    # TODO(perf): sorted from scratch on every frame, so sixty times a second,
+    # when almost nothing about the order changed since the last one. A pose
+    # moves one actor rather than reshuffling all of them, so a scene that kept
+    # its actors in this order as poses arrived would leave nothing to do here.
+    # Not worth it for a handful of cars; worth revisiting alongside the
+    # scaling work, where the count is the point.
+    half_view = camera.width / camera.scale * 0.5 + CAR_LENGTH * 0.5
+    return sorted(
+        (actor for actor in actors if abs(actor.pose.x - camera.center_x) <= half_view),
+        key=lambda actor: actor.pose.x,
+    )
+
+
 def body_corners(
     x: float, y: float, yaw: float, length: float, width: float
 ) -> list[tuple[float, float]]:
@@ -278,24 +315,7 @@ class Renderer:
         self.surface.fill(_Color.BACKGROUND)
         self._draw_road(camera)
 
-        # Ordered by position so labels are placed left to right, which makes
-        # which one gets dropped in a crowd predictable instead of dependent
-        # on dictionary order.
-        #
-        # Bodies inherit that order, so a car further along the road paints
-        # over one behind it. Cars do overlap on screen, two in a lane a few
-        # meters apart, and this is what decides them. It is stable rather
-        # than chosen: nothing here reasons about which car should be on top,
-        # because at one elevation there is no answer. See the extents note
-        # above for when there is.
-        #
-        # TODO(perf): sorted from scratch on every frame, so sixty times a
-        # second, when almost nothing about the order changed since the last
-        # one. A pose moves one actor rather than reshuffling all of them, so
-        # a scene that kept its actors in this order as poses arrived would
-        # leave nothing to do here. Not worth it for a handful of cars; worth
-        # revisiting alongside the scaling work, where the count is the point.
-        in_view = sorted(scene.actors.values(), key=lambda actor: actor.pose.x)
+        in_view = actors_in_view(camera, scene.actors.values())
         for actor in in_view:
             self._draw_body(camera, actor, focused=actor.name == follow)
         self._draw_labels(camera, in_view, follow)

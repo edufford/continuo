@@ -11,7 +11,15 @@ import math
 
 import pytest
 
-from continuo_viz.render import Camera, actor_color, body_corners
+from continuo_viz.pose import PoseTopDown
+from continuo_viz.render import (
+    CAR_LENGTH,
+    Camera,
+    actor_color,
+    actors_in_view,
+    body_corners,
+)
+from continuo_viz.scene import Actor
 
 
 def camera(center_x: float = 0.0, scale: float = 7.0) -> Camera:
@@ -107,3 +115,51 @@ def test_colors_are_the_same_in_every_process():
 
 def test_the_followed_actor_is_highlighted():
     assert actor_color("ego", focused=True) != actor_color("ego", focused=False)
+
+
+def actor_at(name: str, x: float) -> Actor:
+    return Actor(
+        name=name,
+        pose_source=f"{name}/physics",
+        pose=PoseTopDown(x, 0.0, 0.0),
+        updated_at=0.0,
+    )
+
+
+def test_only_the_actors_on_screen_are_drawn_and_named():
+    # A label does not fall off the edge by itself: `_draw_labels` holds every
+    # name inside the window so a car straddling the edge keeps its own. Without
+    # culling, a car far outside the view puts its name against the edge with no
+    # car under it, which on the demo happened for cars over a hundred meters
+    # away.
+    view = camera(center_x=0.0, scale=1400 / 120.0)
+    half_view = 60.0
+
+    on_screen = actors_in_view(
+        view,
+        [
+            actor_at("far_behind", -half_view - 50.0),
+            actor_at("behind", -half_view + 10.0),
+            actor_at("ego", 0.0),
+            actor_at("ahead", half_view - 10.0),
+            actor_at("far_ahead", half_view + 50.0),
+        ],
+    )
+
+    assert [actor.name for actor in on_screen] == ["behind", "ego", "ahead"]
+
+
+def test_a_car_straddling_the_edge_is_still_drawn():
+    # Culled on its center, so a car whose body is half on screen would vanish
+    # a whole car length before it left the window.
+    view = camera(center_x=0.0, scale=1400 / 120.0)
+    straddling = actor_at("entering", 60.0 + CAR_LENGTH * 0.4)
+
+    assert actors_in_view(view, [straddling]) == [straddling]
+
+
+def test_actors_are_ordered_along_the_road_not_by_arrival():
+    view = camera(center_x=0.0, scale=1400 / 120.0)
+    scrambled = [actor_at("c", 20.0), actor_at("a", -20.0), actor_at("b", 0.0)]
+
+    assert [actor.name for actor in actors_in_view(view, scrambled)] == ["a", "b", "c"]
