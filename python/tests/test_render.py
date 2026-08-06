@@ -11,39 +11,39 @@ import math
 
 import pytest
 
-from continuo_viz.render import Camera, actor_colour, body_corners
+from continuo_viz.render import Camera, actor_color, body_corners
 
 
-def camera(centre_x: float = 0.0, scale: float = 7.0) -> Camera:
-    return Camera(centre_x=centre_x, centre_y=0.0, scale=scale, width=1400, height=560)
+def camera(center_x: float = 0.0, scale: float = 7.0) -> Camera:
+    return Camera(center_x=center_x, center_y=0.0, scale=scale, width=1400, height=560)
 
 
-def test_the_camera_centre_lands_in_the_middle_of_the_window():
-    assert camera(centre_x=500.0).to_screen(500.0, 0.0) == (700.0, 280.0)
+def test_the_camera_center_lands_in_the_middle_of_the_window():
+    assert camera(center_x=500.0).to_pixels(500.0, 0.0) == (700.0, 280.0)
 
 
-def test_the_world_centres_below_the_hud_rather_than_on_the_whole_window():
+def test_the_world_centers_below_the_hud_rather_than_on_the_whole_window():
     # Otherwise the HUD takes the space above the road and the picture sits
     # high with a dead band underneath it.
     reserved = Camera(
-        centre_x=0.0, centre_y=0.0, scale=7.0, width=1400, height=560, top=60
+        center_x=0.0, center_y=0.0, scale=7.0, width=1400, height=560, top_y=60
     )
 
-    assert reserved.to_screen(0.0, 0.0)[1] == 310.0
+    assert reserved.to_pixels(0.0, 0.0)[1] == 310.0
 
 
 def test_y_is_drawn_upward():
     # A plan view has +y up the screen, but pixels count downward, so getting
     # this backwards silently mirrors every lane change.
-    _, above = camera().to_screen(0.0, 3.5)
-    _, below = camera().to_screen(0.0, -3.5)
+    _, above = camera().to_pixels(0.0, 3.5)
+    _, below = camera().to_pixels(0.0, -3.5)
 
     assert above < below
 
 
 def test_moving_the_camera_moves_the_world_the_other_way():
-    ahead = camera(centre_x=0.0).to_screen(100.0, 0.0)[0]
-    alongside = camera(centre_x=100.0).to_screen(100.0, 0.0)[0]
+    ahead = camera(center_x=0.0).to_pixels(100.0, 0.0)[0]
+    alongside = camera(center_x=100.0).to_pixels(100.0, 0.0)[0]
 
     assert ahead > alongside
 
@@ -67,7 +67,7 @@ def test_a_body_turned_a_quarter_turn_swaps_its_extents():
     assert max(ys) - min(ys) == pytest.approx(4.5)
 
 
-def test_a_body_is_centred_on_its_pose():
+def test_a_body_is_centered_on_its_pose():
     corners = body_corners(120.0, -3.5, yaw=0.4, length=4.5, width=1.8)
     xs = [x for x, _ in corners]
     ys = [y for _, y in corners]
@@ -85,25 +85,25 @@ def test_the_first_two_corners_are_the_leading_edge():
     assert front_right[0] == pytest.approx(2.25)
 
 
-def test_an_actor_keeps_its_colour_across_frames_and_sources():
+def test_an_actor_keeps_its_color_across_frames_and_sources():
     # Derived from the name, not from arrival order, so a replay and a live
     # view of the same run agree, and so does a viewer that attached late.
-    assert actor_colour("traffic7", focused=False) == actor_colour(
+    assert actor_color("traffic7", focused=False) == actor_color(
         "traffic7", focused=False
     )
-    assert actor_colour("traffic7", focused=False) != actor_colour(
+    assert actor_color("traffic7", focused=False) != actor_color(
         "traffic8", focused=False
     )
 
 
-def test_colours_are_the_same_in_every_process():
+def test_colors_are_the_same_in_every_process():
     # Pinned values, which is the only way a single-process test can catch a
     # per-process hash. Python seeds `hash()` for strings on each start, so a
     # replay and a live view are two processes and would have disagreed. These
     # constants failing is the signal that a seeded hash crept back in.
-    assert actor_colour("ego", focused=False) == (242, 109, 233)
-    assert actor_colour("traffic7", focused=False) == (109, 242, 233)
+    assert actor_color("ego", focused=False) == (242, 109, 233)
+    assert actor_color("traffic7", focused=False) == (109, 242, 233)
 
 
 def test_the_followed_actor_is_highlighted():
-    assert actor_colour("ego", focused=True) != actor_colour("ego", focused=False)
+    assert actor_color("ego", focused=True) != actor_color("ego", focused=False)

@@ -59,7 +59,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--follow",
         default=DEFAULT_FOLLOW,
         help=(
-            f"actor to keep centred (default: {DEFAULT_FOLLOW}); "
+            f"actor to keep centered (default: {DEFAULT_FOLLOW}); "
             "pass an empty string to fit all actors instead"
         ),
     )
