@@ -89,6 +89,11 @@ class Scene:
             self._apply_leave(event)
 
     def _apply_message(self, message: Message) -> None:
+        """Everything true of any message, then whatever its signal means.
+
+        The shared half holds whatever the signal is, so a handler starts from
+        a message already known to be worth reading.
+        """
         self.messages_seen += 1
         self.sim_time = max(self.sim_time, message.sim_time)
 
@@ -96,14 +101,22 @@ class Scene:
         if parsed is None:
             return
         name, signal = parsed
-        # A pose is the only signal there is anything to draw for. Every other
-        # one an actor publishes, commands today and whatever a later world
-        # adds, stops here. Over Zenoh the viewer asks for poses alone, but a
-        # recorded log holds every signal, so the filter has to exist here too.
-        if signal != "pose":
-            return
+
+        # Ordering is not guaranteed across a live network, so a straggler
+        # behind its publisher's leave is ignored whatever it carries.
         if message.publisher in self.departed:
             return
+
+        # A pose is the only signal there is anything to do with yet. Every
+        # other one an actor publishes, commands today and whatever a later
+        # world adds, stops here until there is a handler for it. Over Zenoh
+        # the viewer asks for poses alone, but a recorded log holds every
+        # signal, so the filter has to exist here too.
+        if signal == "pose":
+            self._apply_pose(name, message)
+
+    def _apply_pose(self, name: str, message: Message) -> None:
+        """Moves an actor, adding it if this is the first pose seen for it."""
         pose = pose_from_payload(message.payload)
         if pose is None:
             return
