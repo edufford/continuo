@@ -37,6 +37,18 @@ from .scene import Scene
 CAR_LENGTH = 4.5
 CAR_WIDTH = 1.8
 
+# The windshield, which is what makes a car's heading readable at a glance.
+#
+# Proportions of the body rather than absolute meters, so they stay right if
+# the footprint above ever comes from a published extent instead of a guess.
+# Drawn as an outline, set forward of center, and entirely within the body: a
+# mark laid on the outline itself would fall half on the road and only shorten
+# the car, which at this scale is one pixel and reads as nothing.
+_WINDSHIELD_LENGTH = CAR_LENGTH * 0.20
+_WINDSHIELD_WIDTH = CAR_WIDTH * 0.65
+_WINDSHIELD_FORWARD = CAR_LENGTH * 0.20
+_WINDSHIELD_PIXELS = 1
+
 # Lateral offsets to draw lane markings at.
 #
 # TODO(map): these are *invented*. `traffic_world.rs` is explicit that "a lane
@@ -77,6 +89,7 @@ class _Color(tuple, Enum):
     LANE_LINE = (70, 74, 84)
     TEXT = (208, 212, 220)
     FOCUS = (250, 214, 92)
+    WINDSHIELD = (0, 0, 0)
 
 
 @dataclass
@@ -309,10 +322,27 @@ class Renderer:
             )
         ]
         self._pygame.draw.polygon(self.surface, color, corners)
-        # The leading edge, so heading is readable at a glance and a car
-        # travelling backwards would be obvious rather than merely wrong.
-        self._pygame.draw.line(
-            self.surface, _Color.BACKGROUND, corners[0], corners[1], 2
+
+        # The windshield, so heading is readable at a glance and a car
+        # travelling backwards is obvious rather than merely wrong. Sitting
+        # forward of center is what says which way the car faces; being a
+        # windshield rather than a stripe is what makes that read as a car.
+        #
+        # `body_corners` is a rotated rectangle either way, so it places this
+        # one too, about its own center rather than the body's.
+        cos_yaw, sin_yaw = math.cos(actor.pose.yaw), math.sin(actor.pose.yaw)
+        windshield = [
+            camera.to_pixels(x, y)
+            for x, y in body_corners(
+                actor.pose.x + _WINDSHIELD_FORWARD * cos_yaw,
+                actor.pose.y + _WINDSHIELD_FORWARD * sin_yaw,
+                actor.pose.yaw,
+                _WINDSHIELD_LENGTH,
+                _WINDSHIELD_WIDTH,
+            )
+        ]
+        self._pygame.draw.polygon(
+            self.surface, _Color.WINDSHIELD, windshield, _WINDSHIELD_PIXELS
         )
 
     def _draw_labels(self, camera: Camera, actors: list, follow: str | None) -> None:
