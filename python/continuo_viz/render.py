@@ -288,6 +288,13 @@ class Renderer:
         # than chosen: nothing here reasons about which car should be on top,
         # because at one elevation there is no answer. See the extents note
         # above for when there is.
+        #
+        # TODO(perf): sorted from scratch on every frame, so sixty times a
+        # second, when almost nothing about the order changed since the last
+        # one. A pose moves one actor rather than reshuffling all of them, so
+        # a scene that kept its actors in this order as poses arrived would
+        # leave nothing to do here. Not worth it for a handful of cars; worth
+        # revisiting alongside the scaling work, where the count is the point.
         in_view = sorted(scene.actors.values(), key=lambda actor: actor.pose.x)
         for actor in in_view:
             self._draw_body(camera, actor, focused=actor.name == follow)
@@ -365,6 +372,11 @@ class Renderer:
         rows = (road_top - 21, road_top - 38)
         taken: list[tuple[float, float, int]] = []
 
+        # TODO(perf): a second full sort of the same actors, every frame. This
+        # order is the one `draw` already built with the followed car lifted to
+        # the front, so it is an O(n) move of one element rather than a sort of
+        # its own. Left as a sort because saying so in one line beats a lift
+        # that has to stay in step with a caller's ordering.
         ordered = sorted(actors, key=lambda actor: (actor.name != follow, actor.pose.x))
         for actor in ordered:
             name = self.font.render(
