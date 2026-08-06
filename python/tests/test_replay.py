@@ -12,8 +12,11 @@ get right and a static scene would prove nothing.
 from __future__ import annotations
 
 import json
+import logging
+from types import SimpleNamespace
 
 from continuo_viz.scene import Scene
+from continuo_viz.sources import log_source
 from continuo_viz.sources.log_source import LogSource, read_log
 
 IDENTITY = {"w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0}
@@ -131,6 +134,93 @@ def test_real_time_pacing_withholds_what_its_clock_has_not_reached(tmp_path):
     assert first, "whatever sits at the origin is current straight away"
     assert all(event.event_time == 0.0 for event in first)
     assert not source.done, "four seconds of log cannot have arrived yet"
+
+
+def log_with_a_join_from_the_future(path) -> None:
+    """Two poses due now, with a join for a much later instant between them."""
+    path.write_text(
+        "\n".join(
+            [
+                json.dumps({"version": 1, "world_name": "demo", "world_seed": 42}),
+                msg_line("ego", 0.0, 0.0),
+                json.dumps({"join": {"path": "traffic1/physics", "first_due": 30.0}}),
+                msg_line("ego", 1.0, 0.0),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def test_a_join_from_the_future_does_not_hold_back_the_poses_behind_it(tmp_path):
+    # A join is written where it happened but names the later instant its
+    # component first steps, so a log is not sorted by `event_time`. Reading
+    # used to stop at the first event it had not reached, so one such line held
+    # back every pose behind it and the view froze until its instant arrived.
+    log = tmp_path / "run.jsonl"
+    log_with_a_join_from_the_future(log)
+
+    source = LogSource(log)
+    released = source.drain()
+
+    assert [type(event).__name__ for event in released] == ["Message", "Message"]
+    assert not source.done, "the join is still owed until its own instant"
+
+
+def test_a_join_from_the_future_is_delivered_when_its_instant_arrives(
+    tmp_path, monkeypatch
+):
+    # Held back, not dropped. Reading past it must not turn into skipping it.
+    log = tmp_path / "run.jsonl"
+    log_with_a_join_from_the_future(log)
+
+    # A clock the test moves rather than one it waits on, so thirty seconds
+    # pass between the two drains without the suite taking thirty seconds.
+    now = 1000.0
+    monkeypatch.setattr(log_source, "time", SimpleNamespace(monotonic=lambda: now))
+
+    source = LogSource(log)
+    source.drain()
+    now += 31.0
+    released = source.drain()
+
+    assert [type(event).__name__ for event in released] == ["Join"]
+    assert source.done
+
+
+def test_a_lookahead_too_small_for_the_log_says_so_rather_than_just_pausing(
+    tmp_path, monkeypatch, caplog
+):
+    # The one way a replay can still pause: every slot holds an event whose
+    # instant has not come, so nothing can be read past them. Silent would mean
+    # a picture that stops for no visible reason.
+    monkeypatch.setattr(log_source, "_NUM_LOOKAHEAD_EVENTS", 2)
+    log = tmp_path / "run.jsonl"
+    log.write_text(
+        "\n".join(
+            [
+                json.dumps({"version": 1, "world_name": "demo", "world_seed": 42}),
+                msg_line("ego", 0.0, 0.0),
+                json.dumps({"join": {"path": "a/physics", "first_due": 30.0}}),
+                json.dumps({"join": {"path": "b/physics", "first_due": 30.0}}),
+                json.dumps({"join": {"path": "c/physics", "first_due": 30.0}}),
+                msg_line("ego", 1.0, 0.0),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    source = LogSource(log)
+    with caplog.at_level(logging.WARNING):
+        released = source.drain()
+        source.drain()
+
+    assert [type(event).__name__ for event in released] == ["Message"]
+    assert not source.done, "the second pose is stuck behind joins that do not fit"
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1, "said once per stall, not once per drain"
+    assert "lookahead" in warnings[0].getMessage()
 
 
 def test_a_log_source_closes_the_file_it_holds_open(tmp_path):
