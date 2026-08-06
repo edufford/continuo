@@ -1,23 +1,13 @@
 """Drawing a scene, top down.
 
-The road the demo drives is about 900 m long and 10 m wide, so the view is the
-awkward shape that implies. Two ways to handle that, and this takes the second:
+The scale is uniform on both axes and the camera follows one car, rather than
+stretching a long thin road to fill the window. Stretching would fit the whole
+route on screen but shear every car the moment it turned, and turning is what
+there is to watch. The cost is that the window has to be the shape of what it
+shows, so the default is wide and short.
 
-- scale x and y independently, which fits the whole road on screen but shears
-  every car the moment it turns, and lane changes are the thing worth watching
-- keep the scale uniform and show a strip of road that follows a car, which
-  draws honest shapes and gives up seeing the whole route at once
-
-A uniform scale means the window has to be the shape of what it shows, so the
-default one is wide and short: a 10.5 m road drawn at the same scale as a 200 m
-stretch of it occupies about 75 px, and putting that in a square window would
-be one thin strip in a field of background. 200 m is chosen from the demo
-rather than from taste, since traffic spawns and retires roughly 100 m either
-side of the ego, so a narrower view would hide the cars worth watching.
-
-Frame rate is fixed and independent of message rate. The world publishes a pose
-every 10 ms per actor, roughly 700 a second across the demo, and drawing each
-one would be pointless as well as impossible.
+Frame rate is fixed and independent of message rate, so a world can publish as
+fast as it likes without the renderer trying to draw every message.
 """
 
 from __future__ import annotations
