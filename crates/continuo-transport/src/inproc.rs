@@ -19,6 +19,10 @@ use crate::Transport;
 /// `Message::payload` becoming an `Arc<[u8]>`, which leaves the queues alone
 /// and is worth revisiting with PLAN.md's deferred large-payload work, where a
 /// camera frame would otherwise be copied once per subscriber.
+///
+/// What does limit how large a world can be is delivery rather than copying:
+/// see the note on [`Transport::publish`] below, which `traffic_scale`
+/// measures.
 #[derive(Debug, Default)]
 pub struct InProcTransport {
     /// Subscriber → subscribed key expressions.
@@ -43,6 +47,27 @@ impl Transport for InProcTransport {
         self.queues.remove(subscriber);
     }
 
+    // TODO(perf): this scan is what limits how large a world can be run.
+    //
+    // Every publish walks every subscription and tests every key expression.
+    // The actors subscribe per actor, a controller to one car's pose and a
+    // physics body to one car's commands, so exactly one subscriber matches
+    // and finding it costs a test against every other. At `traffic_scale`'s
+    // 100 cars that is 330,200 messages against 200 subscriptions: about 66
+    // million matches to make 330,200 deliveries.
+    //
+    // The consequence is measured rather than assumed. That example runs the
+    // demo's size against a scaled one and reports component steps per second
+    // of wall time, which is the rate that stays flat when cost is linear in
+    // the population. It does not stay flat: 100 cars manage roughly an
+    // eighth of what the demo's seven do.
+    //
+    // The fix is an index from key to subscribers rather than a scan, which
+    // is harder than it sounds only because subscriptions are key
+    // *expressions*: a literal key can be looked up directly, and the
+    // wildcard ones still need matching, so the shape is probably an exact
+    // map plus a much smaller list of patterns. Worth doing before a world
+    // is expected to hold hundreds of components.
     fn publish(&mut self, message: Message) {
         for (subscriber, keys) in &self.subscriptions {
             if keys.iter().any(|k| k.matches(&message.key)) {

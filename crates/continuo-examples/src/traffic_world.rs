@@ -223,6 +223,63 @@ pub fn setup_live_traffic_scenario<T: Transport>(
     Ok(())
 }
 
+/// How far along the road each row of cars starts behind the one ahead,
+/// once [`setup_scale_scenario`] has filled every lane and wrapped.
+const SCALE_ROW_SPACING: f64 = 50.0;
+
+/// The size the live demo holds at once, and the baseline a scaling run
+/// measures against: the ego plus its traffic, across the ego's lane and the
+/// traffic's.
+///
+/// Public so that a scaling run has something to measure against, namely the
+/// size everything else in the project is tuned for. It is the *size* that
+/// carries over and not the scenario: the demo decides its traffic while it
+/// runs, and [`setup_scale_scenario`] holds the cast still.
+pub const BASELINE_DEMO_CARS: usize = TRAFFIC_POPULATION + 1;
+pub const BASELINE_DEMO_LANES: usize = TRAFFIC_LANES.len() + 1;
+
+/// Registers `cars` cars across `lanes` lanes, for measuring what a world
+/// costs as it grows rather than for watching anything happen in it.
+///
+/// No spawner and no logger, and neither is an oversight. A spawner would
+/// make the population a moving target, which is the one thing a
+/// measurement of population wants held still, and a pose logger at this
+/// size writes more than the run it is reporting on.
+///
+/// Cars fill the lanes and then wrap onto another row further along the
+/// road, so `cars` need not divide evenly by `lanes`. Speeds follow a fixed
+/// pattern rather than the live scenario's random spread: what is wanted is
+/// a repeatable amount of work, not a plausible scene, and nothing here
+/// avoids anything else because nothing here models a collision.
+///
+/// # Panics
+///
+/// If `lanes` is zero, which is not a world.
+pub fn setup_scale_scenario<T: Transport>(
+    conductor: &mut Conductor<T>,
+    cars: usize,
+    lanes: usize,
+) -> Result<(), ConductorError> {
+    assert!(lanes > 0, "a world needs at least one lane");
+
+    for index in 0..cars {
+        let lane_offset = ((index % lanes) as f64 - (lanes - 1) as f64 * 0.5) * LANE_WIDTH;
+        let start_s = (index / lanes) as f64 * SCALE_ROW_SPACING;
+        let speed = TRAFFIC_SPEED.0 + (index % 7) as f64;
+        add_car(
+            conductor,
+            &format!("car{index}"),
+            start_s,
+            lane_offset,
+            speed,
+            SimTime::ZERO,
+        )?;
+    }
+
+    // Return success; the whole cast is registered.
+    Ok(())
+}
+
 /// Sets up the other scenario: the same ego, at `ego_speed` instead of the
 /// scenario's own 30 m/s, against a playback double of every car
 /// `recorded` contained. Returns how many playback doubles joined.

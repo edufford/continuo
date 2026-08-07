@@ -92,6 +92,17 @@ impl KeyExpr {
     /// `key` is expected to be wildcard-free (which is true of every
     /// published key; wildcards live only in subscriptions).
     pub fn matches(&self, key: &KeyExpr) -> bool {
+        // TODO(perf): two heap allocations on every call, in what is the
+        // innermost loop of message delivery. `InProcTransport::publish`
+        // tests every subscription against every message, so `traffic_scale`
+        // at 100 cars reaches this about 66 million times over a 30 s run and
+        // therefore allocates about 132 million times.
+        //
+        // Collecting is only for the `**` case, which needs to slice from an
+        // arbitrary offset. Every other case walks front to back and could
+        // compare the iterators directly, so the allocation is the general
+        // shape paying for the rare one. See the note on that `publish`,
+        // which is the larger half of the same cost.
         let expr: Vec<&str> = self.chunks().collect();
         let key: Vec<&str> = key.chunks().collect();
 
