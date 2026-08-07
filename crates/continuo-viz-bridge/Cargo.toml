@@ -7,11 +7,17 @@ license.workspace = true
 rust-version.workspace = true
 
 [features]
-# Zenoh is off by default because it is 300-odd transitive crates against the
-# workspace's 21, and it pulls an async runtime. Everything except the sink
-# itself works without it, so the default build, the tests, and CI's lint and
-# test steps never pay for it.
-default = []
+# On by default because publishing to a live viewer is what this crate is
+# for, so an ordinary build compiles the Zenoh sink. That sink has no tests of
+# its own, since exercising it needs a live session and two processes, so
+# compiling is the only thing standing between it and rot. Zenoh is 300-odd
+# transitive crates against the workspace's 21 and pulls an async runtime,
+# which is what that costs.
+#
+# Still a feature rather than a plain dependency: everything except that sink
+# works without it, so `--no-default-features` gives a bridge that can still
+# frame messages and write them to a log.
+default = ["zenoh"]
 zenoh = ["dep:zenoh"]
 
 [dependencies]
