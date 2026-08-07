@@ -7,9 +7,10 @@
 //! pose logger at the larger size writes more than the run it reports on. See
 //! `traffic` for the watchable demo.
 //!
-//! What it finds is that the cost is not linear in the population: the work
-//! grows with the cast, and so does the cost of each unit of it. The notes on
-//! `InProcTransport::publish` and `KeyExpr::matches` are where it goes.
+//! The number to read is component steps per second of wall time. It is the
+//! one that stays flat when cost is linear in the population, so a scaled run
+//! managing the same rate as the baseline means the world grew and the cost
+//! of each step did not.
 //!
 //! **Run it in release.** A debug build measures the optimiser rather than
 //! the conductor:
