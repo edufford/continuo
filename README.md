@@ -97,7 +97,9 @@ instant, and repeats.
 | [`continuo-transport`](crates/continuo-transport/) | `Transport` trait, deterministic `InProcTransport`, `MonitorTransport` for out-of-band message recording |
 | [`continuo-conductor`](crates/continuo-conductor/) | Registry (component tree as data), event schedule, the conductor loop, tick fingerprints, and the event log: `record`, `verify`, `playback` |
 | [`continuo-actors`](crates/continuo-actors/) | Sample components: waypoint path, path-follow controller, unicycle physics, pose logger, traffic spawner |
-| [`continuo-examples`](crates/continuo-examples/) | Runnable example worlds: `traffic` (base demo), `traffic_realtime`, `traffic_record`, `traffic_verify`, `traffic_resim` |
+| [`continuo-viz-bridge`](crates/continuo-viz-bridge/) | Relays a run's published messages and membership changes to a live viewer, as a transport monitor rather than a component |
+| [`continuo-examples`](crates/continuo-examples/) | Runnable example worlds: `traffic` (base demo), `traffic_realtime`, `traffic_record`, `traffic_verify`, `traffic_resim`, `traffic_viz`, `traffic_scale` |
+| [`python/continuo_viz`](python/) | The viewer: reads a recorded log or a live Zenoh session, and draws the world top-down |
 
 ### Milestones
 
@@ -109,7 +111,8 @@ See PLAN.md for what each one covers.
 - [x] **M3** real-time pacing (1× wall time, overrun logging)
 - [x] **M4** runtime join/leave; per-component step budgets and timeout
       policy
-- [ ] **M5** Python visualization package
+- [x] **M5** visualization: a viz bridge on the transport, and a Python
+      viewer for live runs and recordings
 - [ ] **M6** FMI 3.0 CS import (FMUs as components)
 - [ ] **M7** Zenoh transport and distributed hosts
 
@@ -152,6 +155,10 @@ cargo run -p continuo-examples --example traffic_verify -- run.jsonl
 # Change the ego and see what it does to the same recorded scene
 # (nothing is compared)
 cargo run -p continuo-examples --example traffic_resim -- run.jsonl
+
+# What a world costs as it grows: the demo's size against a scaled one.
+# Release, because a debug build measures the optimiser
+cargo run --release -p continuo-examples --example traffic_scale
 ```
 
 The demo logs every live car's pose once per sim-second and finishes in a
@@ -167,7 +174,7 @@ INFO pose sim_time=4.0 key="continuo/demo/actor/traffic1/pose" x=145.38 y=-3.50 
 INFO pose sim_time=4.0 key="continuo/demo/actor/traffic2/pose" x=190.87 y=-3.50 yaw_deg=0.0
 ...
 done: world 'demo' reached sim time 30.0 in 3031 ticks (free-run)
-actual time: 0.601 s (50x real-time), world hash 7c4cbf0d148d9621
+actual time: 0.376 s (80x real-time), world hash 7c4cbf0d148d9621
 ```
 
 The ego holds the centre lane at 30 m/s; traffic runs 16-22 m/s in the lanes
@@ -189,6 +196,44 @@ after T, which is next-step visibility), and the logger schedules its samples
 **1 ns after** each second boundary, the smallest offset that clears same-instant
 deferral, so on-boundary poses are visible and nothing can be scheduled
 between a boundary and its sample.
+
+### Watching a run
+
+The viewer is a Python package in [`python/`](python/), installed the ordinary
+way. `uv.lock` is committed for anyone who uses [uv](https://docs.astral.sh/uv/),
+but nothing requires it and CI installs with plain `pip`.
+
+```sh
+cd python
+python -m venv .venv
+. .venv/bin/activate          # Windows: .venv\Scripts\activate
+pip install -e .
+
+# Replay a recording, paced against the sim times in it
+python -m continuo_viz --log ../run.jsonl
+
+# Fold a whole log into a scene and print what it found, drawing nothing.
+# This is what CI runs, since it needs no display
+python -m continuo_viz --log ../run.jsonl --check
+```
+
+Watching a live run takes two terminals. The world in one:
+
+```sh
+cargo run -p continuo-examples --example traffic_viz -- 30
+```
+
+and the viewer in the other, which watches a live world when given no log:
+
+```sh
+python -m continuo_viz
+```
+
+The viewer draws a strip of road that follows one car, on a uniform scale so
+lane changes read honestly rather than shearing. It is deliberately outside
+the simulation: nothing it does can perturb a run, which is the same reason
+the Rust side observes the transport instead of joining the world as a
+component. `--verbose` reports anything it could not read.
 
 ### Observing vs. recording
 
