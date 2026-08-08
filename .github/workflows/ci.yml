@@ -141,6 +141,17 @@ jobs:
           # log that contained nothing, and pass.
           [ "$in_log" -gt 0 ]
 
+      # What a clip should contain is asserted in the viewer's own tests, which
+      # can be run and linted. This is here for what those cannot reach: the
+      # command line, drawing with no display attached, and a log the conductor
+      # really wrote rather than one a test built.
+      - name: "Smoke: record a clip of the log"
+        shell: bash
+        run: |
+          python -m continuo_viz --log ci-run.jsonl --record ci-clip.gif \
+            --record-from 18 --record-seconds 1
+          test -s ci-clip.gif
+
       # A smoke, not a benchmark: a shared runner cannot hold a rate steady
       # enough to assert one, so this checks that a large world still runs and
       # leaves the numbers for a human reading the log.

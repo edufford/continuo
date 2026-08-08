@@ -611,6 +611,28 @@ three times.
   if either step diverges. Doing the last one first would change the hash
   without ever learning whether it needed to.
 
+- **Two smoke steps carry logic that reads better elsewhere.** Worth the same
+  pass as the hash comparison above, since both edit one workflow file.
+
+  "Smoke: verification detects a modified log" corrupts a log and asserts the
+  verifier rejects it, which `verification_stops_at_the_first_divergence` in
+  the highway tests already covers somewhere that can be run and debugged
+  locally. What only CI reaches is the **exit code**, since `traffic_verify`
+  calls `process::exit(1)` and a `main` that reported the divergence and
+  returned zero would still pass that test. So the step should keep its tamper
+  and its exit-code assertion, and say in its comment that the behaviour itself
+  is tested. It cannot be compressed to `! cmd`: bash suppresses `set -e` for
+  any command whose status is inverted, so a tamper that matched nothing would
+  pass in silence, which is the vacuity the `if` guard exists to catch.
+
+  "Smoke: replay the recorded log through the viewer" is the opposite case and
+  should keep every line, being the only check that Python reads what Rust
+  writes, where the viewer's own tests build their logs themselves. Its
+  weakness is that it recovers the counts by parsing the prose of the `--check`
+  summary, so rewording a label breaks CI on a change that touched nothing
+  else. That fails closed, which is the right direction, but those labels are a
+  contract and nothing on either side says so.
+
 - **A consolidated scene view, and a switch to turn raw relay off.** The
   scene half already exists as a design: `continuo/{world}/scene` is in the key
   table above, and "Fixed-interval world services" describes a scene-graph

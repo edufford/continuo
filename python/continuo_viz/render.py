@@ -247,15 +247,24 @@ def body_corners(
 
 
 class Renderer:
-    """A pygame window showing a scene.
+    """Draws a scene, into a window or into memory.
 
-    Constructing this opens a window, so it is created only when something is
-    actually being drawn. Everything above it in this package runs headless,
-    which is what lets CI test the parser and the scene without a display.
+    Constructing this opens a window unless ``onscreen`` says otherwise, so it
+    is created only when something is actually being drawn. Everything above it
+    in this package runs headless, which is what lets CI test the parser and
+    the scene without a display.
+
+    ``onscreen=False`` draws to a plain surface instead: no window, no frame
+    rate, and nothing to close. That is what recording wants, and it is why a
+    recording can be made over ssh or in CI.
     """
 
     def __init__(
-        self, width: int = 1400, height: int = 240, title: str = "continuo"
+        self,
+        width: int = 1400,
+        height: int = 240,
+        title: str = "continuo",
+        onscreen: bool = True,
     ) -> None:
         # Imported here rather than at module scope so a run that draws nothing
         # pays neither the SDL setup nor pygame's import banner. It is a plain
@@ -263,14 +272,30 @@ class Renderer:
         import pygame
 
         self._pygame = pygame
+        self._onscreen = onscreen
         pygame.init()
-        self.surface = pygame.display.set_mode((width, height))
-        pygame.display.set_caption(title)
+        if onscreen:
+            self.surface = pygame.display.set_mode((width, height))
+            pygame.display.set_caption(title)
+        else:
+            self.surface = pygame.Surface((width, height))
         self.clock = pygame.time.Clock()
         self.font = pygame.font.SysFont("consolas,dejavusansmono,monospace", 15)
         self.width = width
         self.height = height
         self.scale = width / VIEW_METERS
+
+    def frame_rgb(self) -> tuple[bytes, tuple[int, int]]:
+        """The frame just drawn, as raw RGB bytes and the size they describe.
+
+        Bytes rather than the surface itself, because the next draw paints over
+        that surface and a caller holding it would find every frame showing the
+        last one.
+        """
+        return (
+            self._pygame.image.tostring(self.surface, "RGB"),
+            self.surface.get_size(),
+        )
 
     def process_events(self) -> bool:
         """Handles pending window events.
@@ -323,8 +348,13 @@ class Renderer:
         self._draw_labels(camera, in_view, follow)
 
         self._draw_hud(scene, follow, status)
-        self._pygame.display.flip()
-        self.clock.tick(TARGET_FPS)
+
+        # Drawing goes to a back buffer, so `flip` is what puts the frame on
+        # screen. `tick` presents nothing and only holds the loop to the frame
+        # rate. A recording has neither, and reads the pixels out instead.
+        if self._onscreen:
+            self._pygame.display.flip()
+            self.clock.tick(TARGET_FPS)
 
     def _draw_road(self, camera: Camera) -> None:
         edge = max(LANE_OFFSETS) + LANE_WIDTH * 0.5
@@ -426,9 +456,13 @@ class Renderer:
     def _draw_hud(self, scene: Scene, follow: str | None, status: str) -> None:
         followed = scene.actors.get(follow) if follow else None
         position = f"x {followed.pose.x:8.1f} m" if followed else "x        -"
+        # Frame rate only where there is one. Offscreen there is no clock to
+        # tick, so reporting it would read as a stalled viewer rather than as a
+        # field that does not apply.
+        rate = f"   fps {self.clock.get_fps():4.0f}" if self._onscreen else ""
         lines = [
             f"sim {scene.sim_time:7.2f} s   actors {len(scene.actors):3d}   {position}",
-            f"{status}   poses {scene.poses_applied}   fps {self.clock.get_fps():4.0f}",
+            f"{status}   poses {scene.poses_applied}{rate}",
         ]
         for row, text in enumerate(lines):
             self.surface.blit(
