@@ -23,10 +23,11 @@ from .scene import Actor, Scene
 
 # Nominal car footprint in meters, length by width.
 #
-# TODO(scene-graph): the simulation does not publish extents. A pose is a
-# position and an orientation, so every drawn body is this one guess. The
-# deferred `continuo/{world}/map` and scene-graph work is where a real size
-# comes from; until then a lorry and a hatchback are the same rectangle.
+# TODO(PLAN "World and map"): the simulation does not publish extents. A
+# pose is a position and an orientation, so every drawn body is this one
+# guess. The deferred `continuo/{world}/map` and its scene graph are where
+# a real size comes from; until then a lorry and a hatchback are the same
+# rectangle.
 #
 # Extents are also what occlusion would need, whenever a world has anything to
 # occlude. Poses carry a `z`, but `PoseTopDown` drops it because physics
@@ -52,11 +53,12 @@ _WINDSHIELD_PIXELS = 1
 
 # Lateral offsets to draw lane markings at.
 #
-# TODO(map): these are *invented*. `traffic_world.rs` is explicit that "a lane
-# is the lateral offset the controller holds, not geometry of the world", so
-# the simulation has no lanes to publish and these are the viewer guessing what
-# the demo meant. They are drawn faintly for that reason. A published world
-# spec on `continuo/{world}/map` replaces them.
+# TODO(PLAN "World and map"): these are *invented*. `traffic_world.rs` is
+# explicit that "a lane is the lateral offset the controller holds, not
+# geometry of the world", so the simulation has no lanes to publish and
+# these are the viewer guessing what the demo meant. They are drawn faintly
+# for that reason. A published world spec on `continuo/{world}/map`
+# replaces them.
 LANE_OFFSETS = (-3.5, 0.0, 3.5)
 LANE_WIDTH = 3.5
 

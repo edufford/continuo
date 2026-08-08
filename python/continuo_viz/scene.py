@@ -6,10 +6,10 @@ pose``. A viewer draws *cars*, so it needs an entity that groups those, knows
 which message moves it, and knows when it is gone.
 
 Every part of that is worked out here rather than read off the wire, because
-nothing publishes it. See ``TODO(scene-graph)`` in :meth:`Scene._apply_message`
-for what would replace the inference, and the matching note in
-:mod:`~continuo_viz.render` for the extents the renderer guesses for the same
-reason.
+nothing publishes it. See the ``TODO(PLAN "World and map")`` in
+:meth:`Scene._apply_message` for what would replace the inference, and the
+matching note in :mod:`~continuo_viz.render` for the extents the renderer
+guesses for the same reason.
 
 **Presence is added on a pose and removed on a leave**, and the asymmetry is
 deliberate. A live viewer can attach at any moment and Zenoh replays no
@@ -124,15 +124,15 @@ class Scene:
         self.poses_applied += 1
         existing = self.actors.get(name)
         if existing is None:
-            # TODO(scene-graph): this binding is *inferred*, from whoever
-            # published this actor's first pose. It holds for every world built
-            # so far, where one component owns an actor's motion, and it needs
-            # no naming convention, so it beats assuming a `{actor}/physics`
-            # layout. It is still an assumption. `continuo/{world}/map` and the
-            # deferred scene-graph publisher are where an actor's identity,
-            # its pose source, and its extents should come from stated rather
-            # than deduced; when they exist, this whole branch is replaced by
-            # reading them.
+            # TODO(PLAN "World and map"): this binding is *inferred*, from
+            # whoever published this actor's first pose. It holds for every
+            # world built so far, where one component owns an actor's
+            # motion, and it needs no naming convention, so it beats
+            # assuming a `{actor}/physics` layout. It is still an
+            # assumption. `continuo/{world}/map` and its scene graph are
+            # where an actor's identity, its pose source, and its extents
+            # should come from stated rather than deduced; when they exist,
+            # this whole branch is replaced by reading them.
             self.actors[name] = Actor(
                 name=name,
                 pose_source=message.publisher,

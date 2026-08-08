@@ -658,6 +658,15 @@ three times.
 
 ### Wire format
 
+- **`RecordedMessage.time` should be `sim_time`.** It is the only timestamped
+  log line that does not already say so: `tick` and the `observed` lines do, as
+  does the viz bridge's wire metadata, which leaves the Python viewer mapping
+  one name onto the other on the way in for no reason a reader can see.
+  Renaming changes the log format and invalidates existing recordings, so it
+  wants a version bump and belongs with the other format changes here rather
+  than churning readers twice. `Message::time` upstream in `continuo-core`
+  carries the same name but is never serialized, so that half is free whenever.
+
 - **A compact binary mode alongside JSON, chosen like debug versus release.**
   JSON stays the readable mode for development, inspection, and the event log;
   binary becomes the mode for throughput. The hash is taken over the wire
@@ -704,6 +713,27 @@ three times.
   instant, so shifting one silently reorders components that had nothing to
   do with the departure. It needs a free list plus a generation counter on
   each slot, so a reused index cannot be mistaken for its predecessor.
+
+- **A low-rate observer pays for a whole interval in one step.** The demo's
+  pose logger samples at 1 Hz while poses are published at about 693 a
+  sim-second, so its inbox holds a second of accumulation, and `drain` sorts
+  that batch by `(publisher, seq)` before the logger can pick the latest pose
+  per actor. Under 1× pacing that is enough to miss the deadline:
+  `traffic_realtime` reports a real-time overrun once per sim-second, each
+  4–6 ms, every one at `N.000000001`, which is the logger's instant and the
+  only thing due there.
+  - Not the logging, which is the obvious suspect and was measured rather than
+    assumed: dropping the subscriber to `WARN`, so the fourteen `info!` lines
+    are never formatted or written, leaves the overruns unchanged.
+  - Pacing only. It cannot reach the world hash, because the anchor slips with
+    no catch-up and no skipped steps, which is pacing working as designed.
+  - General rather than the demo's fault. The visibility rule queues messages
+    until the subscriber next runs, so any low-rate observer of a high-rate
+    stream has this shape, and a 1 Hz view of a 100 Hz signal is an ordinary
+    thing to want. A fix probably means a subscriber being able to say it
+    wants only the latest message per key, which is a `Transport` question
+    rather than a component one, and it interacts with `drain` taking a
+    per-subscriber release condition.
 
 - **Road-network importer**: which format (OpenDRIVE, Lanelet2, other) lowers
   into the world spec; decide when realistic road scenarios are needed.

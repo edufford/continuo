@@ -118,7 +118,8 @@ See PLAN.md for what each one covers.
 
 Everywhere current code is a placeholder for later work, a comment marks the
 spot: `TODO(Mn)` for numbered milestones, `TODO(PLAN "section")` for design
-items tracked in PLAN.md. `grep -rn "TODO(" crates/` lists them all.
+items tracked in PLAN.md. `grep -rn "TODO(" crates/ python/continuo_viz/`
+lists them all.
 
 ## Usage
 
