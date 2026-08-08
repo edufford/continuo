@@ -92,6 +92,11 @@ impl KeyExpr {
     /// `key` is expected to be wildcard-free (which is true of every
     /// published key; wildcards live only in subscriptions).
     pub fn matches(&self, key: &KeyExpr) -> bool {
+        // Two allocations a call, which collecting needs only for the `**`
+        // case, where matching slices from an arbitrary offset. It is no
+        // longer on a hot path: its one caller answers each published key
+        // once and keeps the answer, so this runs per distinct key rather
+        // than per message.
         let expr: Vec<&str> = self.chunks().collect();
         let key: Vec<&str> = key.chunks().collect();
 

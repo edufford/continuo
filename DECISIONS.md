@@ -426,4 +426,95 @@ it got there, including the roads not taken.
   - The escape hatch is `#[allow(clippy::disallowed_types)]` with a comment
     saying why the order cannot matter. Having to write that comment is the
     point.
-
+- **2026-08-03**: The viz bridge **observes the transport; it is not a
+  component** (supersedes PLAN.md's milestone 5 sketch of a component that
+  throttles poses and serves them over a WebSocket, along with the three
+  entries below).
+  - Every component's path and `next_due` feed the tick hash, so a viz
+    *component* would make a watched run fingerprint differently from the same
+    run unwatched, and every scenario would need a viz-enabled variant. A
+    transport monitor is hash-neutral and attaches to any existing example, so
+    `traffic_verify` still verifies while you watch.
+  - The test that gives the others meaning is
+    `an_observer_built_as_a_component_would_change_the_hash`: a component that
+    reads nothing and publishes nothing still moves the fingerprint by being
+    present. Without it, `hash_neutrality.rs` would also pass against a bridge
+    that quietly did nothing, which is why each case additionally asserts the
+    sink saw traffic.
+- **2026-08-03**: **Zenoh now, for viewer output only.** The bridge
+  republishes what it observes onto a Zenoh session; it does **not** implement
+  `Transport` for Zenoh, which is milestone 7's job and carries the whole tick
+  protocol in lockstep.
+  - Inventing a TCP or WebSocket protocol would mean writing something M7
+    throws away. Going through Zenoh now makes the Python viewer *final*: when
+    components publish these keys natively, the viewer cannot tell the
+    difference.
+- **2026-08-03**: **No throttling in the bridge.** It passes messages through
+  and the viewer renders at its own frame rate, decoupled from message rate.
+  - Zenoh will not throttle for you, so a bridge that did would be behaviour
+    the M7 path cannot reproduce, which would make the swap dishonest.
+- **2026-08-03**: **Presence is added on a first pose and removed on an
+  explicit leave**, rather than by a staleness timer.
+  - The asymmetry is the point. A live viewer attaches at any moment and Zenoh
+    replays no history, so waiting for a join would mean never learning about
+    cars that were already driving. Departure cannot work that way, because
+    nothing is published when a car stops existing, which is why the conductor
+    publishes an explicit leave.
+  - A staleness timer cannot tell a departed actor from a stalled simulation,
+    and that is the distinction a viewer most needs to keep.
+- **2026-08-04**: **Every frame carries metadata and states its own message
+  type.** Nothing is identified by absence, and nothing by matching a key
+  against a pattern.
+  - An earlier cut used `Option<Metadata>`, so a membership notification was
+    known by *having no* metadata. A later one matched the key against
+    `conductor/membership/status`, which only moves the problem: every
+    consumer re-implements the same string matching, and it breaks the day a
+    key moves.
+  - `MessageType` extends to the tick protocol and the join and leave requests
+    at M7, and a viewer that predates them ignores what it does not know
+    rather than reading it as something it is not.
+- **2026-08-04**: **The viewer side channel is rooted outside the simulation's
+  keys**: `continuo/{world}/...` is mirrored as `continuo_viz/{world}/...`.
+  - Components publish under `continuo/` and the mirror sits outside it, so a
+    relayed key cannot equal a published one **by construction** rather than
+    by a fallback branch, and a message cannot be echoed back onto the key it
+    arrived on once there is a real Zenoh transport.
+- **2026-08-04**: **`KEY_ROOT` belongs to `continuo-core`, and rooting is
+  built into a constructor** (`KeyExpr::new_rooted`) rather than left to
+  string concatenation at call sites. Shipped separately as its own PR, since
+  it changed already-merged code that milestone 5 happened to discover.
+  - Auto-rooting plain `KeyExpr::new` was tried and rejected after measuring
+    it: **140 of 141 tests passed with the demo's world hash unchanged**,
+    which makes it a silent footgun rather than a safe default. The one
+    failure showed `w/a` quietly becoming `continuo/w/a`.
+  - A separate constructor makes rooting a choice the caller states, and the
+    viz bridge is the only thing that swaps a root, so it does that part on
+    its own.
+- **2026-08-07**: **The viewer is a main path, not an extra.** `pygame` and
+  `eclipse-zenoh` are plain dependencies of the Python package rather than
+  extras, and the `viz` and `zenoh` cargo features are on by default.
+  - One install runs every mode, and which mode you get is a run flag rather
+    than an install choice.
+  - It gives up the empty dependency list the package used to state. The code
+    still needs nothing but the standard library to read a log, so the tests
+    stay headless; it is only the install that is no longer minimal.
+  - On the Rust side the cost is real: Zenoh is 300-odd transitive crates
+    against the workspace's 21, and every build and lint now pays it. What it
+    buys is that the sink compiles, which is the only thing standing between
+    it and rot, since exercising it needs a live session and two processes.
+    `--no-default-features` remains for anyone who wants the rest cheaply.
+- **2026-08-07**: **The in-process transport answers each published key once**
+  and reuses the answer, rather than matching every subscription per message.
+  - A subscription is a pattern rather than a literal key, so there is nothing
+    to look a published key up by: finding who wants it means testing it
+    against every subscription in the world. Doing that per message made a
+    world's cost grow with the **square** of its component count.
+  - Measured rather than assumed, by `traffic_scale`: 100 cars went from 13.4 s
+    to 0.6 s for thirty sim-seconds, 800 cars from not finishing in two minutes
+    to 5.4 s, and the cost of a step stopped growing with the population.
+  - Membership changes update the answers rather than emptying them, because
+    components join and leave *while* a run publishes, and emptying would hand
+    the cost straight back.
+  - The constraint that shapes it: **delivery order reaches the world hash**,
+    so recipients are held in the order the old scan produced them. The demo's
+    hash and a full `traffic_verify` replay are what check that.

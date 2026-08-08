@@ -1,2 +1,12 @@
 /target
 *.jsonl
+
+# Python viewer. `uv.lock` is not ignored: pinning the viewer's dependencies is
+# the same reasoning that pins the Rust ones. It is only a convenience for uv,
+# and nothing here requires uv, since `pyproject.toml` alone is what pip or any
+# other installer reads.
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/

@@ -33,7 +33,7 @@
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use continuo_core::{Message, SimTime, hash::hex_u64};
+use continuo_core::{KeyExpr, Message, SimTime, hash::hex_u64};
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 use thiserror::Error;
@@ -62,6 +62,13 @@ pub struct TickFingerprint {
 /// embedded as raw JSON so the log stays readable.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RecordedMessage {
+    // TODO: rename to `sim_time`. This is the only timestamped log line that
+    // does not already say so, since `tick` and the `observed` lines do, as
+    // does the viz bridge's wire metadata, which leaves the Python viewer
+    // mapping one name onto the other on the way in. Renaming changes the log
+    // format and invalidates existing recordings, so it belongs with the next
+    // version bump. `Message::time` upstream in `continuo-core` carries the
+    // same name but is never serialized, so that half is free whenever.
     pub time: SimTime,
     pub key: String,
     pub publisher: String,
@@ -110,6 +117,37 @@ pub struct RecordedLeave {
 pub enum MembershipChange {
     Joined(RecordedJoin),
     Left(RecordedLeave),
+}
+
+/// Key expression an applied [`MembershipChange`] is published on, for
+/// observers outside the process.
+///
+/// **Status, not request.** This one is the conductor saying a join or leave
+/// already happened, which is what an observer subscribes to: a viewer needs
+/// it to stop drawing a component that has retired.
+///
+/// It is nested under `membership/` to leave room for the other direction.
+/// Requests still arrive as direct calls, so no request key exists yet, but
+/// when they cross a transport at M7 they land at
+/// `continuo/{world}/conductor/membership/join_request` and
+/// `.../leave_request`: things a component or host sends *inward* and the
+/// conductor may reject. Nesting means that distinction will be carried by
+/// the key structure rather than by remembering which verb implies which
+/// direction.
+///
+/// It lives here rather than with any particular publisher because it is wire
+/// vocabulary, and an observer that defined it would leave the conductor
+/// depending on an observer or duplicating the string.
+// TODO(M7): when join and leave cross the transport, this and the
+// `RecordedJoin`/`RecordedLeave` types plausibly move to `continuo-core`
+// together, alongside `TickStart`/`TickDone` and their keys. One move then
+// rather than two half-moves now. The two `*_request` keys above land at the
+// same time, since nothing sends a request until there is a transport to
+// send it over.
+pub fn membership_key(world_name: &str) -> KeyExpr {
+    // Return the world's applied-membership status key.
+    KeyExpr::new_rooted(format!("{world_name}/conductor/membership/status"))
+        .expect("valid membership key")
 }
 
 /// A step that ran over the wall-clock budget its component declared.

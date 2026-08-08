@@ -1,0 +1,43 @@
+[project]
+name = "continuo-viz"
+version = "0.1.0"
+description = "Viewer for continuo simulation runs, live or replayed from a log"
+requires-python = ">=3.10"
+# Drawing needs a window and watching a live run needs Zenoh. Both install with
+# the package rather than behind extras, so one install runs every mode and
+# which mode you get is a run flag rather than an install choice.
+dependencies = [
+    "pygame>=2.5",
+    "eclipse-zenoh>=1.0",
+]
+
+[project.scripts]
+continuo-viz = "continuo_viz.__main__:main"
+
+[dependency-groups]
+dev = ["pytest>=8.0", "ruff>=0.6"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["continuo_viz"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle
+    "F",   # pyflakes
+    "I",   # import sorting
+    "UP",  # pyupgrade
+    "B",   # bugbear
+    "SIM", # simplify
+    "RUF",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -126,14 +126,30 @@ Zenoh keyexpr syntax from the start. Implementations:
 
 Key expression conventions (draft):
 
-| Key expression                          | Payload                    |
-| --------------------------------------- | -------------------------- |
-| `continuo/{world}/tick`                 | `TickStart`                |
-| `continuo/{world}/tick/done`            | `TickDone`                 |
-| `continuo/{world}/actor/{id}/pose`      | actor pose                 |
-| `continuo/{world}/scene`                | scene-graph state update (fixed-period publisher for renderers) |
-| `continuo/{world}/conductor/join`       | registration request       |
-| `continuo/{world}/conductor/leave`      | departure notice           |
+| Key expression | Payload | Status |
+| -------------- | ------- | ------ |
+| `continuo/{world}/actor/{id}/pose` | actor pose | built |
+| `continuo/{world}/actor/{id}/cmd` | drive command | built |
+| `continuo/{world}/conductor/membership/status` | applied join or leave | built (M5) |
+| `continuo_viz/{world}/**` | observer side channel, mirroring `continuo/{world}/**` beneath it | built (M5) |
+| `continuo/{world}/tick` | `TickStart` | M7 |
+| `continuo/{world}/tick/done` | `TickDone` | M7 |
+| `continuo/{world}/conductor/membership/join_request` | registration request | M7 |
+| `continuo/{world}/conductor/membership/leave_request` | departure request | M7 |
+| `continuo/{world}/scene` | scene-graph state update (fixed-period publisher for renderers) | deferred |
+
+The status column is there because the table previously mixed what exists
+with what is intended and said nothing about which was which. Scenario-owned
+keys are deliberately absent: the traffic demo's spawn and despawn requests
+live with the spawner, not here, for the reason recorded on 2026-07-31.
+
+Membership is nested one level deeper than the rest so that *asking* and
+*having happened* are separated by structure rather than by remembering which
+verb means which. A request is something a component or host sends inward and
+the conductor may reject; a status is the conductor saying it already did it,
+which is what an observer subscribes to. The earlier flat
+`conductor/join` and `conductor/leave` blurred that, and called one a request
+and the other a notice for no reason beyond the order they were written in.
 
 ## Determinism rules
 
@@ -595,7 +611,61 @@ three times.
   if either step diverges. Doing the last one first would change the hash
   without ever learning whether it needed to.
 
+- **A consolidated scene view, and a switch to turn raw relay off.** The
+  scene half already exists as a design: `continuo/{world}/scene` is in the key
+  table above, and "Fixed-interval world services" describes a scene-graph
+  publisher aggregating latest poses at 1/60 s as an **ordinary component**.
+  Build it when the viewer exists and there is something to measure it
+  against. The viz bridge then relays that like any other message, so the
+  consolidated view and raw traffic coexist rather than trading off.
+
+  The other half is a switch on the bridge, so a run using the scene component
+  can stop paying for per-message relay. Worth building only once there is a
+  scene component to switch to; adding the option first is building the choice
+  before the thing it selects between.
+
+  The distinction that decides how each is treated: **the scene publisher is a
+  component, so enabling it changes the world hash**, while the bridge's switch
+  cannot, being outside the sim. They look like two settings and are not the
+  same kind of knob.
+
+- **Getting large payloads out of a viewer's way.** A camera frame or lidar
+  sweep is canonical JSON like everything else, so it travels base64-encoded
+  inside a JSON string: about a third larger than the raw bytes, UTF-8
+  validated and re-wrapped on the way through the bridge, and copied per
+  frame. The event log has the same problem for the same reason. The binary
+  serialization item above is where large payloads stop being text, and
+  PLAN.md's **decoupled** sub-components exist precisely so a camera can be
+  placed on its own host, so both are part of the answer.
+
+  What is still open is how a viewer avoids carrying sensor traffic it will
+  never draw. Three shapes, none chosen:
+  1. **A size threshold at the bridge.** Simplest, and arbitrary: no single
+     number is right for both a pose and a point cloud.
+  2. **The viewer declares which signals it wants.** Precise, but it is a
+     filter the native Zenoh path does not have, so the two diverge. It only
+     filters *relay* rather than production, so it costs fidelity rather than
+     determinism.
+  3. **Components skip work nothing subscribes to.** The most efficient and
+     the most dangerous: published bytes feed the tick hash, so a component
+     that produces less when unobserved makes the **world hash depend on who
+     is watching**. That is the exact property the bridge is a transport
+     monitor to protect. Recoverable only by excluding conditional output from
+     the fingerprint, at which point what is hashed depends on runtime
+     subscription state, which is worse. If it is ever wanted, the scenario
+     should declare which outputs are optional, so the decision is static and
+     reproducible rather than dependent on who happened to connect.
+
 ### Wire format
+
+- **`RecordedMessage.time` should be `sim_time`.** It is the only timestamped
+  log line that does not already say so: `tick` and the `observed` lines do, as
+  does the viz bridge's wire metadata, which leaves the Python viewer mapping
+  one name onto the other on the way in for no reason a reader can see.
+  Renaming changes the log format and invalidates existing recordings, so it
+  wants a version bump and belongs with the other format changes here rather
+  than churning readers twice. `Message::time` upstream in `continuo-core`
+  carries the same name but is never serialized, so that half is free whenever.
 
 - **A compact binary mode alongside JSON, chosen like debug versus release.**
   JSON stays the readable mode for development, inspection, and the event log;
@@ -643,6 +713,27 @@ three times.
   instant, so shifting one silently reorders components that had nothing to
   do with the departure. It needs a free list plus a generation counter on
   each slot, so a reused index cannot be mistaken for its predecessor.
+
+- **A low-rate observer pays for a whole interval in one step.** The demo's
+  pose logger samples at 1 Hz while poses are published at about 693 a
+  sim-second, so its inbox holds a second of accumulation, and `drain` sorts
+  that batch by `(publisher, seq)` before the logger can pick the latest pose
+  per actor. Under 1× pacing that is enough to miss the deadline:
+  `traffic_realtime` reports a real-time overrun once per sim-second, each
+  4–6 ms, every one at `N.000000001`, which is the logger's instant and the
+  only thing due there.
+  - Not the logging, which is the obvious suspect and was measured rather than
+    assumed: dropping the subscriber to `WARN`, so the fourteen `info!` lines
+    are never formatted or written, leaves the overruns unchanged.
+  - Pacing only. It cannot reach the world hash, because the anchor slips with
+    no catch-up and no skipped steps, which is pacing working as designed.
+  - General rather than the demo's fault. The visibility rule queues messages
+    until the subscriber next runs, so any low-rate observer of a high-rate
+    stream has this shape, and a 1 Hz view of a 100 Hz signal is an ordinary
+    thing to want. A fix probably means a subscriber being able to say it
+    wants only the latest message per key, which is a `Transport` question
+    rather than a component one, and it interacts with `drain` taking a
+    per-subscriber release condition.
 
 - **Road-network importer**: which format (OpenDRIVE, Lanelet2, other) lowers
   into the world spec; decide when realistic road scenarios are needed.

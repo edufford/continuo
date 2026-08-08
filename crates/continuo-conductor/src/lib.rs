@@ -25,7 +25,7 @@ pub use pacing::Pacing;
 pub use playback::PlaybackComponent;
 pub use record::{
     EventLog, MembershipChange, RecordedBudgetMiss, RecordedJoin, RecordedLeave,
-    RecordedObservation, RecordedTimeout, Recorder, TickFingerprint,
+    RecordedObservation, RecordedTimeout, Recorder, TickFingerprint, membership_key,
 };
 pub use timing::{OnTimeout, StepTiming};
 pub use verify::{Divergence, Verifier};

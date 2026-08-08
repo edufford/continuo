@@ -7,12 +7,25 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[features]
+# On by default because watching a run is a main way to use this rather than
+# an extra, so `traffic_viz` builds alongside the other examples instead of
+# having to be asked for. `--no-default-features` drops Zenoh's tree for
+# anyone who wants the rest cheaply.
+default = ["viz"]
+viz = ["dep:continuo-viz-bridge", "continuo-viz-bridge/zenoh"]
+
 [dependencies]
 continuo-core = { workspace = true }
 continuo-transport = { workspace = true }
 continuo-conductor = { workspace = true }
 continuo-actors = { workspace = true }
+continuo-viz-bridge = { workspace = true, optional = true }
 
 [dev-dependencies]
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+
+[[example]]
+name = "traffic_viz"
+required-features = ["viz"]
