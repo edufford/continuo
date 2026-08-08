@@ -75,7 +75,7 @@ jobs:
 
       - name: "Test: viewer"
         working-directory: python
-        run: pytest -q
+        run: pytest -v
 
       # Smoke steps run the shipped examples end to end, covering what the
       # test suites cannot: that the examples themselves build and run, and
@@ -124,13 +124,32 @@ jobs:
       - name: "Smoke: replay the recorded log through the viewer"
         shell: bash
         run: |
-          python -m continuo_viz --log ci-run.jsonl --check | tee ci-viewer.txt
-          # The ego holds 30 m/s for the run's 30 sim-seconds, so 900 m is a
-          # property of the scenario rather than a number to keep in step.
-          grep -qE "ego +x +900\.00" ci-viewer.txt
+          summary=$(python -m continuo_viz --log ci-run.jsonl --check)
+          echo "$summary"
+
+          # What the viewer parsed, against a crude count of the same file.
+          # Nothing here depends on what the scenario does: both sides move
+          # together when the demo changes, and disagree only if the viewer
+          # stops understanding one of the log's kinds of line.
+          messages=$(printf '%s\n' "$summary" | sed -n 's/.*messages seen *: *//p')
+          membership=$(printf '%s\n' "$summary" | sed -n 's|.*joins / leaves *: *||p')
+          in_log=$(grep -c '^{"msg":' ci-run.jsonl)
+          [ "$messages" = "$in_log" ]
+          [ "$membership" = "$(grep -c '^{"join":' ci-run.jsonl) / $(grep -c '^{"leave":' ci-run.jsonl)" ]
+
+          # Otherwise a log the viewer read nothing from would agree with a
+          # log that contained nothing, and pass.
+          [ "$in_log" -gt 0 ]
 
       # A smoke, not a benchmark: a shared runner cannot hold a rate steady
       # enough to assert one, so this checks that a large world still runs and
       # leaves the numbers for a human reading the log.
+      #
+      # Release, because the numbers it prints mean nothing from a debug build,
+      # and `--no-default-features` so that costs a release build of 60 crates
+      # rather than the 911 the viz feature brings in. This example needs none
+      # of them.
       - name: "Smoke: a scaled world"
-        run: cargo run -p continuo-examples --example traffic_scale
+        run: >
+          cargo run --release -p continuo-examples
+          --no-default-features --example traffic_scale
