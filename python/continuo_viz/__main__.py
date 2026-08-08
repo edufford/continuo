@@ -3,6 +3,7 @@
     python -m continuo_viz
     python -m continuo_viz --log run.jsonl
     python -m continuo_viz --log run.jsonl --check
+    python -m continuo_viz --log run.jsonl --record clip.gif --record-from 20
 
 Watching a live world is what no arguments gets you, since a world is the thing
 you are most often already running. ``--log`` replays a recording instead, and
@@ -11,6 +12,10 @@ you are most often already running. ``--log`` replays a recording instead, and
 ``--check`` folds a whole log into a scene and prints what it found, without
 opening a window. It exists so a replay can be checked in CI, where there is no
 display and installing one would be the only reason to.
+
+``--record`` writes an animated GIF of a log instead of watching it, for
+showing someone what a run looked like. It opens no window and does not use the
+wall clock, so the same log gives the same clip anywhere.
 
 Anything the viewer skips over is skipped silently by design, since one
 unreadable sample is not worth ending a session for. ``--verbose`` is how you
@@ -25,6 +30,7 @@ import sys
 from pathlib import Path
 
 from .events import Join, Leave
+from .recording import DEFAULT_FPS, DEFAULT_SECONDS, record_gif
 from .scene import Scene
 from .sources import LogSource, ZenohSource, read_log
 
@@ -67,6 +73,33 @@ def build_parser() -> argparse.ArgumentParser:
         "--check",
         action="store_true",
         help="fold the log into a scene and print a summary, drawing nothing",
+    )
+    parser.add_argument(
+        "--record",
+        type=Path,
+        metavar="PATH",
+        help="write an animated GIF of the log rather than watching it",
+    )
+    parser.add_argument(
+        "--record-from",
+        type=float,
+        default=0.0,
+        metavar="SECONDS",
+        help="sim time to start the recording at (default: 0)",
+    )
+    parser.add_argument(
+        "--record-seconds",
+        type=float,
+        default=DEFAULT_SECONDS,
+        metavar="SECONDS",
+        help=f"sim-seconds to record (default: {DEFAULT_SECONDS:g})",
+    )
+    parser.add_argument(
+        "--record-fps",
+        type=int,
+        default=DEFAULT_FPS,
+        metavar="N",
+        help=f"frames per second of the finished clip (default: {DEFAULT_FPS})",
     )
     parser.add_argument(
         "--verbose",
@@ -144,32 +177,61 @@ def main(argv: list[str] | None = None) -> int:
         format="%(levelname)s: %(message)s",
     )
 
-    # Everything that can refuse the arguments, before anything acts on them.
-    # `--check` needs a log and argparse has no way to say so.
-    if args.check and args.log is None:
-        print(
-            "--check reads a log; it has nothing to do with a live run",
-            file=sys.stderr,
-        )
-        return 2
-    if args.log is not None and not args.log.exists():
-        print(f"no such log: {args.log}", file=sys.stderr)
-        return 1
-
-    if args.check:
-        return run_check(args.log)
-
     # `--follow` defaults to the ego. Passing an empty string is the documented
     # way to ask for every actor instead of one, and the renderer spells that
     # `None`, so this converts it and passes any real name straight through.
     follow = args.follow or None
-    if args.log is not None:
-        event_source, status = LogSource(args.log), "replay"
-    else:
-        event_source, status = ZenohSource(args.world), f"live {args.world}"
 
-    run_viewer(event_source, follow, status)
-    return 0
+    # One branch per mode, each of them either refusing or acting, and one
+    # exit code out of the whole chain.
+    exit_code = 0
+
+    # Refusing a mode that cannot run. argparse has no way to say that an
+    # option requires another, so the two that read a log say it themselves.
+    if args.log is None and (args.check or args.record is not None):
+        wanted = "--check" if args.check else "--record"
+        print(
+            f"{wanted} reads a log; it has nothing to do with a live run",
+            file=sys.stderr,
+        )
+        exit_code = 2
+
+    # Watching a running world, which is the only mode that reads no log.
+    # Every branch below this one therefore has one, which is also how the
+    # type checker knows there is a log to read.
+    elif args.log is None:
+        run_viewer(ZenohSource(args.world), follow, f"live {args.world}")
+
+    # Refusing a log that is not there, once, rather than in each mode under
+    # it and in whatever order they happen to open it.
+    elif not args.log.exists():
+        print(f"no such log: {args.log}", file=sys.stderr)
+        exit_code = 1
+
+    # Reporting a whole log without drawing it, which is what has no display
+    # to draw on: it returns its own code, since finding no poses is a result.
+    elif args.check:
+        exit_code = run_check(args.log)
+
+    # Drawing a log to a file rather than a window, off its own sim-time
+    # clock, so what comes out does not depend on the machine that ran it.
+    elif args.record is not None:
+        frames = record_gif(
+            args.log,
+            args.record,
+            start=args.record_from,
+            seconds=args.record_seconds,
+            fps=args.record_fps,
+            follow=follow,
+        )
+        print(f"wrote {args.record}: {frames} frames at {args.record_fps} fps")
+
+    # Watching a log, which is the same loop the live case runs, differing
+    # only in where the events come from.
+    else:
+        run_viewer(LogSource(args.log), follow, "replay")
+
+    return exit_code
 
 
 if __name__ == "__main__":

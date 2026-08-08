@@ -3,12 +3,14 @@ name = "continuo-viz"
 version = "0.1.0"
 description = "Viewer for continuo simulation runs, live or replayed from a log"
 requires-python = ">=3.10"
-# Drawing needs a window and watching a live run needs Zenoh. Both install with
-# the package rather than behind extras, so one install runs every mode and
-# which mode you get is a run flag rather than an install choice.
+# Drawing needs a window, watching a live run needs Zenoh, and recording a clip
+# needs an image library. All install with the package rather than behind
+# extras, so one install runs every mode and which mode you get is a run flag
+# rather than an install choice.
 dependencies = [
     "pygame>=2.5",
     "eclipse-zenoh>=1.0",
+    "pillow>=10.0",
 ]
 
 [project.scripts]

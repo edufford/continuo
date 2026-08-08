@@ -11,6 +11,7 @@ get right and a static scene would prove nothing.
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 from types import SimpleNamespace
@@ -250,16 +251,27 @@ def test_a_lookahead_too_small_for_the_log_says_so_rather_than_just_pausing(
     assert "lookahead" in warnings[0].getMessage()
 
 
-def test_a_log_source_closes_the_file_it_holds_open(tmp_path):
+def test_a_log_source_closes_the_file_it_holds_open(tmp_path, monkeypatch):
     # The draw loop closes in a `finally` and calls `source.close()` directly
     # rather than probing for the method, so this has to exist, has to release
     # the file even when the log was abandoned partway through, and has to
     # tolerate being called on a source that is already closed.
+    #
+    # Abandoning it partway is what a lookahead smaller than the log arranges.
+    # At the real size the first drain reads to the end, and a generator that
+    # ran out reads as closed too, so what is asserted below would hold whether
+    # or not closing did anything.
+    monkeypatch.setattr(log_source, "_NUM_LOOKAHEAD_EVENTS", 2)
     log = tmp_path / "run.jsonl"
     build_log(log)
 
     source = LogSource(log)
     source.drain()
+    reader = source._timeline._events
+    assert inspect.getgeneratorstate(reader) == inspect.GEN_SUSPENDED, (
+        "the log has to be left part-read for closing it to mean anything"
+    )
+
     source.close()
     source.close()
 
@@ -267,7 +279,10 @@ def test_a_log_source_closes_the_file_it_holds_open(tmp_path):
     # is a closed file. Asserted on the generator rather than by removing the
     # log, because whether an open file can be removed is a property of the
     # platform: a leak that one refuses would go unnoticed on another.
-    assert source._events.gi_frame is None
+    #
+    # Reached through the timeline, which is what owns the file now that
+    # replaying and recording share one reader.
+    assert inspect.getgeneratorstate(reader) == inspect.GEN_CLOSED
 
 
 def test_the_first_drain_is_not_delayed_by_a_late_starting_log(tmp_path):

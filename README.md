@@ -7,6 +7,8 @@ vehicle. It runs entirely in a single process today, and is designed so
 components can later be split into separate processes over
 [Zenoh](https://zenoh.io/) without changing component code.
 
+![The viewer following the ego car as it overtakes traffic](docs/viewer.gif)
+
 See [PLAN.md](PLAN.md) for the full design and milestone roadmap, and
 [DECISIONS.md](DECISIONS.md) for why the design is what it is.
 
@@ -229,6 +231,19 @@ and the viewer in the other, which watches a live world when given no log:
 ```sh
 python -m continuo_viz
 ```
+
+To record rather than watch, `--record` writes an animated GIF, which is how
+the picture at the top of this file was made:
+
+```sh
+python -m continuo_viz --log ../run.jsonl --record ../docs/viewer.gif
+```
+
+Recording opens no window and does not use the wall clock: it walks the log in
+fixed sim-time steps, so the same log gives the same clip on any machine, and a
+slow encoder makes the recording take longer rather than making the animation
+stutter. `--record-from` chooses where in the run to begin, and
+`--record-seconds` and `--record-fps` set the length and smoothness.
 
 The viewer draws a strip of road that follows one car, on a uniform scale so
 lane changes read honestly rather than shearing. It is deliberately outside

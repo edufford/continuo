@@ -354,4 +354,7 @@ def test_an_event_kind_cannot_exist_without_an_instant():
         __slots__ = ()
 
     with pytest.raises(TypeError, match="abstract"):
-        Undated()
+        # Instantiating an abstract class is exactly what is under test, so
+        # the checker is right and is told to allow it here rather than be
+        # worked around by routing the call through something it cannot see.
+        Undated()  # pyright: ignore[reportAbstractUsage]

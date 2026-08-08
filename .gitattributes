@@ -1,0 +1,13 @@
+# Line endings are the repository's, not each clone's.
+#
+# Without this, what lands in a commit depends on whoever made it having set
+# `core.autocrlf`, and a Windows checkout whose editor writes CRLF gets told
+# every commit that git is about to rewrite the file. Declaring it here settles
+# it once: text is normalised to LF in the repository and checked out as LF
+# everywhere, so no working tree has anything left to convert.
+* text=auto eol=lf
+
+# Never touched, in case the detection above is ever wrong about one.
+*.gif binary
+*.png binary
+*.jpg binary
