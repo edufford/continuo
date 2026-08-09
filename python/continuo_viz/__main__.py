@@ -120,6 +120,10 @@ def run_check(path: Path) -> int:
         elif isinstance(event, Leave):
             leaves += 1
 
+    # CI reads "messages seen" and "joins / leaves" back with `sed`, to check
+    # these counts against a log the conductor wrote. The tests cannot cover
+    # that, since they build their logs themselves. So the two labels are a
+    # contract: rewording either means editing the CI smoke step too.
     print(f"read {path}")
     print(f"  sim time reached : {scene.sim_time:.3f} s")
     print(f"  messages seen    : {scene.messages_seen}")

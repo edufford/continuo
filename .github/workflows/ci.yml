@@ -94,6 +94,14 @@ jobs:
           cargo run -q -p continuo-examples --example traffic_record -- ci-run.jsonl
           cargo run -q -p continuo-examples --example traffic_verify -- ci-run.jsonl
 
+      # `verification_stops_at_the_first_divergence` in the highway tests
+      # already checks that a tampered log is rejected, where it can be run
+      # and debugged locally. This step is here for the one thing a test
+      # cannot reach: the example's exit code. A `main` that reported the
+      # divergence and returned zero would still pass that test.
+      #
+      # Neither `if` below can become `! cmd`. Bash exempts an inverted
+      # command from `set -e`, so the short form would never fail the step.
       - name: "Smoke: verification detects a modified log"
         shell: bash
         run: |
@@ -107,12 +115,10 @@ jobs:
             echo "ERROR: awk matched nothing, log was NOT modified; this check would be vacuous"
             exit 1
           fi
-          echo "OK: log modified (one pose x-coordinate corrupted to 99.9)"
           if cargo run -q -p continuo-examples --example traffic_verify -- ci-tampered.jsonl; then
             echo "ERROR: verification PASSED on the modified log; divergence was NOT detected"
             exit 1
           fi
-          echo "OK: verification failed with nonzero exit; divergence detected as expected"
 
       - name: "Smoke: open-loop resimulation from the recorded log"
         shell: bash
@@ -120,7 +126,12 @@ jobs:
 
       # The viewer's own tests build their logs from synthetic events. This is
       # the only check that it reads what the conductor actually writes, which
-      # is the half a schema change would break.
+      # is the half a schema change would break. No test can take it over: the
+      # log is written by Rust and read by Python.
+      #
+      # So the labels it reads are a contract. Reword one and this step fails
+      # on a change that touched nothing else. `run_check` says so where they
+      # are printed.
       - name: "Smoke: replay the recorded log through the viewer"
         shell: bash
         run: |

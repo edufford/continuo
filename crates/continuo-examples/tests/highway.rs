@@ -127,6 +127,42 @@ fn the_dynamic_world_reproduces_exactly() {
     assert_eq!(first.final_world_hash(), second.final_world_hash());
 }
 
+/// What a full demo run hashes to.
+///
+/// [`the_dynamic_world_reproduces_exactly`] compares two runs in one process,
+/// so it catches a run that does not repeat but says nothing about whether
+/// this machine agrees with any other: both its runs move together and still
+/// match. A written-down value is what makes disagreement a failure, since
+/// `cargo test` runs on every CI agent.
+///
+/// There is something to catch. The hash reaches `sin`, `cos`, `asin`, and
+/// `atan2` through the unicycle integration and the quaternion conversions,
+/// and IEEE 754 requires correct rounding for `sqrt` but for none of those.
+///
+/// It moves when the scenario, the seed, or the hashing moves, each a
+/// deliberate act. Update it and README.md's sample output together.
+const DEMO_WORLD_HASH: u64 = 0x7c4c_bf0d_148d_9621;
+
+#[test]
+fn the_demo_world_hashes_to_the_same_value_on_every_platform() {
+    // The whole demo rather than the ten seconds above, since this is the
+    // number README.md quotes.
+    let log = record_highway(traffic_world::SIM_SECONDS);
+    let hash = log
+        .final_world_hash()
+        .expect("a run that reached its end has a world hash");
+
+    // Hex, because the point of failing is that someone copies the value into
+    // the constant above, which is written in hex.
+    assert_eq!(
+        hash, DEMO_WORLD_HASH,
+        "the demo's world hash is {hash:016x}, expected {DEMO_WORLD_HASH:016x}. \
+         If the scenario, the seed, or the hashing changed on purpose, update \
+         DEMO_WORLD_HASH and README.md together. If nothing changed, this \
+         platform's arithmetic disagrees with the one the value was taken on"
+    );
+}
+
 /// Re-runs the demo world live against `recorded`, checking events as they
 /// happen. Returns how far the run got and the verifier's verdict, the
 /// pair is the point, since a divergence is supposed to stop the run rather
