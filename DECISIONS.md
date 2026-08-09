@@ -31,7 +31,7 @@ it got there, including the roads not taken.
 - **2026-07-17**: World spec is generic and continuo-owned; road-network
   formats (OpenDRIVE or other, undecided) come later as importers.
 - **2026-07-17**: Pacing is a single boolean `RealTimePacing`: `false` =
-  free-run, `true` = 1× real-time (no scale factor). If real-time can't keep
+  free-run, `true` = 1x real-time (no scale factor). If real-time can't keep
   up, run slower and log overruns. *(Superseded 2026-07-24: still one
   setting and still no scale factor, but a `Pacing` enum rather than a bool,
   so the spin padding rides on the real-time variant; see the milestone 3
@@ -150,7 +150,7 @@ it got there, including the roads not taken.
     component finished within its time".
   - The threshold is therefore also a **catch-up budget**, which caps it
     from above: absorbing lateness makes the next interval run short by that
-    much, briefly faster than 1× (though never ahead of schedule). It must
+    much, briefly faster than 1x (though never ahead of schedule). It must
     stay well under the shortest component period, because above a sim gap that
     recovery becomes a run of zero-sleep instants, the sprint "no catch-up"
     exists to prevent.
@@ -612,3 +612,30 @@ it got there, including the roads not taken.
   - `Message::sim_time` in `continuo-core` moved with it. It is never
     serialized, so it cost nothing, and leaving it would have kept the same
     confusion one layer above the log.
+- **2026-08-09**: **The re-anchor threshold is 3 ms**, sized against the OS
+  timer rather than against how much work an instant does.
+  - The demo reported a real-time overrun once a sim-second under coarse
+    pacing, always at the pose logger's instant. PLAN.md attributed it to that
+    logger's accumulated inbox and the `(publisher, seq)` sort in `drain`.
+  - That is not what it was, which measuring settled. Per-instant work at the
+    second boundary and the logger's instant is 82 µs and 91 µs; `drain` of a
+    sim-second of poses costs ~155 µs and the logger's whole step ~231 µs. None
+    of it approaches the 1 to 2 ms being reported.
+  - The cause is the schedule meeting the timer. The logger samples 1 ns past
+    each second boundary, and a coarse sleep aimed at the boundary overshoots
+    past that instant, so it is late before it runs. Every other gap in the
+    demo is 10 ms or more and absorbs the same overshoot silently, which is why
+    it appeared once a second rather than at every period boundary.
+  - So the threshold was too small for the timer it sits on, at 1 ms against a
+    measured 1 to 2 ms. At 3 ms the demo is quiet across repeated runs, and the
+    value stays a fraction of the millisecond-scale periods a paced run
+    schedules. 2 ms also silenced it but only just covers the observed
+    overshoot, and 5 ms would reach half of a 10 ms period.
+  - `Pacing::real_time_precise` already silenced it too, by spending a core to
+    sleep-then-spin. That remains the answer when 1x output has to be smooth;
+    the threshold is what keeps the cheap mode from reporting its own expected
+    imprecision.
+  - The latest-per-key idea PLAN.md proposed is still worth having, and its
+    entry now argues for it on its own terms: sixteen times less work for a
+    low-rate observer. It is not a fix for this, and justifying it by this
+    would have been justifying it by a pacing artefact.

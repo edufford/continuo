@@ -21,7 +21,7 @@ be split into separate processes over Zenoh without changing component code.
   at every level.
 - **Multi-rate for free**: rates are not configured centrally. Any period, and
   even aperiodic behavior, falls out of self-reported next-step times.
-- **Pacing modes**: free-run (as fast as possible) or 1× real-time, without
+- **Pacing modes**: free-run (as fast as possible) or 1x real-time, without
   affecting determinism.
 - **Single process now, distributed later**: the tick protocol is message-shaped from
   day one; distribution is a transport swap (Zenoh), not a rearchitecture.
@@ -268,7 +268,7 @@ Lives entirely in the conductor:
 A single config field, `pacing: Pacing`:
 
 - `Pacing::FreeRun`: advance immediately after the barrier.
-- `Pacing::RealTime { spin_padding }`: 1× real-time, waiting until the wall
+- `Pacing::RealTime { spin_padding }`: 1x real-time, waiting until the wall
   time corresponding to the next step's sim time. If the sim can't keep up,
   it simply runs slower than real time and **logs the overruns**, with no
   catch-up (the wall-time anchor slips by the overrun amount rather than
@@ -522,7 +522,7 @@ owning an async runtime later.
 2. **Determinism harness**: seeding, per-tick state hash (state-hash vs.
    output-hash per component), record/replay, CI test asserting identical hash
    streams.
-3. **Pacing**: `pacing: Pacing` config (default `FreeRun`), 1× wall-time
+3. **Pacing**: `pacing: Pacing` config (default `FreeRun`), 1x wall-time
    gating with anchor-slip once lateness accumulates past the re-anchor
    threshold, overrun logging.
 4. **Dynamic join/leave**: registration metadata shaped for the transport,
@@ -704,31 +704,30 @@ than churning the fingerprint twice.
   do with the departure. It needs a free list plus a generation counter on
   each slot, so a reused index cannot be mistaken for its predecessor.
 
-- **A low-rate observer pays for a whole interval in one step.** The demo's
-  pose logger samples at 1 Hz while poses are published at about 693 a
-  sim-second, so its inbox holds a second of accumulation, and `drain` sorts
-  that batch by `(publisher, seq)` before the logger can pick the latest pose
-  per actor. Under 1× pacing that is enough to miss the deadline:
-  `traffic_realtime` reports a real-time overrun once per sim-second, each
-  4–6 ms, every one at `N.000000001`, which is the logger's instant and the
-  only thing due there.
-  - Not the logging, which is the obvious suspect and was measured rather than
-    assumed: dropping the subscriber to `WARN`, so the fourteen `info!` lines
-    are never formatted or written, leaves the overruns unchanged.
-  - Pacing only. It cannot reach the world hash, because the anchor slips with
-    no catch-up and no skipped steps, which is pacing working as designed.
-  - General rather than the demo's fault. The visibility rule queues messages
-    until the subscriber next runs, so any low-rate observer of a high-rate
-    stream has this shape, and a 1 Hz view of a 100 Hz signal is an ordinary
-    thing to want. A fix probably means a subscriber being able to say it
-    wants only the latest message per key, which is a `Transport` question
-    rather than a component one, and it interacts with `drain` taking a
-    per-subscriber release condition.
+- **A subscriber cannot ask for only the latest message per key.** The
+  visibility rule queues every message until the subscriber next runs, so a
+  low-rate observer of a high-rate stream receives the whole interval's
+  accumulation and pays to decode all of it. A 1 Hz view of a 100 Hz signal is
+  an ordinary thing to want, and the work is proportional to the rate it is
+  trying not to watch.
+
+  Measured on the demo's pose logger, which sees a sim-second of poses at once:
+  `drain` costs ~155 µs for that batch and the logger's step ~231 µs, against
+  ~14 µs if it decoded only the last message per key. Sixteen times less work
+  for the same result, since it keeps only the latest anyway.
+
+  A `Transport` question rather than a component one, and it interacts with
+  `drain` taking a per-subscriber release condition. Note it changes what a
+  component sees, so in general it changes the world hash: it is hash-neutral
+  only for a subscriber that already keeps just the latest, which the API
+  cannot check.
 
 - **Road-network importer**: which format (OpenDRIVE, Lanelet2, other) lowers
   into the world spec; decide when realistic road scenarios are needed.
+
 - **Snapshot/restore**: via FMI 3.0 `SerializeFMUState` for FMUs plus a
   serialize hook for native components, only if replay-from-log proves
   insufficient.
+
 - **External (non-deterministic) ego participation**: a relaxed admission mode
   for a live AV stack under test, after milestone 7.

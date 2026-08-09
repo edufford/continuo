@@ -31,7 +31,7 @@ pub struct Conductor<T: Transport> {
     transport: T,
     registry: Registry,
     schedule: Schedule,
-    /// `Some` in 1× real-time mode, gating each instant to wall time;
+    /// `Some` in 1x real-time mode, gating each instant to wall time;
     /// `None` in free-run. Pacing never affects `world_hash`.
     pacer: Option<Pacer<SystemClock>>,
     /// Leaves declared for a future instant, applied at the tick
@@ -56,7 +56,7 @@ pub struct Conductor<T: Transport> {
 
 impl<T: Transport> Conductor<T> {
     pub fn new(config: ConductorConfig, transport: T) -> Result<Self, ConductorError> {
-        // 1× real-time pacing (PLAN.md "Pacing") gates each instant to wall
+        // 1x real-time pacing (PLAN.md "Pacing") gates each instant to wall
         // time; free-run leaves the pacer off and advances immediately. The
         // spin padding only picks how the wait is spent (OS sleep vs.
         // sleep-then-spin), never what happens in the instant.
@@ -180,7 +180,7 @@ impl<T: Transport> Conductor<T> {
     }
 
     /// How many times the run fell far enough behind real time that the
-    /// wall-clock anchor gave up and slipped, in 1× real-time mode; always
+    /// wall-clock anchor gave up and slipped, in 1x real-time mode; always
     /// 0 in free-run.
     ///
     /// This measures **the schedule as a whole against the wall clock**,
@@ -215,7 +215,7 @@ impl<T: Transport> Conductor<T> {
 
     /// Total wall-clock time the run has permanently fallen behind real
     /// time, summed over the slips counted by
-    /// [`Self::overrun_reanchor_count`] (0 in free-run, or when 1× pacing
+    /// [`Self::overrun_reanchor_count`] (0 in free-run, or when 1x pacing
     /// kept up). Lateness that was absorbed rather than slipped is not
     /// included, because by definition it was recovered.
     pub fn total_slip(&self) -> std::time::Duration {
@@ -453,7 +453,7 @@ impl<T: Transport> Conductor<T> {
         self.sim_time = now;
         self.tick += 1;
 
-        // In 1× real-time mode, wait for this instant's wall-clock target
+        // In 1x real-time mode, wait for this instant's wall-clock target
         // before doing any of its work. This only delays entry to the
         // instant; it never changes what happens in it, so the world hash
         // is identical to a free run.

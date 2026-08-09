@@ -1,4 +1,4 @@
-//! The traffic demo paced to 1× real time: the same world as `traffic`,
+//! The traffic demo paced to 1x real time: the same world as `traffic`,
 //! but each instant waits for its wall-clock time instead of free-running.
 //! The run takes about as many wall-seconds as it simulates, and prints how
 //! far (if at all) it fell behind. The world hash is identical to the
