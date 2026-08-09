@@ -54,6 +54,25 @@ impl HashFnv1a64 {
         self.0 = h;
     }
 
+    /// Writes `bytes` preceded by their length, so that a run of fields
+    /// cannot be read two ways.
+    ///
+    /// Use this for every variable-length field folded into a fingerprint.
+    /// Writing them raw lets one field's end be mistaken for the next one's
+    /// start: a component publishing `"ab"` and holding state `"c"` absorbs
+    /// the same bytes as one publishing `"a"` and holding `"bc"`, so a
+    /// divergence that only moved the boundary would hash alike. Giving every
+    /// field its own length makes the encoding injective, which is what a
+    /// fingerprint needs to mean anything.
+    ///
+    /// A length rather than a separator on purpose. A separator has to be a
+    /// byte sequence the content cannot contain, and payloads are arbitrary
+    /// bytes, so no such sequence exists.
+    pub fn write_with_length_prefix(&mut self, bytes: &[u8]) {
+        self.write_u64(bytes.len() as u64);
+        self.write(bytes);
+    }
+
     pub fn write_u64(&mut self, value: u64) {
         self.write(&value.to_le_bytes());
     }

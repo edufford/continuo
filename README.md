@@ -177,7 +177,7 @@ INFO pose sim_time=4.0 key="continuo/demo/actor/traffic1/pose" x=145.38 y=-3.50 
 INFO pose sim_time=4.0 key="continuo/demo/actor/traffic2/pose" x=190.87 y=-3.50 yaw_deg=0.0
 ...
 done: world 'demo' reached sim time 30.0 in 3031 ticks (free-run)
-actual time: 0.376 s (80x real-time), world hash 7c4cbf0d148d9621
+actual time: 0.404 s (74x real-time), world hash d747a81be039c5f1
 ```
 
 The ego holds the centre lane at 30 m/s; traffic runs 16-22 m/s in the lanes
