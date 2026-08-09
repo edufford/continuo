@@ -171,20 +171,26 @@ impl WallClock for SystemClock {
 /// aggregated rather than once per instant.
 ///
 /// Sized above OS timer granularity so ordinary wake-up jitter never
-/// registers. The coarsest common case is modern Windows at ~0.5 ms, while
-/// Linux and macOS usually land within tens of microseconds. Nor do sim gaps
-/// too fine to be achievable in wall time at all, like an observer sampling
-/// 1 ns past a period boundary.
+/// registers, and above sim gaps too fine to be achievable in wall time at
+/// all. Those two meet whenever a component is scheduled a hair after
+/// another instant, which an observer sampling just past a period boundary
+/// does: a coarse sleep aimed at the earlier instant lands beyond the later
+/// one, so the later one is late before it does any work, however little
+/// work that is. Windows is the case worth sizing for, where the overshoot
+/// measures 1 to 2 ms against ~0.5 ms of nominal granularity.
 ///
 /// It is also a catch-up budget, which caps it from above. Absorbing
 /// lateness means the next instant still starts on its original target, so
 /// that one interval runs short by the absorbed amount, briefly faster
-/// than 1×, though never ahead of schedule. Keep it well under the shortest
+/// than 1×, though never ahead of schedule. Keep it under the shortest
 /// component period: once it exceeds a sim gap, recovery stops being one
 /// shortened wait and becomes a run of zero-sleep instants, which is the
-/// catch-up sprint the design rejects. 1 ms against the traffic demo's
-/// 10 ms physics leaves an order of magnitude.
-const OVERRUN_REANCHOR_THRESHOLD: Duration = Duration::from_millis(1);
+/// catch-up sprint the design rejects.
+///
+/// Those two pull opposite ways, so this sits between them: clear of a
+/// coarse timer's overshoot, and a fraction of the millisecond-scale periods
+/// a paced run tends to schedule.
+const OVERRUN_REANCHOR_THRESHOLD: Duration = Duration::from_millis(3);
 
 /// Maps sim time onto wall time and blocks to keep a run at 1× real time.
 ///
@@ -409,22 +415,36 @@ mod tests {
 
     #[test]
     fn chronic_small_lateness_is_reported_once_it_accumulates() {
-        // Every step runs 0.4 ms over its 1 ms sim gap: no single instant is
-        // late enough to report, but the sim genuinely cannot keep up. The
-        // fixed anchor accumulates the lateness until it crosses 1 ms.
+        // Every step runs a little over its sim gap: no single instant is late
+        // enough to report, but the sim genuinely cannot keep up. The fixed
+        // anchor accumulates the lateness until it crosses the threshold.
+        //
+        // Half the threshold per step, so this is silent on the first, crosses
+        // on the second, and is silent again on the third having re-anchored.
+        // Derived from the constant rather than written in milliseconds, so
+        // resizing it leaves a test that is about the behaviour intact. Halves
+        // rather than any other fraction, because they are the ones that
+        // multiply back exactly in whole nanoseconds.
+        let over_by = OVERRUN_REANCHOR_THRESHOLD / 2;
+
         let mut pacer = Pacer::new(ManualClock::new());
         pacer.pace(t_sim_ms(0));
         for instant in 1..=3 {
-            pacer.clock.do_work(wall_ms(1) + wall_us(400));
+            pacer.clock.do_work(wall_ms(1) + over_by.as_nanos() as i128);
             pacer.pace(t_sim_ms(instant));
         }
 
         assert_eq!(
             pacer.overrun_reanchor_count(),
             1,
-            "0.4 + 0.4 + 0.4 ms: silent, silent, then reported on crossing"
+            "silent while under the threshold, reported once on crossing it"
         );
-        assert_eq!(pacer.total_slip(), Duration::from_micros(1200));
+        assert_eq!(
+            pacer.total_slip(),
+            OVERRUN_REANCHOR_THRESHOLD,
+            "it slips exactly what had accumulated when it crossed, and the \
+             third step's lateness is being absorbed against the new anchor"
+        );
     }
 
     #[test]

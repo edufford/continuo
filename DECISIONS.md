@@ -612,3 +612,30 @@ it got there, including the roads not taken.
   - `Message::sim_time` in `continuo-core` moved with it. It is never
     serialized, so it cost nothing, and leaving it would have kept the same
     confusion one layer above the log.
+- **2026-08-09**: **The re-anchor threshold is 3 ms**, sized against the OS
+  timer rather than against how much work an instant does.
+  - The demo reported a real-time overrun once a sim-second under coarse
+    pacing, always at the pose logger's instant. PLAN.md attributed it to that
+    logger's accumulated inbox and the `(publisher, seq)` sort in `drain`.
+  - That is not what it was, which measuring settled. Per-instant work at the
+    second boundary and the logger's instant is 82 µs and 91 µs; `drain` of a
+    sim-second of poses costs ~155 µs and the logger's whole step ~231 µs. None
+    of it approaches the 1 to 2 ms being reported.
+  - The cause is the schedule meeting the timer. The logger samples 1 ns past
+    each second boundary, and a coarse sleep aimed at the boundary overshoots
+    past that instant, so it is late before it runs. Every other gap in the
+    demo is 10 ms or more and absorbs the same overshoot silently, which is why
+    it appeared once a second rather than at every period boundary.
+  - So the threshold was too small for the timer it sits on, at 1 ms against a
+    measured 1 to 2 ms. At 3 ms the demo is quiet across repeated runs, and the
+    value stays a fraction of the millisecond-scale periods a paced run
+    schedules. 2 ms also silenced it but only just covers the observed
+    overshoot, and 5 ms would reach half of a 10 ms period.
+  - `Pacing::real_time_precise` already silenced it too, by spending a core to
+    sleep-then-spin. That remains the answer when 1× output has to be smooth;
+    the threshold is what keeps the cheap mode from reporting its own expected
+    imprecision.
+  - The latest-per-key idea PLAN.md proposed is still worth having, and its
+    entry now argues for it on its own terms: sixteen times less work for a
+    low-rate observer. It is not a fix for this, and justifying it by this
+    would have been justifying it by a pacing artefact.
