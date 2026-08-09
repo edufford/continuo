@@ -43,7 +43,7 @@ impl PlaybackComponent {
                     if m.publisher == publisher || m.publisher.starts_with(&prefix) =>
                 {
                     Some((
-                        m.time,
+                        m.sim_time,
                         KeyExpr::new(m.key.clone()).expect("recorded keys are valid"),
                         m.payload.clone(),
                     ))

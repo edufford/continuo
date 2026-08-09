@@ -77,7 +77,7 @@ fn pose_message(seq: u64) -> Message {
         key: KeyExpr::new("continuo/demo/actor/car1/pose").expect("valid key"),
         publisher: ComponentPath::parse("car1/physics").expect("valid path"),
         seq,
-        time: SimTime::from_millis(500),
+        sim_time: SimTime::from_millis(500),
         payload: br#"{"position":{"x":1.5,"y":0.0,"z":0.0}}"#.to_vec(),
     }
 }
@@ -144,7 +144,7 @@ fn a_writer_sink_reassembles_the_event_logs_msg_line() {
     assert_eq!(msg["key"], "continuo/demo/actor/car1/pose");
     assert_eq!(msg["publisher"], "car1/physics");
     assert_eq!(msg["seq"], 7);
-    assert_eq!(msg["time"], 0.5);
+    assert_eq!(msg["sim_time"], 0.5);
     assert_eq!(
         msg["payload"]["position"]["x"], 1.5,
         "the payload is spliced back in, so the line stands alone"

@@ -499,7 +499,8 @@ impl<T: Transport> Conductor<T> {
             // earlier-ordered sibling branch within the same composite.
             let tree = &self.registry.tree;
             let release_condition = |m: &Message| {
-                m.time < now || (m.time == now && tree.releases_same_instant(&m.publisher, &path))
+                m.sim_time < now
+                    || (m.sim_time == now && tree.releases_same_instant(&m.publisher, &path))
             };
             let inbox = self.transport.drain(&path, &release_condition);
 
@@ -573,7 +574,7 @@ impl<T: Transport> Conductor<T> {
                     key,
                     publisher: path.clone(),
                     seq,
-                    time: now,
+                    sim_time: now,
                     payload,
                 });
             }

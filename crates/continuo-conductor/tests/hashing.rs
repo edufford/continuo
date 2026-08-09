@@ -242,7 +242,7 @@ fn playback_double_reproduces_the_recorded_messages() {
             .iter()
             .filter_map(|e| match e {
                 LogEvent::Msg(m) => Some((
-                    m.time.to_canonical_string(),
+                    m.sim_time.to_canonical_string(),
                     m.key.clone(),
                     m.seq,
                     m.payload.get().to_string(),

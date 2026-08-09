@@ -578,3 +578,37 @@ it got there, including the roads not taken.
     `MonitorTransport` callback records the first failure and the next thing
     downstream with an error channel reports it, which stops the run at the
     following tick boundary.
+- **2026-08-09**: **Every variable-length field in the tick hash carries its own
+  length**, and the `b"|state|"` marker is gone. The demo world hash moved once,
+  to `d747a81be039c5f1`.
+  - The hash absorbed a run of fields with nothing between them, so where two
+    variable-length fields touched, moving a byte from the end of one to the
+    start of the next gave the identical byte stream. Two different worlds
+    hashed alike.
+  - A component contributes `path | next_due | [key | seq | payload]* |
+    state?`. The touching pairs are payload to the next message's key, payload
+    to the state after it, and one component's last field to the next
+    component's path. Only the middle one had a separator.
+  - PLAN.md justified the change by calling the marker unsound, and that
+    overstated it. In principle it is right, since a separator must be a
+    sequence the content cannot contain and payloads are arbitrary bytes. In
+    practice it was unreachable: a payload is canonical JSON, `|state|` can only
+    appear inside a string literal, and any split there leaves a prefix that is
+    not valid JSON. The marker guarded its boundary; the holes were the two with
+    nothing at all.
+  - A length rather than a separator, because no separator can be safe for
+    arbitrary bytes, and the encoding no longer depends on payloads staying
+    JSON.
+  - Not called framing, though that is the usual word for it. This codebase
+    already spends "frame" on `VizFrame`, `dropped_frames`, and the viewer's
+    rendered frames, so the helper is `write_with_length_prefix`.
+- **2026-08-09**: **Every timestamp says `sim_time`**, including the event log's
+  `msg` line, which was the last one spelling it `time`.
+  - The tick line, the observed lines, and the viz bridge's wire metadata all
+    said `sim_time` already, so the log's `msg` line was the odd one out and the
+    Python viewer mapped one name onto the other on the way in.
+  - The log format changes and the world hash does not. Field names are not
+    hashed; only paths, keys, payloads, and state are.
+  - `Message::sim_time` in `continuo-core` moved with it. It is never
+    serialized, so it cost nothing, and leaving it would have kept the same
+    confusion one layer above the log.

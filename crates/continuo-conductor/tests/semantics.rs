@@ -43,7 +43,7 @@ impl Component for Probe {
             inbox: ctx
                 .inbox()
                 .iter()
-                .map(|m| (m.publisher.to_string(), m.seq, m.time))
+                .map(|m| (m.publisher.to_string(), m.seq, m.sim_time))
                 .collect(),
         };
         self.observations

@@ -230,11 +230,11 @@ fn verification_stops_at_the_first_divergence() {
         .events
         .iter_mut()
         .find_map(|event| match event {
-            LogEvent::Msg(message) if message.time >= halfway => Some(message),
+            LogEvent::Msg(message) if message.sim_time >= halfway => Some(message),
             _ => None,
         })
         .expect("the run publishes messages past its midpoint");
-    let tampered_at = tampered.time;
+    let tampered_at = tampered.sim_time;
     tampered.key = "continuo/demo/actor/nobody/pose".to_string();
 
     let (reached, verdict) = verify_highway(recorded, seconds);

@@ -46,7 +46,7 @@ pub struct Message {
     pub key: KeyExpr,
     pub publisher: ComponentPath,
     pub seq: u64,
-    pub time: SimTime,
+    pub sim_time: SimTime,
     pub payload: Vec<u8>,
 }
 

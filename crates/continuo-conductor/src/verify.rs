@@ -54,7 +54,7 @@ fn event_mismatch(a: &LogEvent, b: &LogEvent) -> Option<String> {
             (x != y).then(|| format!("tick fingerprints differ: {x:?} vs {y:?}"))
         }
         (LogEvent::Msg(x), LogEvent::Msg(y)) => {
-            let same = x.time == y.time
+            let same = x.sim_time == y.sim_time
                 && x.key == y.key
                 && x.publisher == y.publisher
                 && x.seq == y.seq
@@ -62,12 +62,12 @@ fn event_mismatch(a: &LogEvent, b: &LogEvent) -> Option<String> {
             (!same).then(|| {
                 format!(
                     "messages differ: {}|{}|{}|{} {} vs {}|{}|{}|{} {}",
-                    x.time,
+                    x.sim_time,
                     x.key,
                     x.publisher,
                     x.seq,
                     x.payload,
-                    y.time,
+                    y.sim_time,
                     y.key,
                     y.publisher,
                     y.seq,

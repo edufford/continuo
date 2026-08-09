@@ -33,7 +33,7 @@ fn sample_message() -> Message {
         key: KeyExpr::new(KEY).unwrap(),
         publisher: ComponentPath::parse(PUBLISHER).unwrap(),
         seq: 0,
-        time: SimTime::ZERO,
+        sim_time: SimTime::ZERO,
         payload: PAYLOAD.to_vec(),
     }
 }
