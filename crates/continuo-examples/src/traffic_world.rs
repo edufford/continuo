@@ -33,7 +33,7 @@ use continuo_conductor::{
     Conductor, ConductorConfig, ConductorError, EventLog, JoinMetadata, Pacing, PlaybackComponent,
     Verifier, WORLD_LEVEL,
 };
-use continuo_core::{Component, ComponentId, Message, SimDuration, SimTime};
+use continuo_core::{Component, ComponentId, CoreError, Message, SimDuration, SimTime};
 use continuo_transport::{MonitorTransport, Transport};
 
 /// One seed for the whole demo family: record, verify, and resim must all
@@ -369,6 +369,14 @@ fn add_logger<T: Transport>(conductor: &mut Conductor<T>) -> Result<(), Conducto
 pub struct TrafficRequestHandler {
     /// Requests collected since the last [`Self::apply`], in publish order.
     pending_requests: Arc<Mutex<Vec<Request>>>,
+    /// The first request that could not be read, held until [`Self::apply`]
+    /// reports it.
+    ///
+    /// The collecting callback is an `FnMut(&Message)` with nowhere to return
+    /// an error to, so a request it cannot decode is put here instead. First
+    /// one wins: the run stops at the next tick boundary, and later failures
+    /// are consequences of a scenario that is already wrong.
+    unreadable_request: Arc<Mutex<Option<CoreError>>>,
 }
 
 /// One membership change the sim asked for.
@@ -383,29 +391,42 @@ impl TrafficRequestHandler {
     /// transport.
     pub fn callback(&self) -> impl FnMut(&Message) + Send + 'static {
         let pending_requests = self.pending_requests.clone();
+        let unreadable_request = self.unreadable_request.clone();
         let spawn = traffic_spawn_key(WORLD_NAME);
         let despawn = traffic_despawn_key(WORLD_NAME);
 
-        // Return the collecting callback, holding its own handle.
+        // Return the collecting callback, holding its own handles.
         move |message: &Message| {
+            // Only these two keys are requests. Anything else on the transport
+            // is someone else's traffic and is not this handler's to read.
             let request = if message.key == spawn {
-                message
-                    .decode::<SpawnTrafficRequest>()
-                    .ok()
-                    .map(Request::Spawn)
+                message.decode::<SpawnTrafficRequest>().map(Request::Spawn)
             } else if message.key == despawn {
                 message
                     .decode::<DespawnTrafficRequest>()
-                    .ok()
                     .map(Request::Despawn)
             } else {
-                None
+                return;
             };
-            if let Some(request) = request {
-                pending_requests
+
+            match request {
+                Ok(request) => pending_requests
                     .lock()
                     .expect("request mutex is never poisoned")
-                    .push(request);
+                    .push(request),
+                // A request on one of this handler's own keys that it cannot
+                // read is a car that never arrives or never leaves, changing
+                // the scenario in silence. `apply` reports it at the next tick
+                // boundary, which is the first place with somewhere to return
+                // an error to.
+                Err(error) => {
+                    let mut slot = unreadable_request
+                        .lock()
+                        .expect("request mutex is never poisoned");
+                    if slot.is_none() {
+                        *slot = Some(error);
+                    }
+                }
             }
         }
     }
@@ -435,6 +456,18 @@ impl TrafficRequestHandler {
     /// the only way to drive this scenario is
     /// [`run_live_traffic_scenario`], which cannot forget.
     fn apply<T: Transport>(&self, conductor: &mut Conductor<T>) -> Result<(), ConductorError> {
+        // Before anything is applied, since a request that could not be read
+        // means the collected ones are an incomplete account of what the sim
+        // asked for.
+        if let Some(error) = self
+            .unreadable_request
+            .lock()
+            .expect("request mutex is never poisoned")
+            .take()
+        {
+            return Err(ConductorError::Core(error));
+        }
+
         let collected = std::mem::take(
             &mut *self
                 .pending_requests
