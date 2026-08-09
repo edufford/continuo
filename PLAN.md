@@ -598,13 +598,12 @@ three times.
   sites honest.
 
 - **Transcendental math is not required to be portable, and CI now checks
-  whether it is.** The world
-  hash depends on `sin`, `cos`, `sin_cos`, `asin`, and `atan2`, most directly
-  in the unicycle integration that feeds every pose, and again in the
-  quaternion and Euler conversions. IEEE 754 requires correct rounding for
-  `sqrt` but not for any of those, so glibc, the MSVC CRT, macOS libm, and
-  different architectures may each return different last bits. `powi` and
-  `rem_euclid` are exact and safe.
+  whether it is.** The world hash depends on `sin`, `cos`, `sin_cos`, `asin`,
+  and `atan2`, most directly in the unicycle integration that feeds every pose,
+  and again in the quaternion and Euler conversions. IEEE 754 requires correct
+  rounding for `sqrt` but not for any of those, so glibc, the MSVC CRT, macOS
+  libm, and different architectures may each return different last bits.
+  `powi` and `rem_euclid` are exact and safe.
 
   The first two steps are done. `DEMO_WORLD_HASH` in the highway tests pins
   what a full demo run hashes to, and CI runs on four agents covering two
