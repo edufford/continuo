@@ -689,6 +689,21 @@ three times.
   than churning readers twice. `Message::time` upstream in `continuo-core`
   carries the same name but is never serialized, so that half is free whenever.
 
+- **Membership "applied" should say "received" or "processed".** The word is
+  doing two jobs at once. A change is *applied* in the sense that the conductor
+  has taken it in and acted on it, which is what the status key at the top of
+  this document means by "applied join or leave", and a join also *takes effect*
+  at an instant the change itself names, which can be later. Both readings are
+  natural and the document uses the same word for them, so a reader has to work
+  out which is meant from context every time.
+
+  Nothing is wrong today, which is why this is here rather than in the work
+  above: it is one word choice, and the cost is only that the two ideas are
+  harder to keep apart than they need to be. "Received" or "processed" says the
+  conductor's half without borrowing the language of the other, leaving "takes
+  effect" free to mean only the instant. Prose, field names, and the key table's
+  status column all move together.
+
 - **A compact binary mode alongside JSON, chosen like debug versus release.**
   JSON stays the readable mode for development, inspection, and the event log;
   binary becomes the mode for throughput. The hash is taken over the wire
