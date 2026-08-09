@@ -65,7 +65,8 @@ impl Component for UnicyclePhysics {
         }
 
         let key = crate::pose_key(ctx.world_name(), &self.actor_name);
-        ctx.publish(key, &self.pose()).expect("pose serializes");
+        ctx.publish(key, &self.pose())
+            .expect("physics keeps its pose finite");
 
         // Return the next due time, one physics period from now.
         ctx.now() + self.period

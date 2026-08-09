@@ -1,6 +1,7 @@
 use serde::Serialize;
 
 use crate::error::CoreError;
+use crate::finite::find_non_finite;
 use crate::ids::ComponentId;
 use crate::keyexpr::KeyExpr;
 use crate::messages::Message;
@@ -131,19 +132,57 @@ impl<'a> StepCtx<'a> {
     /// time. Visibility to other components follows the delivery rule
     /// (PLAN.md): later-ordered siblings within the same composite see it
     /// this instant; everyone else from their next step.
-    // TODO(PLAN "Deferred"): a non-finite float does not fail here. serde_json
-    // writes `NaN` and `±inf` as `null`, which then fails to decode at whichever
-    // consumer reads it next, far from whoever produced it. Reject them at the
-    // source instead.
+    ///
+    /// Fails on a non-finite float rather than publishing one. `serde_json`
+    /// writes `NaN` and `±inf` as `null`, so without this a diverging
+    /// integrator emits a payload that decodes nowhere, and the first sign of
+    /// it is a decode failure at another component, at a later instant. The
+    /// value is a pure function of the caller's logic and state, so it
+    /// reproduces at the same instant on every machine, which is what makes
+    /// refusing it safe rather than a source of divergence.
     pub fn publish<T: Serialize>(&mut self, key: KeyExpr, value: &T) -> Result<(), CoreError> {
         let payload = serde_json::to_vec(value).map_err(|source| CoreError::PayloadSerialize {
             key: key.as_str().to_string(),
             source,
         })?;
+
+        // Walk the value only when the payload could hold one, which is worth
+        // 4% of the scaled world's step rate. `null` also arrives from `None`
+        // and from the letters inside a string, and those cost a walk that
+        // finds nothing rather than a wrong answer.
+        if Self::may_hold_non_finite(&payload)
+            && let Some(found) = find_non_finite(value)
+        {
+            return Err(CoreError::NonFiniteFloat {
+                key: key.as_str().to_string(),
+                found: found.to_string(),
+            });
+        }
+
         self.outbox.push((key, payload));
 
         // Return success; the conductor stamps and routes the queued message after the step.
         Ok(())
+    }
+
+    /// Whether `payload` could hold a non-finite float, cheaply.
+    ///
+    /// Runs on every publish, so it scans bytes rather than parsing anything.
+    /// False positives are free: they cost a walk that finds nothing.
+    ///
+    /// **This is specific to JSON and does not survive a change of wire
+    /// format.** It is sound only because `serde_json` writes every non-finite
+    /// float as the four bytes `null`. CBOR, which PLAN.md's binary mode would
+    /// bring, encodes `NaN` as its float bits and spells null as the single
+    /// byte `0xf6`, so a payload carrying a `NaN` would contain no `null` at
+    /// all, this would answer `false`, the walk would be skipped, and the
+    /// guard would stop working with every test still passing.
+    ///
+    /// That failure is silent and open, so it is pinned by a test rather than
+    /// left to this comment. See `the_fast_path_premise_holds` in
+    /// `tests/non_finite.rs`, which fails the moment the premise does.
+    fn may_hold_non_finite(payload: &[u8]) -> bool {
+        payload.windows(4).any(|window| window == b"null")
     }
 
     /// Drains the accumulated publishes; called by the conductor after

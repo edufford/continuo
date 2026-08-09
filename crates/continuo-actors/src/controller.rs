@@ -110,7 +110,8 @@ impl Component for PathFollowController {
         };
 
         let key = crate::cmd_key(ctx.world_name(), &self.actor_name);
-        ctx.publish(key, &cmd).expect("cmd serializes");
+        ctx.publish(key, &cmd)
+            .expect("the controller keeps its command finite");
 
         // Return the next due time, one control period from now.
         ctx.now() + self.period
