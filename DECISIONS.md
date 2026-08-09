@@ -31,7 +31,7 @@ it got there, including the roads not taken.
 - **2026-07-17**: World spec is generic and continuo-owned; road-network
   formats (OpenDRIVE or other, undecided) come later as importers.
 - **2026-07-17**: Pacing is a single boolean `RealTimePacing`: `false` =
-  free-run, `true` = 1× real-time (no scale factor). If real-time can't keep
+  free-run, `true` = 1x real-time (no scale factor). If real-time can't keep
   up, run slower and log overruns. *(Superseded 2026-07-24: still one
   setting and still no scale factor, but a `Pacing` enum rather than a bool,
   so the spin padding rides on the real-time variant; see the milestone 3
@@ -150,7 +150,7 @@ it got there, including the roads not taken.
     component finished within its time".
   - The threshold is therefore also a **catch-up budget**, which caps it
     from above: absorbing lateness makes the next interval run short by that
-    much, briefly faster than 1× (though never ahead of schedule). It must
+    much, briefly faster than 1x (though never ahead of schedule). It must
     stay well under the shortest component period, because above a sim gap that
     recovery becomes a run of zero-sleep instants, the sprint "no catch-up"
     exists to prevent.
@@ -632,7 +632,7 @@ it got there, including the roads not taken.
     schedules. 2 ms also silenced it but only just covers the observed
     overshoot, and 5 ms would reach half of a 10 ms period.
   - `Pacing::real_time_precise` already silenced it too, by spending a core to
-    sleep-then-spin. That remains the answer when 1× output has to be smooth;
+    sleep-then-spin. That remains the answer when 1x output has to be smooth;
     the threshold is what keeps the cheap mode from reporting its own expected
     imprecision.
   - The latest-per-key idea PLAN.md proposed is still worth having, and its

@@ -1,4 +1,4 @@
-//! Real-time pacing (milestone 3): making a run advance at 1× wall time
+//! Real-time pacing (milestone 3): making a run advance at 1x wall time
 //! instead of as fast as possible.
 //!
 //! Pacing lives entirely in the conductor and is invisible to sim logic.
@@ -21,7 +21,7 @@
 //!
 //! # Pieces
 //!
-//! - [`Pacing`] is the public mode on `ConductorConfig`: free-run, or 1×
+//! - [`Pacing`] is the public mode on `ConductorConfig`: free-run, or 1x
 //!   real time with a spin padding.
 //! - [`Pacer`] holds the anchor and does the arithmetic: target, wait,
 //!   absorb-or-slip. This is the part worth testing, and it must not depend
@@ -47,7 +47,7 @@ pub enum Pacing {
     /// previous one finishes.
     #[default]
     FreeRun,
-    /// Advance at 1× real time: each instant waits for its wall-clock
+    /// Advance at 1x real time: each instant waits for its wall-clock
     /// target. If the sim can't keep up it runs slower and logs the
     /// overruns. The wall anchor slips rather than catching up, and steps
     /// are never skipped (see PLAN.md "Pacing").
@@ -66,7 +66,7 @@ pub enum Pacing {
 }
 
 impl Pacing {
-    /// 1× real time on the OS timer alone, with no busy-spin and no CPU spent
+    /// 1x real time on the OS timer alone, with no busy-spin and no CPU spent
     /// between instants. Prefer this unless timing to ~0.5 ms is too coarse:
     /// the spare core is usually better spent stepping.
     pub const fn real_time() -> Self {
@@ -75,9 +75,9 @@ impl Pacing {
         }
     }
 
-    /// 1× real time with ~1 ms sleep-then-spin for sub-millisecond
+    /// 1x real time with ~1 ms sleep-then-spin for sub-millisecond
     /// accuracy, at the cost of a core for that final stretch of each
-    /// instant. Worth it when smooth 1× output matters, for a live viewer or
+    /// instant. Worth it when smooth 1x output matters, for a live viewer or
     /// a downstream real-time consumer, and a core is free to spare.
     pub const fn real_time_precise() -> Self {
         Pacing::RealTime {
@@ -182,7 +182,7 @@ impl WallClock for SystemClock {
 /// It is also a catch-up budget, which caps it from above. Absorbing
 /// lateness means the next instant still starts on its original target, so
 /// that one interval runs short by the absorbed amount, briefly faster
-/// than 1×, though never ahead of schedule. Keep it under the shortest
+/// than 1x, though never ahead of schedule. Keep it under the shortest
 /// component period: once it exceeds a sim gap, recovery stops being one
 /// shortened wait and becomes a run of zero-sleep instants, which is the
 /// catch-up sprint the design rejects.
@@ -192,7 +192,7 @@ impl WallClock for SystemClock {
 /// a paced run tends to schedule.
 const OVERRUN_REANCHOR_THRESHOLD: Duration = Duration::from_millis(3);
 
-/// Maps sim time onto wall time and blocks to keep a run at 1× real time.
+/// Maps sim time onto wall time and blocks to keep a run at 1x real time.
 ///
 /// The anchor `(sim, wall)` fixes one point of that map; every instant's
 /// target wall time is `wall_anchor + (sim_now - sim_anchor)`. Sleeping to
@@ -203,7 +203,7 @@ const OVERRUN_REANCHOR_THRESHOLD: Duration = Duration::from_millis(3);
 /// by the overrun amount", and the run stays permanently behind by that
 /// much rather than sprinting to catch up.
 ///
-/// That move is not bookkeeping: it is what *resumes* 1× pacing after the
+/// That move is not bookkeeping: it is what *resumes* 1x pacing after the
 /// lost time is written off. Leaving the anchor fixed instead would leave
 /// every later target in the past, so nothing would wait and the run would
 /// free-run until sim time caught back up with wall time, precisely the
@@ -404,12 +404,12 @@ mod tests {
         assert!(pacer.clock.sleeps.is_empty(), "already late, so no wait");
 
         // The next wait is short by exactly that 0.6 ms: 1 ms of sim in
-        // 0.4 ms of wall, so this interval runs faster than 1× to recover.
+        // 0.4 ms of wall, so this interval runs faster than 1x to recover.
         pacer.pace(t_sim_ms(2));
         assert_eq!(pacer.clock.sleeps, vec![wall_ms(1) - wall_us(600)]);
 
         // Recovery only reaches the original schedule, never passes it, so
-        // the run is never ahead of 1×, only ever catching back up to it.
+        // the run is never ahead of 1x, only ever catching back up to it.
         assert_eq!(pacer.clock.now, wall_ms(2));
     }
 

@@ -85,7 +85,7 @@ instant, and repeats.
   decimal seconds; poses are named-field vectors and quaternions (never
   arrays); the wire format is directly inspectable and, later, hashable.
 - **Pacing is one setting.** `Pacing::FreeRun` runs as fast as possible;
-  `Pacing::RealTime { .. }` waits for 1× wall time and logs overruns (when
+  `Pacing::RealTime { .. }` waits for 1x wall time and logs overruns (when
   the sim can't keep up the wall anchor slips, with no catch-up and no
   skipped steps; lateness under the re-anchor threshold is absorbed rather than
   counted). Sim logic never sees which mode is active, and pacing never
@@ -110,7 +110,7 @@ See PLAN.md for what each one covers.
 - [x] **M1** skeleton: core types, transport, conductor loop, traffic demo
 - [x] **M2** determinism harness: seeding, tick fingerprints, event-log
       recording, verification, open-loop resimulation
-- [x] **M3** real-time pacing (1× wall time, overrun logging)
+- [x] **M3** real-time pacing (1x wall time, overrun logging)
 - [x] **M4** runtime join/leave; per-component step budgets and timeout
       policy
 - [x] **M5** visualization: a viz bridge on the transport, and a Python

@@ -21,7 +21,7 @@ be split into separate processes over Zenoh without changing component code.
   at every level.
 - **Multi-rate for free**: rates are not configured centrally. Any period, and
   even aperiodic behavior, falls out of self-reported next-step times.
-- **Pacing modes**: free-run (as fast as possible) or 1× real-time, without
+- **Pacing modes**: free-run (as fast as possible) or 1x real-time, without
   affecting determinism.
 - **Single process now, distributed later**: the tick protocol is message-shaped from
   day one; distribution is a transport swap (Zenoh), not a rearchitecture.
@@ -268,7 +268,7 @@ Lives entirely in the conductor:
 A single config field, `pacing: Pacing`:
 
 - `Pacing::FreeRun`: advance immediately after the barrier.
-- `Pacing::RealTime { spin_padding }`: 1× real-time, waiting until the wall
+- `Pacing::RealTime { spin_padding }`: 1x real-time, waiting until the wall
   time corresponding to the next step's sim time. If the sim can't keep up,
   it simply runs slower than real time and **logs the overruns**, with no
   catch-up (the wall-time anchor slips by the overrun amount rather than
@@ -522,7 +522,7 @@ owning an async runtime later.
 2. **Determinism harness**: seeding, per-tick state hash (state-hash vs.
    output-hash per component), record/replay, CI test asserting identical hash
    streams.
-3. **Pacing**: `pacing: Pacing` config (default `FreeRun`), 1× wall-time
+3. **Pacing**: `pacing: Pacing` config (default `FreeRun`), 1x wall-time
    gating with anchor-slip once lateness accumulates past the re-anchor
    threshold, overrun logging.
 4. **Dynamic join/leave**: registration metadata shaped for the transport,
