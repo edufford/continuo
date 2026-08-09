@@ -70,7 +70,9 @@ which is the distribution seam.
 trait Component {
     fn id(&self) -> ComponentId;
     fn subscriptions(&self) -> Vec<KeyExpr>;
-    fn step(&mut self, ctx: &mut TickCtx);  // read inbox, publish via ctx
+    // Read inbox, publish via ctx, report the next sim time to step at.
+    // `Err` halts the world: it is how a component says it cannot do its job.
+    fn step(&mut self, ctx: &mut StepCtx) -> Result<SimTime, CoreError>;
 }
 ```
 
