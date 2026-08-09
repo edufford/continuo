@@ -603,13 +603,23 @@ three times.
   quaternion and Euler conversions. IEEE 754 requires correct rounding for
   `sqrt` but not for any of those, so glibc, the MSVC CRT, macOS libm, and
   different architectures may each return different last bits. `powi` and
-  `rem_euclid` are exact and safe. Worse, **CI never compares hashes across
-  platforms**: each matrix job prints its hash and nothing reads the values
-  back, so two jobs could disagree and the run would still be green. In this
-  order: make CI compare the hashes it already produces, then add arm64 and
-  macOS agents, then route the transcendentals through the `libm` crate only
-  if either step diverges. Doing the last one first would change the hash
-  without ever learning whether it needed to.
+  `rem_euclid` are exact and safe.
+
+  The first step is done: `DEMO_WORLD_HASH` in the highway tests pins what a
+  full demo run hashes to, and `cargo test` runs on every agent, so an agent
+  that disagrees fails and names itself. Before that, CI ran the demo on each
+  agent and only *printed* the hash, so two agents could disagree and the run
+  would still be green. A pinned value replaces the artifact-and-compare job
+  sketched here earlier and is stronger than it: comparing agents to each other
+  passes when they all move together, and comparing each to a written-down
+  value does not. It also costs no YAML and fails where the run is, rather than
+  in a job downstream of it.
+
+  What remains, in this order: add arm64 and macOS agents, which is the step
+  that would actually exercise a different libm, and then route the
+  transcendentals through the `libm` crate only if that diverges. Doing the
+  last one first would change the hash without ever learning whether it needed
+  to.
 
 - **Two smoke steps carry logic that reads better elsewhere.** Worth the same
   pass as the hash comparison above, since both edit one workflow file.
