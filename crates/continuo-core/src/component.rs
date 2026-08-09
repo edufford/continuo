@@ -146,11 +146,11 @@ impl<'a> StepCtx<'a> {
             source,
         })?;
 
-        // A non-finite float is written as `null`, so a payload without one
-        // cannot contain a non-finite float and needs no walking. `null` also
-        // arrives from `None` and from the letters inside a string, which cost
-        // a walk that finds nothing rather than a wrong answer.
-        if Self::contains_null(&payload)
+        // Walk the value only when the payload could hold one, which is worth
+        // 4% of the scaled world's step rate. `null` also arrives from `None`
+        // and from the letters inside a string, and those cost a walk that
+        // finds nothing rather than a wrong answer.
+        if Self::may_hold_non_finite(&payload)
             && let Some(found) = find_non_finite(value)
         {
             return Err(CoreError::NonFiniteFloat {
@@ -165,11 +165,23 @@ impl<'a> StepCtx<'a> {
         Ok(())
     }
 
-    /// Whether the payload holds the four bytes a non-finite float writes.
+    /// Whether `payload` could hold a non-finite float, cheaply.
     ///
-    /// The cheap half of the guard above, and the one that runs on every
-    /// publish, so it scans bytes rather than parsing anything.
-    fn contains_null(payload: &[u8]) -> bool {
+    /// Runs on every publish, so it scans bytes rather than parsing anything.
+    /// False positives are free: they cost a walk that finds nothing.
+    ///
+    /// **This is specific to JSON and does not survive a change of wire
+    /// format.** It is sound only because `serde_json` writes every non-finite
+    /// float as the four bytes `null`. CBOR, which PLAN.md's binary mode would
+    /// bring, encodes `NaN` as its float bits and spells null as the single
+    /// byte `0xf6`, so a payload carrying a `NaN` would contain no `null` at
+    /// all, this would answer `false`, the walk would be skipped, and the
+    /// guard would stop working with every test still passing.
+    ///
+    /// That failure is silent and open, so it is pinned by a test rather than
+    /// left to this comment. See `the_fast_path_premise_holds` in
+    /// `tests/non_finite.rs`, which fails the moment the premise does.
+    fn may_hold_non_finite(payload: &[u8]) -> bool {
         payload.windows(4).any(|window| window == b"null")
     }
 

@@ -725,9 +725,21 @@ three times.
   payload bits faithfully where JSON collapses them, so two values that are
   both `NaN` give different bytes, and NaN payload propagation is a classic
   x86-versus-ARM difference. `StepCtx::publish` now rejects them before any
-  encoder sees one, so that hazard is closed whichever way this goes, and an
-  owned encoder inherits the rule rather than being needed for it. Golden byte
-  tests are required either way.
+  encoder sees one, so that hazard is closed whichever way this goes. Golden
+  byte tests are required either way.
+
+  **Whoever does this must revisit that guard's fast path.** It walks the value
+  only when the serialized payload contains `null`, which is sound only because
+  `serde_json` writes every non-finite float as exactly those four bytes. CBOR
+  writes `NaN` as its float bits and null as a single `0xf6`, so the scan would
+  find nothing, the walk would be skipped, and the guard would stop working
+  while every test that exercises it through JSON still passed. That is a
+  silent failure in the permissive direction, so `the_fast_path_premise_holds`
+  fails the moment the premise does. Either drop the fast path, costing about
+  4% of the scaled world's step rate, or have the owned encoder reject
+  non-finite floats itself and delete the guard's walk entirely, which is the
+  better end state since it removes a second traversal rather than repairing
+  it.
 
 ### Features
 

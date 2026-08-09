@@ -210,6 +210,45 @@ fn a_non_finite_hidden_behind_a_none_is_still_found() {
 }
 
 #[test]
+fn the_fast_path_premise_holds() {
+    // `publish` skips the walk when the payload holds no `null`, which is
+    // sound only while every non-finite float writes exactly those four bytes.
+    //
+    // This exists because a change of wire format would break that quietly and
+    // in the dangerous direction. CBOR, which PLAN.md's binary mode would
+    // bring, encodes `NaN` as its float bits and spells null as the single
+    // byte `0xf6`, so a payload carrying a `NaN` would contain no `null`, the
+    // walk would be skipped, and every test above would still pass while
+    // nothing was being guarded. Failing here is what forces the fast path to
+    // be revisited at the moment its premise stops being true.
+    for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        let payload = serde_json::to_vec(&value).expect("a float serializes");
+        assert_eq!(
+            payload, b"null",
+            "a non-finite float no longer writes `null`, so the fast path in \
+             `StepCtx::publish` is unsound and must be removed or replaced"
+        );
+    }
+
+    // And nested, since that is the shape a real payload has.
+    let payload = serde_json::to_vec(&Nested {
+        label: "ego".to_string(),
+        position: Vec3 {
+            x: f64::NAN,
+            y: 2.0,
+            z: 3.0,
+        },
+        orientation: finite_quat(),
+    })
+    .expect("the payload serializes");
+    assert!(
+        payload.windows(4).any(|window| window == b"null"),
+        "the scan has to find it where it actually sits: {}",
+        String::from_utf8_lossy(&payload)
+    );
+}
+
+#[test]
 fn a_non_finite_inside_a_some_is_found() {
     // `Some` is transparent on the wire, so it must be transparent to the walk.
     let message = rejection(publish(&Optional {
