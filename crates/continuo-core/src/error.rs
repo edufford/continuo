@@ -20,4 +20,15 @@ pub enum CoreError {
         #[source]
         source: serde_json::Error,
     },
+
+    /// Rejected at the publisher, because JSON cannot carry it. `serde_json`
+    /// writes `NaN` and `±inf` as `null`, which decodes nowhere, so letting one
+    /// through would surface as a decode failure at some later consumer with
+    /// nothing pointing back at the arithmetic that produced it.
+    #[error("non-finite float {found} in payload for key {key:?}")]
+    NonFiniteFloat {
+        key: String,
+        /// The value and where it was, such as `NaN at position.x`.
+        found: String,
+    },
 }

@@ -1,6 +1,7 @@
 use serde::Serialize;
 
 use crate::error::CoreError;
+use crate::finite::find_non_finite;
 use crate::ids::ComponentId;
 use crate::keyexpr::KeyExpr;
 use crate::messages::Message;
@@ -131,19 +132,45 @@ impl<'a> StepCtx<'a> {
     /// time. Visibility to other components follows the delivery rule
     /// (PLAN.md): later-ordered siblings within the same composite see it
     /// this instant; everyone else from their next step.
-    // TODO(PLAN "Deferred"): a non-finite float does not fail here. serde_json
-    // writes `NaN` and `±inf` as `null`, which then fails to decode at whichever
-    // consumer reads it next, far from whoever produced it. Reject them at the
-    // source instead.
+    ///
+    /// Fails on a non-finite float rather than publishing one. `serde_json`
+    /// writes `NaN` and `±inf` as `null`, so without this a diverging
+    /// integrator emits a payload that decodes nowhere, and the first sign of
+    /// it is a decode failure at another component, at a later instant. The
+    /// value is a pure function of the caller's logic and state, so it
+    /// reproduces at the same instant on every machine, which is what makes
+    /// refusing it safe rather than a source of divergence.
     pub fn publish<T: Serialize>(&mut self, key: KeyExpr, value: &T) -> Result<(), CoreError> {
         let payload = serde_json::to_vec(value).map_err(|source| CoreError::PayloadSerialize {
             key: key.as_str().to_string(),
             source,
         })?;
+
+        // A non-finite float is written as `null`, so a payload without one
+        // cannot contain a non-finite float and needs no walking. `null` also
+        // arrives from `None` and from the letters inside a string, which cost
+        // a walk that finds nothing rather than a wrong answer.
+        if Self::contains_null(&payload)
+            && let Some(found) = find_non_finite(value)
+        {
+            return Err(CoreError::NonFiniteFloat {
+                key: key.as_str().to_string(),
+                found: found.to_string(),
+            });
+        }
+
         self.outbox.push((key, payload));
 
         // Return success; the conductor stamps and routes the queued message after the step.
         Ok(())
+    }
+
+    /// Whether the payload holds the four bytes a non-finite float writes.
+    ///
+    /// The cheap half of the guard above, and the one that runs on every
+    /// publish, so it scans bytes rather than parsing anything.
+    fn contains_null(payload: &[u8]) -> bool {
+        payload.windows(4).any(|window| window == b"null")
     }
 
     /// Drains the accumulated publishes; called by the conductor after

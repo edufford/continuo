@@ -5,6 +5,7 @@
 
 mod component;
 mod error;
+mod finite;
 pub mod hash;
 mod ids;
 mod keyexpr;

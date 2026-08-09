@@ -574,14 +574,22 @@ three times.
   decode reporting centrally is the tractable shape, and it makes swallowing
   something a component opts into rather than the default.
 
-- **A non-finite float serializes to `null` and nothing notices.** `serde_json`
-  turns `NaN` and `±inf` into `null` rather than erroring, so a component
-  publishing a NaN pose emits `{"x":null,...}`, which then fails to decode at
-  whichever consumer reads it next, far from the component that produced it.
-  Combined with the swallowed decode above, the chain is silent end to end:
-  physics reaches NaN, publishes null, the controller ignores it and drives on
-  stale data. A guard at `StepCtx::publish` rejecting non-finite floats at the
-  source would make a diverging integrator fail where it happens.
+- ~~**A non-finite float serializes to `null` and nothing notices.**~~ Done.
+  `StepCtx::publish` now rejects one, naming the key and the field path, so a
+  diverging integrator fails where it happens rather than at whichever consumer
+  reads the `null` next. Halting is safe for the same reason a schedule
+  violation halts: the value is a pure function of the component's logic and
+  the sim state, so it reproduces at the identical instant everywhere.
+
+  Worth knowing if this is ever revisited: neither obvious hook works.
+  `serde_json` routes a non-finite float to `Formatter::write_null` without the
+  formatter ever seeing it as a float, and `to_value` collapses it to
+  `Value::Null`, so in both cases it is indistinguishable from `Option::None`.
+  The guard walks the value with a `Serializer` that writes nothing, run only
+  when the serialized payload contains `null`, since one always does if a
+  non-finite float is present. That is also the encode-time rejection the
+  binary-format item below wants, so an owned encoder inherits the rule rather
+  than reinventing it.
 
 - **Length-prefix every variable-length field in the tick hash, and drop the
   `b"|state|"` marker.** The marker separates state bytes from the payload
@@ -709,12 +717,17 @@ three times.
   8949 §4.2.2) and 34 under `minicbor-serde` (which always emits f64), sharing
   no bytes. So the crate and version become part of the fingerprint's
   definition. **Prefer owning the encoder** and using a crate only to decode,
-  since determinism constrains only the bytes we produce. The decisive reason
-  is non-finite floats: JSON collapses every NaN to `null`, while CBOR encodes
-  the payload bits faithfully, so two values that are both `NaN` produce
-  different bytes, and NaN payload propagation is a classic x86-versus-ARM
-  difference. An owned encoder can reject non-finite floats outright. Golden
-  byte tests are required either way.
+  since determinism constrains only the bytes we produce, and a pinned crate
+  version is the coupling the project deliberately removed for the hash and the
+  RNG.
+
+  Non-finite floats used to be the decisive argument here: CBOR encodes NaN
+  payload bits faithfully where JSON collapses them, so two values that are
+  both `NaN` give different bytes, and NaN payload propagation is a classic
+  x86-versus-ARM difference. `StepCtx::publish` now rejects them before any
+  encoder sees one, so that hazard is closed whichever way this goes, and an
+  owned encoder inherits the rule rather than being needed for it. Golden byte
+  tests are required either way.
 
 ### Features
 

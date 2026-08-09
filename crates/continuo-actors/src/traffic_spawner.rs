@@ -229,7 +229,7 @@ impl Component for TrafficSpawner {
             self.live_traffic
                 .insert(spawn.actor_name.clone(), spawn.start_s);
             ctx.publish(traffic_spawn_key(ctx.world_name()), &spawn)
-                .expect("spawn request serializes");
+                .expect("a spawn request carries a finite start");
         }
 
         // Return the next due time, one period out.
