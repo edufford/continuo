@@ -57,15 +57,18 @@ impl Component for PoseLogger {
 
     fn step(&mut self, ctx: &mut StepCtx) -> Result<SimTime, CoreError> {
         for message in ctx.inbox() {
-            if let Ok(pose) = message.decode::<Pose>() {
-                let key = message.key.as_str().to_string();
-                // Inbox is (publisher, seq)-sorted, so the first message from
-                // a new actor is its earliest pose.
-                if !self.latest.contains_key(&key) {
-                    log_pose("initial pose", message.time, &key, &pose);
-                }
-                self.latest.insert(key, (message.time, pose));
+            // Halting for a logger looks heavy, since nothing in the sim
+            // depends on it. A log quietly missing poses is a diagnostic that
+            // lies, though, and on this wildcard subscription a pose that
+            // cannot be read means a schema mismatch worth stopping for.
+            let pose = message.decode::<Pose>()?;
+            let key = message.key.as_str().to_string();
+            // Inbox is (publisher, seq)-sorted, so the first message from
+            // a new actor is its earliest pose.
+            if !self.latest.contains_key(&key) {
+                log_pose("initial pose", message.time, &key, &pose);
             }
+            self.latest.insert(key, (message.time, pose));
         }
         for (key, (time, pose)) in &self.latest {
             log_pose("pose", *time, key, pose);

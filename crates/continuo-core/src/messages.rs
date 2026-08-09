@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::error::CoreError;
 use crate::ids::{ComponentId, ComponentPath};
 use crate::keyexpr::KeyExpr;
 use crate::math::{Quat, Vec3};
@@ -51,13 +52,26 @@ pub struct Message {
 
 impl Message {
     /// Deserializes the JSON payload.
-    // TODO(PLAN "Deferred"): every caller currently throws this error away, so
-    // a component that cannot read a message silently keeps its previous state
-    // and the run continues on stale data. That failure is deterministic, so
-    // the hash stays steady and verification passes: nothing in the determinism
-    // machinery can see it. Wanted is a `StepCtx`-mediated decode that reports
-    // centrally, making the swallow something a caller opts into.
-    pub fn decode<'a, T: Deserialize<'a>>(&'a self) -> Result<T, serde_json::Error> {
-        serde_json::from_slice(&self.payload)
+    ///
+    /// The error names this message's key and publisher, which the caller
+    /// would otherwise have to attach itself, because a component that cannot
+    /// read a payload is rarely the one at fault.
+    ///
+    /// It is [`CoreError`] rather than `serde_json::Error` so that the usual
+    /// shape inside a step is `?`: [`Component::step`](crate::Component::step)
+    /// returns the same type, and a failure there halts the world. Swallowing
+    /// one stays possible, by matching on the `Result` and carrying on, but it
+    /// then says so where anyone can see it.
+    ///
+    /// That visibility is the point. A component running on stale data fails
+    /// deterministically, so the hash holds steady and verification passes
+    /// against a recording carrying the same fault: nothing in the determinism
+    /// machinery can see it.
+    pub fn decode<'a, T: Deserialize<'a>>(&'a self) -> Result<T, CoreError> {
+        serde_json::from_slice(&self.payload).map_err(|source| CoreError::PayloadDecode {
+            key: self.key.as_str().to_string(),
+            publisher: self.publisher.to_string(),
+            source,
+        })
     }
 }

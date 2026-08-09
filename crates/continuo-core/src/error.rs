@@ -21,6 +21,19 @@ pub enum CoreError {
         source: serde_json::Error,
     },
 
+    /// A message a component subscribed to but could not read.
+    ///
+    /// Names the key and the publisher because the component that fails to
+    /// decode is rarely the one at fault: the payload came from somewhere else,
+    /// and that is where to look.
+    #[error("cannot read payload on key {key:?} from {publisher}: {source}")]
+    PayloadDecode {
+        key: String,
+        publisher: String,
+        #[source]
+        source: serde_json::Error,
+    },
+
     /// Rejected at the publisher, because JSON cannot carry it. `serde_json`
     /// writes `NaN` and `±inf` as `null`, which decodes nowhere, so letting one
     /// through would surface as a decode failure at some later consumer with

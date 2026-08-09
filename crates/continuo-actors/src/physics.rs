@@ -47,11 +47,9 @@ impl Component for UnicyclePhysics {
 
     fn step(&mut self, ctx: &mut StepCtx) -> Result<SimTime, CoreError> {
         if let Some(message) = ctx.inbox().last() {
-            // TODO(PLAN "Deferred"): a failed decode leaves `self.cmd` alone, so
-            // this integrates the previous command indefinitely without saying so.
-            if let Ok(cmd) = message.decode::<Cmd>() {
-                self.cmd = cmd;
-            }
+            // A command that cannot be read stops the world. Keeping the
+            // previous one would integrate it indefinitely without saying so.
+            self.cmd = message.decode::<Cmd>()?;
         }
 
         if let Some(dt) = ctx.dt() {
@@ -65,8 +63,7 @@ impl Component for UnicyclePhysics {
         }
 
         let key = crate::pose_key(ctx.world_name(), &self.actor_name);
-        ctx.publish(key, &self.pose())
-            .expect("physics keeps its pose finite");
+        ctx.publish(key, &self.pose())?;
 
         // Return the next due time, one physics period from now.
         Ok(ctx.now() + self.period)

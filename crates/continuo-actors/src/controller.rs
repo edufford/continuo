@@ -94,11 +94,9 @@ impl Component for PathFollowController {
         // Latest pose wins; inbox is (publisher, seq)-sorted and all pose
         // messages here come from our physics sibling.
         if let Some(message) = ctx.inbox().last() {
-            // TODO(PLAN "Deferred"): a failed decode keeps the stale pose, and this
-            // carries on steering from it.
-            if let Ok(pose) = message.decode::<Pose>() {
-                self.last_pose = pose;
-            }
+            // A pose that cannot be read stops the world. Keeping the previous
+            // one would go on steering from it without saying so.
+            self.last_pose = message.decode::<Pose>()?;
         }
 
         let position = self.last_pose.position;
@@ -112,8 +110,7 @@ impl Component for PathFollowController {
         };
 
         let key = crate::cmd_key(ctx.world_name(), &self.actor_name);
-        ctx.publish(key, &cmd)
-            .expect("the controller keeps its command finite");
+        ctx.publish(key, &cmd)?;
 
         // Return the next due time, one control period from now.
         Ok(ctx.now() + self.period)

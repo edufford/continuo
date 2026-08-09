@@ -79,8 +79,13 @@ impl Component for PlaybackComponent {
                 break;
             }
             if *time == ctx.now() {
-                ctx.publish(key.clone(), payload)
-                    .expect("recorded payloads re-serialize verbatim");
+                // Cannot fail: a recorded payload is already-serialized JSON,
+                // so publishing it is a copy, and the publisher's non-finite
+                // guard cannot see into one. A `null` left by a NaN in an
+                // older log therefore republishes unchanged, which is what
+                // replaying a recording verbatim means. That failure still
+                // lands, at whichever consumer decodes it.
+                ctx.publish(key.clone(), payload)?;
             }
             self.cursor += 1;
         }
