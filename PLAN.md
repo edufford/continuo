@@ -597,26 +597,31 @@ three times.
   adding one. A `write_framed` helper beside `HashFnv1a64` would keep the call
   sites honest.
 
-- **Transcendental math is not portable, and CI would not notice.** The world
-  hash depends on `sin`, `cos`, `sin_cos`, `asin`, and `atan2`, most directly
-  in the unicycle integration that feeds every pose, and again in the
-  quaternion and Euler conversions. IEEE 754 requires correct rounding for
-  `sqrt` but not for any of those, so glibc, the MSVC CRT, macOS libm, and
-  different architectures may each return different last bits. `powi` and
-  `rem_euclid` are exact and safe.
+- **Transcendental math is not required to be portable, and CI now checks
+  whether it is.** The world hash depends on `sin`, `cos`, `sin_cos`, `asin`,
+  and `atan2`, most directly in the unicycle integration that feeds every pose,
+  and again in the quaternion and Euler conversions. IEEE 754 requires correct
+  rounding for `sqrt` but not for any of those, so glibc, the MSVC CRT, macOS
+  libm, and different architectures may each return different last bits.
+  `powi` and `rem_euclid` are exact and safe.
 
-  The first step is done. `DEMO_WORLD_HASH` in the highway tests pins what a
-  full demo run hashes to, and `cargo test` runs on every agent, so one that
-  disagrees now fails and names itself. Before it, each agent printed its hash
-  and nothing read the values back. A pinned value replaces the
-  artifact-and-compare job sketched here earlier, and is stronger: comparing
-  agents to each other passes when they all move together, comparing each to a
-  written-down value does not.
+  The first two steps are done. `DEMO_WORLD_HASH` in the highway tests pins
+  what a full demo run hashes to, and CI runs on four agents covering two
+  architectures and three libm implementations: x86_64 and arm64, with glibc,
+  the MSVC CRT, and Apple's. All four agree. `ubuntu-24.04-arm` is what makes
+  that diagnostic rather than lucky, since it varies the architecture while
+  holding the libm family constant, so architecture alone is known not to move
+  the hash. A pinned value also replaces the artifact-and-compare job sketched
+  here earlier, and is stronger: comparing agents to each other passes when
+  they all move together, comparing each to a written-down value does not.
 
-  What remains, in this order: add arm64 and macOS agents, which is what would
-  actually exercise a different libm, then route the transcendentals through
-  the `libm` crate only if that diverges. Doing the last one first would change
-  the hash without learning whether it needed to.
+  Routing the transcendentals through the `libm` crate is therefore deferred
+  on evidence rather than on hope. It would make the hash bit-stable by
+  construction instead of by measurement, which is the reasoning that already
+  made the hash and the RNG owned implementations, and it costs one hash
+  change, so it belongs with the other hash-moving items here. Nothing forces
+  it meanwhile: a target that disagreed would fail `DEMO_WORLD_HASH` in the
+  run that produced it.
 
 - **A consolidated scene view, and a switch to turn raw relay off.** The
   scene half already exists as a design: `continuo/{world}/scene` is in the key

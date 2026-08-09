@@ -12,10 +12,24 @@ jobs:
   test:
     name: Lint, test, and smoke (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    # Two architectures and three libm implementations, chosen so that a
+    # divergence says which of the two it came from. The world hash reaches
+    # `sin`, `cos`, `asin`, and `atan2`, and IEEE 754 requires correct rounding
+    # for `sqrt` but for none of those, so each is free to return different
+    # last bits. `DEMO_WORLD_HASH` in the highway tests turns that into a
+    # failure rather than something nobody looks at.
+    #
+    #   ubuntu-latest     x86_64  glibc     baseline
+    #   windows-latest    x86_64  MSVC CRT  libm alone
+    #   ubuntu-24.04-arm  arm64   glibc     architecture alone
+    #   macos-latest      arm64   Apple     both together
+    #
+    # `fail-fast: false` earns its place here: one agent disagreeing is the
+    # result, and cancelling the rest would throw away which agreed with what.
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, ubuntu-24.04-arm, macos-latest]
     steps:
       - uses: actions/checkout@v7
 

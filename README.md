@@ -188,10 +188,14 @@ retired once it falls 60 m behind, and a replacement spawns ahead. Over
 at a time, eight of them retired along the way.
 
 The world hash is the run's determinism fingerprint: identical for every run
-of the same seeded scenario on a given machine, which CI checks. Across
-platforms it is unverified rather than established. The two CI jobs each print
-a hash and nothing compares them, and the trigonometry every pose depends on is
-not required to round identically on every libm. PLAN.md tracks both.
+of the same seeded scenario. CI checks it against a written-down value on four
+agents, covering two architectures and three libm implementations (x86_64 and
+arm64, with glibc, the MSVC CRT, and Apple's), and they agree.
+
+That is a test rather than a guarantee. IEEE 754 does not require correct
+rounding for the trigonometry every pose depends on, so a new target or a
+future toolchain could still disagree. What changed is that it would fail
+where it happened instead of passing unnoticed. PLAN.md tracks the rest.
 
 Two observer details worth knowing: log lines carry the *message's* sim time
 (an observer is a world-level actor, so it receives time-T poses strictly
