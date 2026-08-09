@@ -557,14 +557,18 @@ impl<T: Transport> Conductor<T> {
             // misattribute or reorder their own traffic, which the
             // deterministic (publisher, seq) delivery order depends on. In
             // distributed mode the component's *host* plays this role.
-            tick_hasher.write(path.to_string().as_bytes());
+            //
+            // Every variable-length field carries its own length, which is what
+            // stops one field's end being read as the next one's start. See
+            // [`HashFnv1a64::write_with_length_prefix`].
+            tick_hasher.write_with_length_prefix(path.to_string().as_bytes());
             tick_hasher.write_i64(next_due.as_nanos());
             for (key, payload) in ctx.take_outbox() {
                 let seq = entry.next_seq;
                 entry.next_seq += 1;
-                tick_hasher.write(key.as_str().as_bytes());
+                tick_hasher.write_with_length_prefix(key.as_str().as_bytes());
                 tick_hasher.write_u64(seq);
-                tick_hasher.write(&payload);
+                tick_hasher.write_with_length_prefix(&payload);
                 self.transport.publish(Message {
                     key,
                     publisher: path.clone(),
@@ -574,23 +578,16 @@ impl<T: Transport> Conductor<T> {
                 });
             }
 
-            // Components exposing internal state join the hash in
-            // state-hash mode; the rest are covered by their output bytes
-            // above (output-hash mode). The b"|state|" marker below
-            // separates state bytes from the payload bytes they follow:
-            // without it, two runs over the same concatenation but a
-            // different split (published "ab" with state "c" vs. published
-            // "a" with state "bc") hash alike, and a divergence that only
-            // moves the boundary would go unseen.
-            // TODO(PLAN "Deferred"): replace this marker with a byte-length
-            // prefix on every variable-length field. A separator is unsound
-            // (a payload may contain the marker) and guards only this one
-            // boundary: a payload also runs straight into the next message's
-            // key, and the last payload of a component into the next
-            // component's path, neither of which is separated at all.
+            // Components exposing internal state join the hash in state-hash
+            // mode; the rest are covered by their output bytes above
+            // (output-hash mode). Length-prefixed like everything else, so state
+            // that followed a payload cannot be read as more of it.
+            //
+            // Writing nothing at all when there is no state is what keeps
+            // `None` distinct from `Some` of an empty slice, which writes as a
+            // length of zero.
             if let Some(state) = entry.component.state_bytes() {
-                tick_hasher.write(b"|state|");
-                tick_hasher.write(&state);
+                tick_hasher.write_with_length_prefix(&state);
             }
             entry.last_step = Some(now);
             self.schedule.insert(next_due, index);
