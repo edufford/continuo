@@ -553,25 +553,10 @@ what the system *is* rather than the history of how it got there.
 
 ### Determinism and correctness
 
-Both are about the fingerprint itself rather than about what a run computes,
-and both change the world hash when fixed, which is a versioned event-log
-change that invalidates recorded logs. They want landing together, and with
-the binary mode under "Wire format", rather than churning the fingerprint
-three separate times.
-
-- **Length-prefix every variable-length field in the tick hash, and drop the
-  `b"|state|"` marker.** The marker separates state bytes from the payload
-  bytes they follow, and its comment states the hazard correctly, but a
-  separator is the wrong instrument twice over. It is unsound in its own right,
-  since a component publishing the literal bytes `|state|` reintroduces the
-  ambiguity. And it guards one boundary of several: each component contributes
-  `path(var) | next_due(8) | [key(var) | seq(8) | payload(var)]* | state(var)?`,
-  so a payload runs straight into the next message's key, and the last payload
-  of one component into the next component's path, both unguarded. Prepending
-  the byte length before every variable-length field makes the encoding
-  injective and lets the marker be deleted, removing a special case rather than
-  adding one. A `write_framed` helper beside `HashFnv1a64` would keep the call
-  sites honest.
+This one is about the fingerprint itself rather than about what a run
+computes, and changes the world hash when fixed, which invalidates recorded
+logs. It wants landing alongside the binary mode under "Wire format" rather
+than churning the fingerprint twice.
 
 - **Transcendental math is not required to be portable, and CI now checks
   whether it is.** The world hash depends on `sin`, `cos`, `sin_cos`, `asin`,
@@ -627,15 +612,6 @@ three separate times.
      subscription state, which is worse. If it is ever wanted, the scenario
      should declare which outputs are optional, so the decision is static and
      reproducible rather than dependent on who happened to connect.
-
-- **`RecordedMessage.time` should be `sim_time`.** It is the only timestamped
-  log line that does not already say so: `tick` and the `observed` lines do, as
-  does the viz bridge's wire metadata, which leaves the Python viewer mapping
-  one name onto the other on the way in for no reason a reader can see.
-  Renaming changes the log format and invalidates existing recordings, so it
-  wants a version bump and belongs with the other format changes here rather
-  than churning readers twice. `Message::time` upstream in `continuo-core`
-  carries the same name but is never serialized, so that half is free whenever.
 
 - **Membership "applied" should say "received" or "processed".** The word does
   two jobs. The conductor has taken a change in and acted on it, which is what

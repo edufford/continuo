@@ -67,7 +67,7 @@ mod tests {
             key: KeyExpr::new(key).unwrap(),
             publisher: ComponentPath::parse("pub").unwrap(),
             seq,
-            time: SimTime::ZERO,
+            sim_time: SimTime::ZERO,
             payload: b"{}".to_vec(),
         }
     }

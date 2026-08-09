@@ -215,7 +215,7 @@ def test_a_log_line_and_a_live_sample_parse_to_the_same_event():
     line = json.dumps(
         {
             "msg": {
-                "time": 0.5,
+                "sim_time": 0.5,
                 "key": "continuo/demo/actor/car1/pose",
                 "publisher": "car1/physics",
                 "seq": 7,
@@ -306,7 +306,7 @@ def test_a_log_without_a_header_is_refused(tmp_path):
         json.dumps(
             {
                 "msg": {
-                    "time": 0.0,
+                    "sim_time": 0.0,
                     "key": "continuo/demo/actor/ego/pose",
                     "publisher": "ego/physics",
                     "seq": 0,

@@ -27,7 +27,7 @@ def msg_line(actor: str, x: float, time: float, part: str = "physics") -> str:
     return json.dumps(
         {
             "msg": {
-                "time": time,
+                "sim_time": time,
                 "key": f"continuo/demo/actor/{actor}/pose",
                 "publisher": f"{actor}/{part}",
                 "seq": 0,

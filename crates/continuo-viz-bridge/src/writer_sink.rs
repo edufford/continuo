@@ -134,7 +134,7 @@ fn log_line(metadata: Metadata, payload: Vec<u8>) -> Option<Vec<u8>> {
     };
 
     let event = LogEvent::Msg(RecordedMessage {
-        time: metadata.sim_time,
+        sim_time: metadata.sim_time,
         key: metadata.key,
         publisher: metadata.publisher,
         seq: metadata.seq,

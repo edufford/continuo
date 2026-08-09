@@ -66,9 +66,9 @@ impl Component for PoseLogger {
             // Inbox is (publisher, seq)-sorted, so the first message from
             // a new actor is its earliest pose.
             if !self.latest.contains_key(&key) {
-                log_pose("initial pose", message.time, &key, &pose);
+                log_pose("initial pose", message.sim_time, &key, &pose);
             }
-            self.latest.insert(key, (message.time, pose));
+            self.latest.insert(key, (message.sim_time, pose));
         }
         for (key, (time, pose)) in &self.latest {
             log_pose("pose", *time, key, pose);

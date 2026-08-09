@@ -156,7 +156,7 @@ mod tests {
             key: kx(key),
             publisher: path(publisher),
             seq,
-            time: SimTime::from_nanos(t_ns),
+            sim_time: SimTime::from_nanos(t_ns),
             payload: b"{}".to_vec(),
         }
     }
@@ -237,7 +237,7 @@ mod tests {
         t.publish(msg("w/a", "p1", 0, 100));
         t.publish(msg("w/a", "p1", 1, 200));
 
-        let released = t.drain(&path("sub"), &|m| m.time < SimTime::from_nanos(200));
+        let released = t.drain(&path("sub"), &|m| m.sim_time < SimTime::from_nanos(200));
         assert_eq!(released.len(), 1);
         assert_eq!(released[0].seq, 0);
 

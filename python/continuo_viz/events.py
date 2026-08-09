@@ -4,7 +4,7 @@ A recorded log line and a live Zenoh sample carry the same information in two
 arrangements, so both are parsed into the types here and nothing downstream
 knows which was attached:
 
-- a log line is ``{"msg": {time, key, publisher, seq, payload}}``, complete in
+- a log line is ``{"msg": {sim_time, key, publisher, seq, payload}}``, complete in
   itself because lines of every kind share one file
 - a Zenoh sample is the payload bytes with
   ``{message_type, sim_time, key, publisher, seq}`` attached, because the
@@ -105,7 +105,7 @@ def event_from_log_line(line: str) -> Event | None:
     Three are read, and the trailing newline and any surrounding blank space
     are not significant:
 
-    - ``{"msg": {"time", "key", "publisher", "seq", "payload"}}``, a published
+    - ``{"msg": {"sim_time", "key", "publisher", "seq", "payload"}}``, a published
       message. Rust: ``continuo_conductor::RecordedMessage``.
     - ``{"join": {"path", "first_due"}}``, a component admitted.
       Rust: ``continuo_conductor::RecordedJoin``.
@@ -134,14 +134,8 @@ def event_from_log_line(line: str) -> Event | None:
         return None
 
     if (msg := event_dict.get("msg")) is not None:
-        # TODO: the log spells this `time` and live metadata spells it
-        # `sim_time`, for the same instant. `msg` is the only timestamped log
-        # line that does not already say `sim_time`: `tick` and the `observed`
-        # lines do. Renaming `RecordedMessage.time` to match changes the log
-        # format and invalidates existing recordings, so it waits for a version
-        # bump. When that lands, this becomes a straight read.
         return Message(
-            sim_time=float(msg["time"]),
+            sim_time=float(msg["sim_time"]),
             key=str(msg["key"]),
             publisher=str(msg["publisher"]),
             seq=int(msg["seq"]),

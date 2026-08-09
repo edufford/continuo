@@ -205,7 +205,7 @@ impl VizBridge {
                 payload: m.payload.clone(),
                 metadata: Metadata {
                     message_type: MessageType::SimData,
-                    sim_time: m.time,
+                    sim_time: m.sim_time,
                     key: m.key.to_string(),
                     publisher: m.publisher.to_string(),
                     seq: m.seq,
