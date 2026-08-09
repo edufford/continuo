@@ -13,7 +13,7 @@ use continuo_conductor::{
     Conductor, ConductorConfig, ConductorError, JoinMetadata, LeaveMetadata, MembershipChange,
     Pacing, RecordedJoin, RecordedLeave, Recorder, Verifier, WORLD_LEVEL,
 };
-use continuo_core::{Component, ComponentId, KeyExpr, SimDuration, SimTime, StepCtx};
+use continuo_core::{Component, ComponentId, CoreError, KeyExpr, SimDuration, SimTime, StepCtx};
 use continuo_transport::{InProcTransport, MonitorTransport};
 
 /// Every step every component took, in order.
@@ -35,14 +35,14 @@ impl Component for Ticker {
         Vec::new()
     }
 
-    fn step(&mut self, ctx: &mut StepCtx) -> SimTime {
+    fn step(&mut self, ctx: &mut StepCtx) -> Result<SimTime, CoreError> {
         self.steps
             .lock()
             .expect("step log mutex is never poisoned")
             .push((self.id.to_string(), ctx.now()));
 
         // Return the next due time, one period out.
-        ctx.now() + self.period
+        Ok(ctx.now() + self.period)
     }
 }
 

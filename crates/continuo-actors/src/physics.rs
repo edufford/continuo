@@ -1,5 +1,5 @@
 use continuo_core::{
-    Component, ComponentId, KeyExpr, Pose, Quat, SimDuration, SimTime, StepCtx, Vec3,
+    Component, ComponentId, CoreError, KeyExpr, Pose, Quat, SimDuration, SimTime, StepCtx, Vec3,
 };
 
 use crate::controller::Cmd;
@@ -45,13 +45,11 @@ impl Component for UnicyclePhysics {
         vec![KeyExpr::new_rooted(format!("*/actor/{}/cmd", self.actor_name)).expect("valid key")]
     }
 
-    fn step(&mut self, ctx: &mut StepCtx) -> SimTime {
+    fn step(&mut self, ctx: &mut StepCtx) -> Result<SimTime, CoreError> {
         if let Some(message) = ctx.inbox().last() {
-            // TODO(PLAN "Deferred"): a failed decode leaves `self.cmd` alone, so
-            // this integrates the previous command indefinitely without saying so.
-            if let Ok(cmd) = message.decode::<Cmd>() {
-                self.cmd = cmd;
-            }
+            // A command that cannot be read stops the world. Keeping the
+            // previous one would integrate it indefinitely without saying so.
+            self.cmd = message.decode::<Cmd>()?;
         }
 
         if let Some(dt) = ctx.dt() {
@@ -65,11 +63,10 @@ impl Component for UnicyclePhysics {
         }
 
         let key = crate::pose_key(ctx.world_name(), &self.actor_name);
-        ctx.publish(key, &self.pose())
-            .expect("physics keeps its pose finite");
+        ctx.publish(key, &self.pose())?;
 
         // Return the next due time, one physics period from now.
-        ctx.now() + self.period
+        Ok(ctx.now() + self.period)
     }
 
     /// Example of implementing `state_bytes` to hash internal state, even

@@ -7,7 +7,7 @@ use continuo_conductor::{
     WORLD_LEVEL,
 };
 use continuo_core::{
-    Component, ComponentId, KeyExpr, RandomSplitMix64, SimDuration, SimTime, StepCtx,
+    Component, ComponentId, CoreError, KeyExpr, RandomSplitMix64, SimDuration, SimTime, StepCtx,
 };
 use continuo_transport::{InProcTransport, MonitorTransport};
 
@@ -27,7 +27,7 @@ impl Component for NoiseSource {
         Vec::new()
     }
 
-    fn step(&mut self, ctx: &mut StepCtx) -> SimTime {
+    fn step(&mut self, ctx: &mut StepCtx) -> Result<SimTime, CoreError> {
         let random = self
             .random
             .get_or_insert_with(|| RandomSplitMix64::new(ctx.component_seed()));
@@ -36,7 +36,7 @@ impl Component for NoiseSource {
             .expect("f64 serializes");
 
         // Return the next due time, 10 ms from now.
-        ctx.now() + SimDuration::from_millis(10)
+        Ok(ctx.now() + SimDuration::from_millis(10))
     }
 }
 
@@ -56,11 +56,11 @@ impl Component for HiddenCounter {
         Vec::new()
     }
 
-    fn step(&mut self, ctx: &mut StepCtx) -> SimTime {
+    fn step(&mut self, ctx: &mut StepCtx) -> Result<SimTime, CoreError> {
         self.count += 1;
 
         // Return the next due time, 10 ms from now.
-        ctx.now() + SimDuration::from_millis(10)
+        Ok(ctx.now() + SimDuration::from_millis(10))
     }
 
     fn state_bytes(&self) -> Option<Vec<u8>> {

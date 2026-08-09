@@ -559,20 +559,30 @@ Three of them change the world hash when fixed, which is a versioned event-log
 change, so they want landing together rather than churning the fingerprint
 three times.
 
-- **Payload decode failures are swallowed, and nothing reports them.** Every
-  `decode::<T>()` call site discards the error: `if let Ok(..)` in
-  `controller.rs`, `logger.rs`, and `physics.rs`, `else { continue }` in
-  `traffic_spawner.rs`, and `.ok()` on both request decodes in
-  `traffic_world.rs`. No warning, no counter, no observation. The consequences
-  differ by site and none are benign: physics keeps integrating the *last
-  command* indefinitely, the controller keeps steering from a *stale pose*, the
-  spawner never sees a car move so never retires it, and a spawn or despawn
-  request simply vanishes. A decode failure is a pure function of the run, the
-  same character as a schedule violation, so halting loudly is safe and
-  reproducible. The obstacle is that `step` returns `SimTime` rather than a
-  `Result`, so a component cannot signal a fatal error; a `StepCtx`-mediated
-  decode reporting centrally is the tractable shape, and it makes swallowing
-  something a component opts into rather than the default.
+- ~~**Payload decode failures are swallowed, and nothing reports them.**~~
+  Done. `Component::step` returns `Result<SimTime, CoreError>`, so a component
+  can say it cannot do its job, and the conductor halts with
+  `ConductorError::StepFailed` naming the path and the instant.
+  `Message::decode` returns the same error type and names the key and the
+  publisher, so every call site is a `?`. Swallowing stays available by
+  matching on the `Result`, which is a component saying so where anyone
+  reading the step can see it.
+
+  Noted because this document argued the other way: it proposed a
+  `StepCtx`-mediated decode reporting centrally, on the grounds that changing
+  a public trait was the expensive part. Removing the obstacle turned out to
+  be cheaper than working around it, and better. It needed no new API rather
+  than three pieces of one, it stops the step where the failure is rather than
+  letting it finish on stale data, and it let five `publish` sites drop
+  `expect`, so the non-finite guard halts through the error path instead of by
+  unwinding past a conductor that cannot catch a panic.
+
+  The two decode sites in `traffic_world.rs` are outside any step, in a
+  `MonitorTransport` callback with nowhere to return to, so they record the
+  first failure and `TrafficRequestHandler::apply` reports it at the next tick
+  boundary. First one wins: the run stops there, and the error names the
+  publisher, which is what distinguishes an interloper on the key from a
+  schema change.
 
 - ~~**A non-finite float serializes to `null` and nothing notices.**~~ Done.
   `StepCtx::publish` now rejects one, naming the key and the field path, so a

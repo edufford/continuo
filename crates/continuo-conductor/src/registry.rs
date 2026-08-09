@@ -291,7 +291,7 @@ impl Registry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use continuo_core::{KeyExpr, StepCtx};
+    use continuo_core::{CoreError, KeyExpr, StepCtx};
 
     struct Dummy(&'static str);
     impl Component for Dummy {
@@ -301,8 +301,8 @@ mod tests {
         fn subscriptions(&self) -> Vec<KeyExpr> {
             Vec::new()
         }
-        fn step(&mut self, ctx: &mut StepCtx) -> SimTime {
-            ctx.now() + continuo_core::SimDuration::from_millis(1)
+        fn step(&mut self, ctx: &mut StepCtx) -> Result<SimTime, CoreError> {
+            Ok(ctx.now() + continuo_core::SimDuration::from_millis(1))
         }
     }
 

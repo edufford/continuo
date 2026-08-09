@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
-use continuo_core::{Component, ComponentId, KeyExpr, Pose, SimDuration, SimTime, StepCtx};
+use continuo_core::{
+    Component, ComponentId, CoreError, KeyExpr, Pose, SimDuration, SimTime, StepCtx,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::path::Waypoints;
@@ -88,15 +90,13 @@ impl Component for PathFollowController {
         vec![KeyExpr::new_rooted(format!("*/actor/{}/pose", self.actor_name)).expect("valid key")]
     }
 
-    fn step(&mut self, ctx: &mut StepCtx) -> SimTime {
+    fn step(&mut self, ctx: &mut StepCtx) -> Result<SimTime, CoreError> {
         // Latest pose wins; inbox is (publisher, seq)-sorted and all pose
         // messages here come from our physics sibling.
         if let Some(message) = ctx.inbox().last() {
-            // TODO(PLAN "Deferred"): a failed decode keeps the stale pose, and this
-            // carries on steering from it.
-            if let Ok(pose) = message.decode::<Pose>() {
-                self.last_pose = pose;
-            }
+            // A pose that cannot be read stops the world. Keeping the previous
+            // one would go on steering from it without saying so.
+            self.last_pose = message.decode::<Pose>()?;
         }
 
         let position = self.last_pose.position;
@@ -110,10 +110,9 @@ impl Component for PathFollowController {
         };
 
         let key = crate::cmd_key(ctx.world_name(), &self.actor_name);
-        ctx.publish(key, &cmd)
-            .expect("the controller keeps its command finite");
+        ctx.publish(key, &cmd)?;
 
         // Return the next due time, one control period from now.
-        ctx.now() + self.period
+        Ok(ctx.now() + self.period)
     }
 }

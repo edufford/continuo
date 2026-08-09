@@ -515,7 +515,21 @@ impl<T: Transport> Conductor<T> {
             // until the step's effects below have been applied; see the end
             // of this loop body.
             let started = Instant::now();
-            let next_due = entry.component.step(&mut ctx);
+            // A component saying it cannot do its job halts the world, and
+            // does so here, before the outbox below is applied, so a failed
+            // step publishes nothing. Same reasoning as the schedule
+            // violation further down: the failure is a pure function of the
+            // component's logic and the sim state, so it reproduces exactly
+            // and halting cannot introduce divergence.
+            let next_due =
+                entry
+                    .component
+                    .step(&mut ctx)
+                    .map_err(|source| ConductorError::StepFailed {
+                        path: entry.path.clone(),
+                        now,
+                        source,
+                    })?;
             let step_wall = started.elapsed();
 
             // A schedule violation always halts, whatever the timeout policy

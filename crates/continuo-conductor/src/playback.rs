@@ -6,7 +6,7 @@
 //! it is harness machinery built on [`EventLog`], not a sample actor, and
 //! putting it in the actors crate would make that crate depend on this one.
 
-use continuo_core::{Component, ComponentId, KeyExpr, SimTime, StepCtx};
+use continuo_core::{Component, ComponentId, CoreError, KeyExpr, SimTime, StepCtx};
 use serde_json::value::RawValue;
 
 use crate::record::{EventLog, LogEvent};
@@ -70,7 +70,7 @@ impl Component for PlaybackComponent {
         Vec::new()
     }
 
-    fn step(&mut self, ctx: &mut StepCtx) -> SimTime {
+    fn step(&mut self, ctx: &mut StepCtx) -> Result<SimTime, CoreError> {
         // Publish everything recorded for this instant; skip anything the
         // schedule somehow passed over (e.g. a playback double registered after its
         // first recorded messages) rather than stalling the run on it.
@@ -79,17 +79,22 @@ impl Component for PlaybackComponent {
                 break;
             }
             if *time == ctx.now() {
-                ctx.publish(key.clone(), payload)
-                    .expect("recorded payloads re-serialize verbatim");
+                // Cannot fail: a recorded payload is already-serialized JSON,
+                // so publishing it is a copy, and the publisher's non-finite
+                // guard cannot see into one. A `null` left by a NaN in an
+                // older log therefore republishes unchanged, which is what
+                // replaying a recording verbatim means. That failure still
+                // lands, at whichever consumer decodes it.
+                ctx.publish(key.clone(), payload)?;
             }
             self.cursor += 1;
         }
 
         // Return the next recorded message time, or effectively never once
         // the recording is exhausted.
-        match self.messages.get(self.cursor) {
+        Ok(match self.messages.get(self.cursor) {
             Some((time, _, _)) => *time,
             None => SimTime::from_nanos(i64::MAX),
-        }
+        })
     }
 }

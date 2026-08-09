@@ -4,7 +4,7 @@
 use std::sync::{Arc, Mutex};
 
 use continuo_conductor::{Conductor, ConductorConfig, ConductorError, Pacing, WORLD_LEVEL};
-use continuo_core::{Component, ComponentId, KeyExpr, SimDuration, SimTime, StepCtx};
+use continuo_core::{Component, ComponentId, CoreError, KeyExpr, SimDuration, SimTime, StepCtx};
 use continuo_transport::InProcTransport;
 
 /// What one probe observed at one of its steps.
@@ -37,7 +37,7 @@ impl Component for Probe {
             .unwrap_or_default()
     }
 
-    fn step(&mut self, ctx: &mut StepCtx) -> SimTime {
+    fn step(&mut self, ctx: &mut StepCtx) -> Result<SimTime, CoreError> {
         let observation = Observation {
             now: ctx.now(),
             inbox: ctx
@@ -56,7 +56,7 @@ impl Component for Probe {
         }
 
         // Return the next due time, one period from now.
-        ctx.now() + self.period
+        Ok(ctx.now() + self.period)
     }
 }
 

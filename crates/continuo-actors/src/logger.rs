@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 
-use continuo_core::{Component, ComponentId, KeyExpr, Pose, SimDuration, SimTime, StepCtx};
+use continuo_core::{
+    Component, ComponentId, CoreError, KeyExpr, Pose, SimDuration, SimTime, StepCtx,
+};
 use tracing::info;
 
 /// World-level observer: samples the latest pose per actor and logs it.
@@ -53,17 +55,20 @@ impl Component for PoseLogger {
         vec![KeyExpr::new_rooted("*/actor/*/pose").expect("valid key")]
     }
 
-    fn step(&mut self, ctx: &mut StepCtx) -> SimTime {
+    fn step(&mut self, ctx: &mut StepCtx) -> Result<SimTime, CoreError> {
         for message in ctx.inbox() {
-            if let Ok(pose) = message.decode::<Pose>() {
-                let key = message.key.as_str().to_string();
-                // Inbox is (publisher, seq)-sorted, so the first message from
-                // a new actor is its earliest pose.
-                if !self.latest.contains_key(&key) {
-                    log_pose("initial pose", message.time, &key, &pose);
-                }
-                self.latest.insert(key, (message.time, pose));
+            // Halting for a logger looks heavy, since nothing in the sim
+            // depends on it. A log quietly missing poses is a diagnostic that
+            // lies, though, and on this wildcard subscription a pose that
+            // cannot be read means a schema mismatch worth stopping for.
+            let pose = message.decode::<Pose>()?;
+            let key = message.key.as_str().to_string();
+            // Inbox is (publisher, seq)-sorted, so the first message from
+            // a new actor is its earliest pose.
+            if !self.latest.contains_key(&key) {
+                log_pose("initial pose", message.time, &key, &pose);
             }
+            self.latest.insert(key, (message.time, pose));
         }
         for (key, (time, pose)) in &self.latest {
             log_pose("pose", *time, key, pose);
@@ -73,9 +78,9 @@ impl Component for PoseLogger {
         // then every period.
         if ctx.dt().is_none() {
             // First step (at join time): establish the phase offset.
-            ctx.now() + self.offset
+            Ok(ctx.now() + self.offset)
         } else {
-            ctx.now() + self.period
+            Ok(ctx.now() + self.period)
         }
     }
 }

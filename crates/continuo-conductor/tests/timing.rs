@@ -20,7 +20,7 @@ use continuo_conductor::{
     StepTiming, Verifier, WORLD_LEVEL,
 };
 use continuo_core::{
-    Component, ComponentId, ComponentPath, KeyExpr, SimDuration, SimTime, StepCtx,
+    Component, ComponentId, ComponentPath, CoreError, KeyExpr, SimDuration, SimTime, StepCtx,
 };
 use continuo_transport::{InProcTransport, MonitorTransport};
 
@@ -47,7 +47,7 @@ impl Component for SlowTicker {
         Vec::new()
     }
 
-    fn step(&mut self, ctx: &mut StepCtx) -> SimTime {
+    fn step(&mut self, ctx: &mut StepCtx) -> Result<SimTime, CoreError> {
         self.steps
             .lock()
             .expect("step log mutex is never poisoned")
@@ -57,7 +57,7 @@ impl Component for SlowTicker {
         }
 
         // Return the next due time, one period out.
-        ctx.now() + self.period
+        Ok(ctx.now() + self.period)
     }
 }
 

@@ -17,7 +17,9 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use continuo_core::{Component, ComponentId, KeyExpr, Pose, SimDuration, SimTime, StepCtx};
+use continuo_core::{
+    Component, ComponentId, CoreError, KeyExpr, Pose, SimDuration, SimTime, StepCtx,
+};
 use serde::{Deserialize, Serialize};
 
 /// A request to put one traffic car on the road.
@@ -169,12 +171,14 @@ impl Component for TrafficSpawner {
         vec![KeyExpr::new_rooted("*/actor/**/pose").expect("valid key")]
     }
 
-    fn step(&mut self, ctx: &mut StepCtx) -> SimTime {
+    fn step(&mut self, ctx: &mut StepCtx) -> Result<SimTime, CoreError> {
         for message in ctx.inbox() {
-            let (Some(actor_name), Ok(pose)) = (
-                Self::actor_name_of(&message.publisher),
-                message.decode::<Pose>(),
-            ) else {
+            // A pose that cannot be read stops the world: a spawner that never
+            // sees a car move never retires it. Failing to name the actor only
+            // skips, since the subscription is a wildcard and a publisher that
+            // is not an actor is someone else's message.
+            let pose = message.decode::<Pose>()?;
+            let Some(actor_name) = Self::actor_name_of(&message.publisher) else {
                 continue;
             };
             // Project onto the reference road rather than reading a
@@ -204,8 +208,7 @@ impl Component for TrafficSpawner {
             ctx.publish(
                 traffic_despawn_key(ctx.world_name()),
                 &DespawnTrafficRequest { actor_name },
-            )
-            .expect("despawn request serializes");
+            )?;
         }
 
         // Top the road back up. Placing each car a gap beyond the last
@@ -228,12 +231,11 @@ impl Component for TrafficSpawner {
             };
             self.live_traffic
                 .insert(spawn.actor_name.clone(), spawn.start_s);
-            ctx.publish(traffic_spawn_key(ctx.world_name()), &spawn)
-                .expect("a spawn request carries a finite start");
+            ctx.publish(traffic_spawn_key(ctx.world_name()), &spawn)?;
         }
 
         // Return the next due time, one period out.
-        ctx.now() + self.period
+        Ok(ctx.now() + self.period)
     }
 
     fn state_bytes(&self) -> Option<Vec<u8>> {
