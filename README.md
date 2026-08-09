@@ -280,7 +280,9 @@ logger) is seen next step.
 ## Writing a component
 
 ```rust
-use continuo_core::{Component, ComponentId, KeyExpr, SimDuration, SimTime, StepCtx};
+use continuo_core::{
+    Component, ComponentId, CoreError, KeyExpr, SimDuration, SimTime, StepCtx,
+};
 
 struct Beacon;
 
@@ -293,12 +295,20 @@ impl Component for Beacon {
         vec![] // or e.g. KeyExpr::new("continuo/*/actor/*/pose").unwrap()
     }
 
-    fn step(&mut self, ctx: &mut StepCtx) -> SimTime {
+    fn step(&mut self, ctx: &mut StepCtx) -> Result<SimTime, CoreError> {
         // read ctx.inbox(), publish via ctx.publish(key, &value)
-        ctx.now() + SimDuration::from_millis(500) // next due time
+        Ok(ctx.now() + SimDuration::from_millis(500)) // next due time
     }
 }
 ```
+
+Returning `Err` halts the world, and is how a component says it cannot do its
+job: a payload it cannot read, a value it cannot publish. Both
+`ctx.publish(..)` and `message.decode::<T>()` return the same error type, so
+the usual shape is `?`. That is safe to make fatal because such a failure is a
+pure function of the component's logic and the sim state, so it reproduces at
+the same instant on every machine. A component that genuinely tolerates an
+unreadable message matches on the `Result` and says so.
 
 Register it with a conductor (`WORLD_LEVEL` for a world-level actor, or a
 composite name to make it a child):

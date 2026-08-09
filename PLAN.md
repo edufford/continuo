@@ -70,7 +70,9 @@ which is the distribution seam.
 trait Component {
     fn id(&self) -> ComponentId;
     fn subscriptions(&self) -> Vec<KeyExpr>;
-    fn step(&mut self, ctx: &mut TickCtx);  // read inbox, publish via ctx
+    // Read inbox, publish via ctx, report the next sim time to step at.
+    // `Err` halts the world: it is how a component says it cannot do its job.
+    fn step(&mut self, ctx: &mut StepCtx) -> Result<SimTime, CoreError>;
 }
 ```
 
@@ -551,55 +553,11 @@ what the system *is* rather than the history of how it got there.
 
 ### Determinism and correctness
 
-These share a shape worth naming. Every one of them produces a **stable wrong
-answer** rather than a divergence: the run reproduces perfectly, the world hash
-is steady, and verification passes against a recording carrying the same fault.
-The determinism apparatus exists to catch divergence, so none of these trip it.
-Three of them change the world hash when fixed, which is a versioned event-log
-change, so they want landing together rather than churning the fingerprint
-three times.
-
-- ~~**Payload decode failures are swallowed, and nothing reports them.**~~
-  Done. `Component::step` returns `Result<SimTime, CoreError>`, so a component
-  can say it cannot do its job, and the conductor halts with
-  `ConductorError::StepFailed` naming the path and the instant.
-  `Message::decode` returns the same error type and names the key and the
-  publisher, so every call site is a `?`. Swallowing stays available by
-  matching on the `Result`, which is a component saying so where anyone
-  reading the step can see it.
-
-  Noted because this document argued the other way: it proposed a
-  `StepCtx`-mediated decode reporting centrally, on the grounds that changing
-  a public trait was the expensive part. Removing the obstacle turned out to
-  be cheaper than working around it, and better. It needed no new API rather
-  than three pieces of one, it stops the step where the failure is rather than
-  letting it finish on stale data, and it let five `publish` sites drop
-  `expect`, so the non-finite guard halts through the error path instead of by
-  unwinding past a conductor that cannot catch a panic.
-
-  The two decode sites in `traffic_world.rs` are outside any step, in a
-  `MonitorTransport` callback with nowhere to return to, so they record the
-  first failure and `TrafficRequestHandler::apply` reports it at the next tick
-  boundary. First one wins: the run stops there, and the error names the
-  publisher, which is what distinguishes an interloper on the key from a
-  schema change.
-
-- ~~**A non-finite float serializes to `null` and nothing notices.**~~ Done.
-  `StepCtx::publish` now rejects one, naming the key and the field path, so a
-  diverging integrator fails where it happens rather than at whichever consumer
-  reads the `null` next. Halting is safe for the same reason a schedule
-  violation halts: the value is a pure function of the component's logic and
-  the sim state, so it reproduces at the identical instant everywhere.
-
-  Worth knowing if this is ever revisited: neither obvious hook works.
-  `serde_json` routes a non-finite float to `Formatter::write_null` without the
-  formatter ever seeing it as a float, and `to_value` collapses it to
-  `Value::Null`, so in both cases it is indistinguishable from `Option::None`.
-  The guard walks the value with a `Serializer` that writes nothing, run only
-  when the serialized payload contains `null`, since one always does if a
-  non-finite float is present. That is also the encode-time rejection the
-  binary-format item below wants, so an owned encoder inherits the rule rather
-  than reinventing it.
+Both are about the fingerprint itself rather than about what a run computes,
+and both change the world hash when fixed, which is a versioned event-log
+change that invalidates recorded logs. They want landing together, and with
+the binary mode under "Wire format", rather than churning the fingerprint
+three separate times.
 
 - **Length-prefix every variable-length field in the tick hash, and drop the
   `b"|state|"` marker.** The marker separates state bytes from the payload
@@ -641,32 +599,16 @@ three times.
   it meanwhile: a target that disagreed would fail `DEMO_WORLD_HASH` in the
   run that produced it.
 
-- **A consolidated scene view, and a switch to turn raw relay off.** The
-  scene half already exists as a design: `continuo/{world}/scene` is in the key
-  table above, and "Fixed-interval world services" describes a scene-graph
-  publisher aggregating latest poses at 1/60 s as an **ordinary component**.
-  Build it when the viewer exists and there is something to measure it
-  against. The viz bridge then relays that like any other message, so the
-  consolidated view and raw traffic coexist rather than trading off.
-
-  The other half is a switch on the bridge, so a run using the scene component
-  can stop paying for per-message relay. Worth building only once there is a
-  scene component to switch to; adding the option first is building the choice
-  before the thing it selects between.
-
-  The distinction that decides how each is treated: **the scene publisher is a
-  component, so enabling it changes the world hash**, while the bridge's switch
-  cannot, being outside the sim. They look like two settings and are not the
-  same kind of knob.
+### Wire format
 
 - **Getting large payloads out of a viewer's way.** A camera frame or lidar
   sweep is canonical JSON like everything else, so it travels base64-encoded
   inside a JSON string: about a third larger than the raw bytes, UTF-8
   validated and re-wrapped on the way through the bridge, and copied per
-  frame. The event log has the same problem for the same reason. The binary
-  serialization item above is where large payloads stop being text, and
-  PLAN.md's **decoupled** sub-components exist precisely so a camera can be
-  placed on its own host, so both are part of the answer.
+  frame. The event log has the same problem for the same reason. A compact
+  binary mode is where large payloads stop being text, and **decoupled**
+  sub-components exist precisely so a camera can be placed on its own host, so
+  both are part of the answer.
 
   What is still open is how a viewer avoids carrying sensor traffic it will
   never draw. Three shapes, none chosen:
@@ -685,8 +627,6 @@ three times.
      subscription state, which is worse. If it is ever wanted, the scenario
      should declare which outputs are optional, so the decision is static and
      reproducible rather than dependent on who happened to connect.
-
-### Wire format
 
 - **`RecordedMessage.time` should be `sim_time`.** It is the only timestamped
   log line that does not already say so: `tick` and the `observed` lines do, as
@@ -752,6 +692,24 @@ three times.
   it.
 
 ### Features
+
+- **A consolidated scene view, and a switch to turn raw relay off.** The
+  scene half already exists as a design: `continuo/{world}/scene` is in the key
+  table above, and "Fixed-interval world services" describes a scene-graph
+  publisher aggregating latest poses at 1/60 s as an **ordinary component**.
+  Build it when the viewer exists and there is something to measure it
+  against. The viz bridge then relays that like any other message, so the
+  consolidated view and raw traffic coexist rather than trading off.
+
+  The other half is a switch on the bridge, so a run using the scene component
+  can stop paying for per-message relay. Worth building only once there is a
+  scene component to switch to; adding the option first is building the choice
+  before the thing it selects between.
+
+  The distinction that decides how each is treated: **the scene publisher is a
+  component, so enabling it changes the world hash**, while the bridge's switch
+  cannot, being outside the sim. They look like two settings and are not the
+  same kind of knob.
 
 - **A component asking to retire itself**: `StepCtx` has no way back to the
   conductor, so nothing can say "I am done" (see `Component`'s TODO).
