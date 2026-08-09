@@ -518,3 +518,63 @@ it got there, including the roads not taken.
   - The constraint that shapes it: **delivery order reaches the world hash**,
     so recipients are held in the order the old scan produced them. The demo's
     hash and a full `traffic_verify` replay are what check that.
+- **2026-08-08**: **CI compares each agent's world hash against a written-down
+  value**, rather than comparing agents to each other.
+  - Every matrix job ran the demo and *printed* its hash, and nothing read the
+    values back, so two agents could disagree and the run would still be green.
+  - Comparing agents to each other passes whenever they all move together.
+    Comparing each to `DEMO_WORLD_HASH` also catches an unintended change to
+    the scenario, the seed, or the hashing, needs no YAML, and fails inside the
+    run that produced it.
+  - The matrix grew to four agents to make the answer diagnostic:
+    `ubuntu-24.04-arm` varies the architecture while holding the libm family
+    constant, so architecture alone is known not to move the hash, and
+    `macos-latest` varying both on top of that means Apple's libm agrees with
+    glibc for every value the demo reaches. Routing the transcendentals through
+    the `libm` crate is therefore deferred on evidence rather than on hope.
+- **2026-08-08**: **Non-finite floats are rejected where they are published**,
+  rather than reaching the wire as `null`.
+  - `serde_json` writes `NaN` and `±inf` as `null` without complaint, so a
+    component whose arithmetic diverged published a payload that decodes
+    nowhere, and the first sign of it was a decode failure at a different
+    component, at a later instant.
+  - Neither obvious hook can catch it, which was measured rather than assumed.
+    A custom `Formatter` never sees the float, because `serialize_f64` routes a
+    non-finite value straight to `write_null`, the same call an `Option::None`
+    produces; `to_value` collapses both to `Value::Null` for the same reason.
+    So the guard walks the value itself with a `Serializer` that writes nothing.
+  - The walk runs only when the serialized payload contains `null`, which is
+    worth about 4% of the scaled world's step rate. That premise is specific to
+    JSON: CBOR writes `NaN` as its float bits and null as a single `0xf6`, so a
+    binary mode would break the fast path silently and in the permissive
+    direction. A test pins the premise rather than a comment.
+  - Halting is safe because the value is a pure function of the component's
+    logic and the sim state, so it reproduces at the identical instant
+    everywhere: the argument the conductor already makes for a schedule
+    violation.
+- **2026-08-09**: **`Component::step` returns `Result<SimTime, CoreError>`**, so
+  a component can say it cannot do its job. Supersedes this plan's own proposal
+  of a `StepCtx`-mediated decode reporting centrally.
+  - What it closes: every `decode::<T>()` call site discarded the error, so
+    physics integrated the last command, the controller steered from a stale
+    pose, and a spawn request could vanish. All deterministic, so the hash held
+    steady and verification passed against a recording carrying the same fault.
+    The determinism apparatus catches divergence, and this never diverges.
+  - PLAN.md proposed working around the signature rather than changing it,
+    on the grounds that moving a public trait was the expensive part. It was
+    not: of 16 `impl Component`, 5 are production and the rest are test
+    components whose whole body is a next-due time, and no composite calls its
+    children's `step`.
+  - Removing the obstacle beat working around it three ways. It needs no new
+    API rather than three pieces of one. `?` stops the step where the failure
+    is, where recording it centrally lets the step finish on stale data and
+    publish from it. And five `publish` sites dropped `expect`, so the
+    non-finite guard halts through the error path rather than by unwinding past
+    a conductor that has a standing `TODO(M7)` saying it cannot catch a panic.
+  - Swallowing stays available by matching on the `Result`, which is a
+    component saying so where a reader can see it, rather than an `if let
+    Ok(..)` that says nothing.
+  - Sites outside a step have nowhere to return to. The demo's
+    `MonitorTransport` callback records the first failure and the next thing
+    downstream with an error channel reports it, which stops the run at the
+    following tick boundary.
