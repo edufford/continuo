@@ -605,43 +605,18 @@ three times.
   different architectures may each return different last bits. `powi` and
   `rem_euclid` are exact and safe.
 
-  The first step is done: `DEMO_WORLD_HASH` in the highway tests pins what a
-  full demo run hashes to, and `cargo test` runs on every agent, so an agent
-  that disagrees fails and names itself. Before that, CI ran the demo on each
-  agent and only *printed* the hash, so two agents could disagree and the run
-  would still be green. A pinned value replaces the artifact-and-compare job
-  sketched here earlier and is stronger than it: comparing agents to each other
-  passes when they all move together, and comparing each to a written-down
-  value does not. It also costs no YAML and fails where the run is, rather than
-  in a job downstream of it.
+  The first step is done. `DEMO_WORLD_HASH` in the highway tests pins what a
+  full demo run hashes to, and `cargo test` runs on every agent, so one that
+  disagrees now fails and names itself. Before it, each agent printed its hash
+  and nothing read the values back. A pinned value replaces the
+  artifact-and-compare job sketched here earlier, and is stronger: comparing
+  agents to each other passes when they all move together, comparing each to a
+  written-down value does not.
 
-  What remains, in this order: add arm64 and macOS agents, which is the step
-  that would actually exercise a different libm, and then route the
-  transcendentals through the `libm` crate only if that diverges. Doing the
-  last one first would change the hash without ever learning whether it needed
-  to.
-
-- **Two smoke steps carry logic that reads better elsewhere.** Worth the same
-  pass as the hash comparison above, since both edit one workflow file.
-
-  "Smoke: verification detects a modified log" corrupts a log and asserts the
-  verifier rejects it, which `verification_stops_at_the_first_divergence` in
-  the highway tests already covers somewhere that can be run and debugged
-  locally. What only CI reaches is the **exit code**, since `traffic_verify`
-  calls `process::exit(1)` and a `main` that reported the divergence and
-  returned zero would still pass that test. So the step should keep its tamper
-  and its exit-code assertion, and say in its comment that the behaviour itself
-  is tested. It cannot be compressed to `! cmd`: bash suppresses `set -e` for
-  any command whose status is inverted, so a tamper that matched nothing would
-  pass in silence, which is the vacuity the `if` guard exists to catch.
-
-  "Smoke: replay the recorded log through the viewer" is the opposite case and
-  should keep every line, being the only check that Python reads what Rust
-  writes, where the viewer's own tests build their logs themselves. Its
-  weakness is that it recovers the counts by parsing the prose of the `--check`
-  summary, so rewording a label breaks CI on a change that touched nothing
-  else. That fails closed, which is the right direction, but those labels are a
-  contract and nothing on either side says so.
+  What remains, in this order: add arm64 and macOS agents, which is what would
+  actually exercise a different libm, then route the transcendentals through
+  the `libm` crate only if that diverges. Doing the last one first would change
+  the hash without learning whether it needed to.
 
 - **A consolidated scene view, and a switch to turn raw relay off.** The
   scene half already exists as a design: `continuo/{world}/scene` is in the key
@@ -699,20 +674,14 @@ three times.
   than churning readers twice. `Message::time` upstream in `continuo-core`
   carries the same name but is never serialized, so that half is free whenever.
 
-- **Membership "applied" should say "received" or "processed".** The word is
-  doing two jobs at once. A change is *applied* in the sense that the conductor
-  has taken it in and acted on it, which is what the status key at the top of
-  this document means by "applied join or leave", and a join also *takes effect*
-  at an instant the change itself names, which can be later. Both readings are
-  natural and the document uses the same word for them, so a reader has to work
-  out which is meant from context every time.
-
-  Nothing is wrong today, which is why this is here rather than in the work
-  above: it is one word choice, and the cost is only that the two ideas are
-  harder to keep apart than they need to be. "Received" or "processed" says the
-  conductor's half without borrowing the language of the other, leaving "takes
-  effect" free to mean only the instant. Prose, field names, and the key table's
-  status column all move together.
+- **Membership "applied" should say "received" or "processed".** The word does
+  two jobs. The conductor has taken a change in and acted on it, which is what
+  the key table means by "applied join or leave", and a join also takes effect
+  at an instant the change names, which can be later. Both readings are
+  natural, so a reader works out which is meant from context every time.
+  "Received" or "processed" says the conductor's half and leaves "takes effect"
+  to mean only the instant. Prose, field names, and the table's status column
+  move together.
 
 - **A compact binary mode alongside JSON, chosen like debug versus release.**
   JSON stays the readable mode for development, inspection, and the event log;

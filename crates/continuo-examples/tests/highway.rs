@@ -127,44 +127,39 @@ fn the_dynamic_world_reproduces_exactly() {
     assert_eq!(first.final_world_hash(), second.final_world_hash());
 }
 
-/// What a full demo run hashes to, written down so that a platform disagreeing
-/// is a failure rather than a thing nobody looks at.
+/// What a full demo run hashes to.
 ///
-/// [`the_dynamic_world_reproduces_exactly`] cannot serve here. It compares two
-/// runs in one process, so it catches a run that does not repeat and says
-/// nothing about whether this machine agrees with any other: both of its runs
-/// would move together and still match. Until this constant existed, CI ran
-/// the demo on each agent and only *printed* the hash, so two agents could
-/// disagree and the run would still be green.
+/// [`the_dynamic_world_reproduces_exactly`] compares two runs in one process,
+/// so it catches a run that does not repeat but says nothing about whether
+/// this machine agrees with any other: both its runs move together and still
+/// match. A written-down value is what makes disagreement a failure, since
+/// `cargo test` runs on every CI agent.
 ///
-/// There is something real to catch. The hash reaches `sin`, `cos`, `asin`,
-/// and `atan2` through the unicycle integration and the quaternion
-/// conversions, and IEEE 754 requires correct rounding for `sqrt` but for none
-/// of those, so each platform's libm is free to return different last bits.
+/// There is something to catch. The hash reaches `sin`, `cos`, `asin`, and
+/// `atan2` through the unicycle integration and the quaternion conversions,
+/// and IEEE 754 requires correct rounding for `sqrt` but for none of those.
 ///
-/// The value moves when the scenario, the seed, or the hashing moves, each of
-/// which is a deliberate act. Update it in the same commit, together with the
-/// sample output in README.md.
+/// It moves when the scenario, the seed, or the hashing moves, each a
+/// deliberate act. Update it and README.md's sample output together.
 const DEMO_WORLD_HASH: u64 = 0x7c4c_bf0d_148d_9621;
 
 #[test]
 fn the_demo_world_hashes_to_the_same_value_on_every_platform() {
-    // The whole demo, not the ten seconds the tests above use, because this is
-    // the number the README quotes and the one a reader checks against.
+    // The whole demo rather than the ten seconds above, since this is the
+    // number README.md quotes.
     let log = record_highway(traffic_world::SIM_SECONDS);
     let hash = log
         .final_world_hash()
         .expect("a run that reached its end has a world hash");
 
-    // Hex in the message, since the point of failing is that someone reads a
-    // value off it and writes it down, and the constant is written in hex.
+    // Hex, because the point of failing is that someone copies the value into
+    // the constant above, which is written in hex.
     assert_eq!(
         hash, DEMO_WORLD_HASH,
         "the demo's world hash is {hash:016x}, expected {DEMO_WORLD_HASH:016x}. \
          If the scenario, the seed, or the hashing changed on purpose, update \
-         DEMO_WORLD_HASH and README.md in the same commit. If nothing changed, \
-         this platform's arithmetic disagrees with the one the value was taken \
-         on, which is the portability question PLAN.md's deferred list describes"
+         DEMO_WORLD_HASH and README.md together. If nothing changed, this \
+         platform's arithmetic disagrees with the one the value was taken on"
     );
 }
 
