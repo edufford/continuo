@@ -10,7 +10,7 @@
 use std::time::Instant;
 
 use continuo_conductor::{Conductor, ConductorConfig, ConductorError, Pacing, WORLD_LEVEL};
-use continuo_core::{Component, ComponentId, KeyExpr, SimDuration, SimTime, StepCtx};
+use continuo_core::{Component, ComponentId, CoreError, KeyExpr, SimDuration, SimTime, StepCtx};
 use continuo_transport::InProcTransport;
 
 /// A bare periodic component: steps every `period`, publishes one value, no
@@ -29,7 +29,7 @@ impl Component for Ticker {
         Vec::new()
     }
 
-    fn step(&mut self, ctx: &mut StepCtx) -> SimTime {
+    fn step(&mut self, ctx: &mut StepCtx) -> Result<SimTime, CoreError> {
         ctx.publish(
             KeyExpr::new("test/tick").expect("valid key"),
             &ctx.now().as_nanos(),
@@ -37,7 +37,7 @@ impl Component for Ticker {
         .expect("i64 serializes");
 
         // Return the next due time, one period out.
-        ctx.now() + self.period
+        Ok(ctx.now() + self.period)
     }
 }
 

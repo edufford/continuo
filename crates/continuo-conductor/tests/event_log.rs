@@ -218,7 +218,10 @@ fn a_playback_double_republishes_its_recording_verbatim() {
         PlaybackComponent::from_log(ComponentId::new(PUBLISHER).unwrap(), &log, PUBLISHER);
     let mut ctx = StepCtx::new(SimTime::ZERO, None, WORLD_NAME, 0, Vec::new());
 
-    let next_due = playback_double.step(&mut ctx);
+    let next_due = playback_double.step(&mut ctx).expect(
+        "a playback double republishes bytes it \
+         recorded, so nothing it publishes can be refused",
+    );
     let outbox = ctx.take_outbox();
     assert_eq!(outbox.len(), 1);
     assert_eq!(outbox[0].0.as_str(), KEY);
@@ -238,7 +241,9 @@ fn a_playback_double_ignores_other_publishers() {
     let mut ctx = StepCtx::new(SimTime::ZERO, None, WORLD_NAME, 0, Vec::new());
 
     assert_eq!(
-        playback_double.step(&mut ctx),
+        playback_double
+            .step(&mut ctx)
+            .expect("a double with nothing recorded publishes nothing"),
         SimTime::from_nanos(i64::MAX)
     );
     assert!(ctx.take_outbox().is_empty());

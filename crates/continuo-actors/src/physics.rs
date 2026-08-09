@@ -1,5 +1,5 @@
 use continuo_core::{
-    Component, ComponentId, KeyExpr, Pose, Quat, SimDuration, SimTime, StepCtx, Vec3,
+    Component, ComponentId, CoreError, KeyExpr, Pose, Quat, SimDuration, SimTime, StepCtx, Vec3,
 };
 
 use crate::controller::Cmd;
@@ -45,7 +45,7 @@ impl Component for UnicyclePhysics {
         vec![KeyExpr::new_rooted(format!("*/actor/{}/cmd", self.actor_name)).expect("valid key")]
     }
 
-    fn step(&mut self, ctx: &mut StepCtx) -> SimTime {
+    fn step(&mut self, ctx: &mut StepCtx) -> Result<SimTime, CoreError> {
         if let Some(message) = ctx.inbox().last() {
             // TODO(PLAN "Deferred"): a failed decode leaves `self.cmd` alone, so
             // this integrates the previous command indefinitely without saying so.
@@ -69,7 +69,7 @@ impl Component for UnicyclePhysics {
             .expect("physics keeps its pose finite");
 
         // Return the next due time, one physics period from now.
-        ctx.now() + self.period
+        Ok(ctx.now() + self.period)
     }
 
     /// Example of implementing `state_bytes` to hash internal state, even

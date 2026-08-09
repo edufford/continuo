@@ -13,7 +13,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use continuo_conductor::record::LogEvent;
 use continuo_conductor::{Conductor, ConductorConfig, JoinMetadata, Pacing, Recorder, WORLD_LEVEL};
-use continuo_core::{Component, ComponentId, KeyExpr, Pose, SimDuration, SimTime, StepCtx, Vec3};
+use continuo_core::{
+    Component, ComponentId, CoreError, KeyExpr, Pose, SimDuration, SimTime, StepCtx, Vec3,
+};
 use continuo_transport::{InProcTransport, MonitorTransport, Transport};
 use continuo_viz_bridge::{VizBridge, VizFrame, VizSink};
 
@@ -34,7 +36,7 @@ impl Component for Beacon {
         Vec::new()
     }
 
-    fn step(&mut self, ctx: &mut StepCtx) -> SimTime {
+    fn step(&mut self, ctx: &mut StepCtx) -> Result<SimTime, CoreError> {
         self.x += 1.5;
         let pose = Pose {
             position: Vec3::new(self.x, 0.0, 0.0),
@@ -49,7 +51,7 @@ impl Component for Beacon {
         ctx.publish(key, &pose).expect("pose serializes");
 
         // Return the next due time, one period out.
-        ctx.now() + self.period
+        Ok(ctx.now() + self.period)
     }
 }
 
@@ -152,10 +154,10 @@ impl Component for SilentObserver {
         vec![KeyExpr::new("continuo/*/actor/*/pose").expect("valid key")]
     }
 
-    fn step(&mut self, ctx: &mut StepCtx) -> SimTime {
+    fn step(&mut self, ctx: &mut StepCtx) -> Result<SimTime, CoreError> {
         // Return the next due time. Nothing else: it reads its inbox never
         // and publishes never.
-        ctx.now() + SimDuration::from_millis(10)
+        Ok(ctx.now() + SimDuration::from_millis(10))
     }
 }
 

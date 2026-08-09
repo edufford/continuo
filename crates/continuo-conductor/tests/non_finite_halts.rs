@@ -13,7 +13,9 @@
 //! cannot be a source of divergence.
 
 use continuo_conductor::{Conductor, ConductorConfig, Pacing, WORLD_LEVEL};
-use continuo_core::{Component, ComponentId, KeyExpr, SimDuration, SimTime, StepCtx, Vec3};
+use continuo_core::{
+    Component, ComponentId, CoreError, KeyExpr, SimDuration, SimTime, StepCtx, Vec3,
+};
 use continuo_transport::InProcTransport;
 
 /// Integrates a velocity that is `NaN` from the second step onward, which is
@@ -33,7 +35,7 @@ impl Component for DivergingIntegrator {
         Vec::new()
     }
 
-    fn step(&mut self, ctx: &mut StepCtx) -> SimTime {
+    fn step(&mut self, ctx: &mut StepCtx) -> Result<SimTime, CoreError> {
         self.steps += 1;
 
         // Finite on the first step, so the test proves the run was under way
@@ -50,7 +52,7 @@ impl Component for DivergingIntegrator {
         .expect("the integrator keeps its position finite");
 
         // Return the next due time, 10 ms from now.
-        ctx.now() + SimDuration::from_millis(10)
+        Ok(ctx.now() + SimDuration::from_millis(10))
     }
 }
 

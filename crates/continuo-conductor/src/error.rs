@@ -61,6 +61,14 @@ pub enum ConductorError {
         next_due: SimTime,
     },
 
+    #[error("component {path} failed to step at sim time {now}: {source}")]
+    StepFailed {
+        path: ComponentPath,
+        now: SimTime,
+        #[source]
+        source: CoreError,
+    },
+
     #[error(
         "component {path} timed out at sim time {now}: the conductor waited {elapsed:?} for its \
          step, over the {timeout:?} it declared, and its timeout policy is to halt the world"

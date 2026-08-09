@@ -11,7 +11,7 @@ use continuo_conductor::record::LogEvent;
 use continuo_conductor::{
     Conductor, ConductorConfig, MembershipChange, Pacing, Recorder, WORLD_LEVEL,
 };
-use continuo_core::{Component, ComponentId, KeyExpr, SimDuration, SimTime, StepCtx};
+use continuo_core::{Component, ComponentId, CoreError, KeyExpr, SimDuration, SimTime, StepCtx};
 use continuo_transport::InProcTransport;
 
 /// Steps forever at a fixed period, so the run has ticks to observe.
@@ -29,9 +29,9 @@ impl Component for Ticker {
         Vec::new()
     }
 
-    fn step(&mut self, ctx: &mut StepCtx) -> SimTime {
+    fn step(&mut self, ctx: &mut StepCtx) -> Result<SimTime, CoreError> {
         // Return the next due time, one period out.
-        ctx.now() + self.period
+        Ok(ctx.now() + self.period)
     }
 }
 

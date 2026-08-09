@@ -17,7 +17,9 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use continuo_core::{Component, ComponentId, KeyExpr, Pose, SimDuration, SimTime, StepCtx};
+use continuo_core::{
+    Component, ComponentId, CoreError, KeyExpr, Pose, SimDuration, SimTime, StepCtx,
+};
 use serde::{Deserialize, Serialize};
 
 /// A request to put one traffic car on the road.
@@ -169,7 +171,7 @@ impl Component for TrafficSpawner {
         vec![KeyExpr::new_rooted("*/actor/**/pose").expect("valid key")]
     }
 
-    fn step(&mut self, ctx: &mut StepCtx) -> SimTime {
+    fn step(&mut self, ctx: &mut StepCtx) -> Result<SimTime, CoreError> {
         for message in ctx.inbox() {
             let (Some(actor_name), Ok(pose)) = (
                 Self::actor_name_of(&message.publisher),
@@ -233,7 +235,7 @@ impl Component for TrafficSpawner {
         }
 
         // Return the next due time, one period out.
-        ctx.now() + self.period
+        Ok(ctx.now() + self.period)
     }
 
     fn state_bytes(&self) -> Option<Vec<u8>> {

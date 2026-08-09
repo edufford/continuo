@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
-use continuo_core::{Component, ComponentId, KeyExpr, Pose, SimDuration, SimTime, StepCtx};
+use continuo_core::{
+    Component, ComponentId, CoreError, KeyExpr, Pose, SimDuration, SimTime, StepCtx,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::path::Waypoints;
@@ -88,7 +90,7 @@ impl Component for PathFollowController {
         vec![KeyExpr::new_rooted(format!("*/actor/{}/pose", self.actor_name)).expect("valid key")]
     }
 
-    fn step(&mut self, ctx: &mut StepCtx) -> SimTime {
+    fn step(&mut self, ctx: &mut StepCtx) -> Result<SimTime, CoreError> {
         // Latest pose wins; inbox is (publisher, seq)-sorted and all pose
         // messages here come from our physics sibling.
         if let Some(message) = ctx.inbox().last() {
@@ -114,6 +116,6 @@ impl Component for PathFollowController {
             .expect("the controller keeps its command finite");
 
         // Return the next due time, one control period from now.
-        ctx.now() + self.period
+        Ok(ctx.now() + self.period)
     }
 }

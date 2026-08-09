@@ -26,7 +26,20 @@ pub trait Component: Send {
     /// Advance internal state to `ctx.now()`. Returns the next sim time this
     /// component should step, which must be strictly greater than `ctx.now()`
     /// (the conductor enforces this to prevent zero-time livelock).
-    fn step(&mut self, ctx: &mut StepCtx) -> SimTime;
+    ///
+    /// Returning `Err` halts the world, and is how a component says it cannot
+    /// do its job: a payload it cannot read, a value it cannot publish. That
+    /// is safe to make fatal because such a failure is a pure function of the
+    /// component's logic and the sim state, so it reproduces at the identical
+    /// instant on every machine, exactly like the schedule violation the
+    /// conductor already halts on. Carrying on instead would trade a loud,
+    /// reproducible bug for a silent one that every determinism check passes.
+    ///
+    /// Both [`StepCtx::publish`] and [`Message::decode`] return `CoreError`,
+    /// so the usual shape is `?`. A component that genuinely tolerates an
+    /// unreadable message matches on the `Result` and says so, which keeps
+    /// every swallow visible rather than scattered through step bodies.
+    fn step(&mut self, ctx: &mut StepCtx) -> Result<SimTime, CoreError>;
 
     /// Canonical serialized internal state for the per-tick determinism
     /// check, or `None` (the default) if the component's state is opaque.
