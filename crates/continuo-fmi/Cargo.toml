@@ -9,4 +9,8 @@ rust-version.workspace = true
 [dependencies]
 continuo-core = { workspace = true }
 fmi = { workspace = true }
+# For `Value` as the in-memory payload model and for JSON Pointer resolution,
+# not for encoding: encoding and decoding go through core, which is what keeps
+# the wire format out of this crate.
+serde_json = { workspace = true }
 thiserror = { workspace = true }

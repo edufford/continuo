@@ -8,5 +8,7 @@
 //! [`Component`]: continuo_core::Component
 
 mod error;
+mod mapping;
 
 pub use error::FmuConstructionError;
+pub use mapping::{FmuMapping, InputBinding, OutputBinding, element_pointers, pointer_from_name};
