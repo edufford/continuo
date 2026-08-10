@@ -92,9 +92,14 @@ impl InputBinding {
         }
     }
 
-    /// Replaces the derived pointer with pointers written out, one per
-    /// element. Anything an FMU does not name after the message it consumes
-    /// needs this, which is every third-party FMU and every array.
+    /// Writes the pointers out instead of deriving them from the variable's
+    /// name, one per element.
+    ///
+    /// Two cases need it. A scalar whose FMU spells the variable differently
+    /// from the payload it reads, which is most FMUs written by anyone else,
+    /// since a model names its ports for its own internals rather than for
+    /// the messages of a host it has never heard of. And any array, since
+    /// nothing derives `/detections/0/range` from a variable named `range`.
     pub fn with_pointers<S: Into<String>>(mut self, pointers: impl IntoIterator<Item = S>) -> Self {
         self.pointers = pointers.into_iter().map(Into::into).collect();
         self
@@ -134,33 +139,55 @@ impl InputBinding {
     }
 }
 
-/// One FMU output variable and the key it publishes on.
+/// One FMU output variable, the key it publishes on, and where in that
+/// message's payload its value lands.
 ///
-/// The payload path derives from the variable's name, so an output named
-/// `accel_cmd` publishes `{"accel_cmd": ...}`. Variables sharing a key merge
+/// The payload pointer derives from the variable's name, so an output named
+/// `accel_cmd` publishes `{"accel_cmd": ...}`. Outputs sharing a key merge
 /// into one payload, which is how an FMU whose outputs are named
 /// `position.x` and `position.y` publishes one nested object.
 ///
-/// An array variable publishes its whole value at that path as a JSON array,
-/// and a multi-dimensional one as nested arrays, the outermost dimension
-/// first. No pointers and nothing per element, because an output builds its
-/// own payload rather than digging through one somebody else designed. That
-/// asymmetry with [`InputBinding`] is the reason inputs need pointers at
-/// all: an FMU consuming a message has to be told where in it to look, while
-/// an FMU producing one decides the shape.
+/// An array variable publishes its whole value at that pointer as a JSON
+/// array, and a multi-dimensional one as nested arrays, the outermost
+/// dimension first. Nothing per element, because an output builds its own
+/// payload rather than digging through one somebody else designed, and an
+/// element of a payload under construction has no address until the payload
+/// exists.
 pub struct OutputBinding {
     /// The FMU's name for the variable, as `modelDescription.xml` spells it.
     pub fmu_var_name: String,
     /// The key it publishes on.
     pub published_key: KeyExpr,
+    /// Where in the payload its value lands, as a JSON Pointer.
+    ///
+    /// Overridable for the same reason [`InputBinding::with_pointers`]
+    /// exists, and just as necessary: an FMU names its ports for its own
+    /// internals, while a world's message shapes are fixed by whoever
+    /// already reads them. Without this, an FMU calling its output `a_out`
+    /// could only publish `{"a_out": ...}` into a world whose consumers
+    /// decode `accel_cmd`, and bridging the two would take a whole component
+    /// that renamed one field.
+    pub payload_pointer: String,
 }
 
 impl OutputBinding {
+    /// Publishes a variable on a key, at the payload path its name spells.
     pub fn new(fmu_var_name: impl Into<String>, published_key: KeyExpr) -> Self {
+        let fmu_var_name = fmu_var_name.into();
+        let payload_pointer = json_pointer_from_name(&fmu_var_name);
+
+        // Return a binding publishing where its own name spells.
         OutputBinding {
-            fmu_var_name: fmu_var_name.into(),
+            fmu_var_name,
             published_key,
+            payload_pointer,
         }
+    }
+
+    /// Lands the value somewhere other than where the variable's name spells.
+    pub fn with_pointer(mut self, payload_pointer: impl Into<String>) -> Self {
+        self.payload_pointer = payload_pointer.into();
+        self
     }
 }
 
@@ -295,6 +322,29 @@ mod tests {
         assert_eq!(
             json_pointers_for_array("/detections", 0, "range"),
             [] as [String; 0]
+        );
+    }
+
+    #[test]
+    fn an_output_lands_where_its_name_spells_unless_told_otherwise() {
+        let key = KeyExpr::new("continuo/w/actor/car/accel_cmd").unwrap();
+        assert_eq!(
+            OutputBinding::new("accel_cmd", key.clone()).payload_pointer,
+            "/accel_cmd"
+        );
+        assert_eq!(
+            OutputBinding::new("position.x", key.clone()).payload_pointer,
+            "/position/x"
+        );
+
+        // An FMU names its ports for its own internals, so bridging its
+        // vocabulary to the world's is a mapping's job rather than a
+        // component's.
+        assert_eq!(
+            OutputBinding::new("a_out", key)
+                .with_pointer("/accel_cmd")
+                .payload_pointer,
+            "/accel_cmd"
         );
     }
 
