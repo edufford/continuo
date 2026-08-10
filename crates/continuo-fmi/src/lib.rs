@@ -7,6 +7,7 @@
 //!
 //! [`Component`]: continuo_core::Component
 
+pub mod convert;
 mod error;
 mod mapping;
 
