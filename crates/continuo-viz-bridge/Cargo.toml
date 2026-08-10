@@ -11,8 +11,8 @@ rust-version.workspace = true
 # for, so an ordinary build compiles the Zenoh sink. That sink has no tests of
 # its own, since exercising it needs a live session and two processes, so
 # compiling is the only thing standing between it and rot. Zenoh is 300-odd
-# transitive crates against the workspace's 21 and pulls an async runtime,
-# which is what that costs.
+# transitive crates against the 22 this crate otherwise needs, and pulls an
+# async runtime, which is what that costs.
 #
 # Still a feature rather than a plain dependency: everything except that sink
 # works without it, so `--no-default-features` gives a bridge that can still

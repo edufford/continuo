@@ -1,0 +1,12 @@
+[package]
+name = "continuo-fmi"
+description = "Runs an imported FMI 3.0 Co-Simulation FMU as a component"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+continuo-core = { workspace = true }
+fmi = { workspace = true }
+thiserror = { workspace = true }

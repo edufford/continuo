@@ -44,4 +44,16 @@ pub enum CoreError {
         /// The value and where it was, such as `NaN at position.x`.
         found: String,
     },
+
+    /// A component whose own machinery failed rather than its inputs: an
+    /// imported FMU refusing to take a step, or to accept a value it was
+    /// handed.
+    ///
+    /// A reason string rather than a typed cause, because the failure
+    /// originates outside this workspace, where no error type of ours
+    /// exists, and core cannot depend on the crates that wrap such things.
+    /// The reason names the instance and the call; `ConductorError::StepFailed`
+    /// adds the component path and the sim time.
+    #[error("component failure: {reason}")]
+    ComponentFailure { reason: String },
 }
