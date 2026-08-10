@@ -11,3 +11,6 @@
 *.gif binary
 *.png binary
 *.jpg binary
+# An FMU is a zip. Line-ending conversion inside one would leave an archive
+# that no longer unpacks, and the failure would land far from the cause.
+*.fmu binary
