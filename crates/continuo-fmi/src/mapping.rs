@@ -1,4 +1,4 @@
-use continuo_core::{KeyExpr, SimDuration};
+use continuo_core::{CoreError, KeyExpr, SimDuration};
 use serde_json::Value;
 
 /// Which messages feed which of an FMU's variables, where its outputs go, and
@@ -37,34 +37,53 @@ pub struct InputBinding {
     pub subscribed_key: KeyExpr,
     /// One JSON Pointer per element, resolved against the decoded payload.
     pub pointers: Vec<String>,
-    /// The value for an element whose pointer finds nothing in a message
-    /// that did arrive. No message at all is a different thing and holds the
-    /// previous value instead, which is what sample-and-hold means.
+    /// The value for an element whose pointer finds nothing in a message that
+    /// did arrive, and `None` if that must never happen.
     ///
-    /// Checked against the variable's declared type when the component is
-    /// built, so a default the FMU could never accept fails there rather
-    /// than at the first gap in the data.
-    pub when_missing: Value,
+    /// `None` is the default because a pointer reading a field the publisher
+    /// always writes has no honest fallback: finding nothing means the
+    /// mapping and the publisher disagree about the payload's shape, and
+    /// substituting a value would feed the FMU a number nobody published,
+    /// silently and for the rest of the run. It halts instead, naming the
+    /// variable, the pointer and the key, which is the bargain
+    /// [`CoreError::PayloadDecode`] already makes: the failure is a pure
+    /// function of the mapping and the payload, so it reproduces at the
+    /// identical instant on every machine rather than diverging.
+    ///
+    /// `Some` is for the shape where absence is itself part of the
+    /// measurement: an array variable whose payload carries fewer elements
+    /// than the variable declares, where the empty slots have a meaning the
+    /// publisher never has to spell out. Holding the previous value cannot
+    /// serve there, since a slot that stops being written would keep its last
+    /// value forever, and an FMI array is set whole in one call anyway, so
+    /// writing part of one is not a thing that exists.
+    ///
+    /// Nothing is logged when a default is used, since on that shape it is
+    /// used most steps by design. The loud case is the one that halts.
+    ///
+    /// A `Some` value is checked against the variable's declared type when
+    /// the component is built, so a default the FMU could never accept fails
+    /// there rather than at the first gap in the data.
+    ///
+    /// [`CoreError::PayloadDecode`]: continuo_core::CoreError::PayloadDecode
+    pub when_missing: Option<Value>,
 }
 
 impl InputBinding {
     /// Binds a variable to a key, deriving the pointer from the variable's
     /// name. The scalar case, and correct whenever the FMU was named after
     /// the payload it reads.
-    pub fn new(
-        fmu_var_name: impl Into<String>,
-        subscribed_key: KeyExpr,
-        when_missing: Value,
-    ) -> Self {
+    pub fn new(fmu_var_name: impl Into<String>, subscribed_key: KeyExpr) -> Self {
         let fmu_var_name = fmu_var_name.into();
         let pointers = vec![json_pointer_from_name(&fmu_var_name)];
 
-        // Return a scalar binding reading the path its own name spells.
+        // Return a scalar binding reading the path its own name spells, whose
+        // pointer has to find something.
         InputBinding {
             fmu_var_name,
             subscribed_key,
             pointers,
-            when_missing,
+            when_missing: None,
         }
     }
 
@@ -76,15 +95,36 @@ impl InputBinding {
         self
     }
 
+    /// Says an element may be absent, and what it reads as then. See
+    /// [`InputBinding::when_missing`] for when that is honest and when it
+    /// hides a wiring mistake.
+    pub fn when_missing(mut self, value: Value) -> Self {
+        self.when_missing = Some(value);
+        self
+    }
+
     /// The value for each element, in declaration order, resolved against one
     /// decoded payload.
     ///
     /// Addresses the decoded value rather than the bytes it arrived as, so
     /// the wire format never reaches this crate.
-    pub fn resolve<'a>(&'a self, payload: &'a Value) -> Vec<&'a Value> {
+    pub fn resolve<'a>(&'a self, payload: &'a Value) -> Result<Vec<&'a Value>, CoreError> {
         self.pointers
             .iter()
-            .map(|pointer| payload.pointer(pointer).unwrap_or(&self.when_missing))
+            .map(|pointer| {
+                payload
+                    .pointer(pointer)
+                    .or(self.when_missing.as_ref())
+                    .ok_or_else(|| CoreError::ComponentFailure {
+                        reason: format!(
+                            "input {:?}: nothing at {:?} in the message on {}, \
+                             and the mapping declares no value for its absence",
+                            self.fmu_var_name,
+                            pointer,
+                            self.subscribed_key.as_str()
+                        ),
+                    })
+            })
             .collect()
     }
 }
@@ -168,8 +208,9 @@ mod tests {
         pointers: impl IntoIterator<Item = S>,
         when_missing: Value,
     ) -> InputBinding {
-        InputBinding::new("v", KeyExpr::new("continuo/w/x").unwrap(), when_missing)
+        InputBinding::new("v", KeyExpr::new("continuo/w/x").unwrap())
             .with_pointers(pointers)
+            .when_missing(when_missing)
     }
 
     #[test]
@@ -217,7 +258,7 @@ mod tests {
         let payload = json!({"position": {"x": 1.0, "y": 2.0}, "speed": 3.0});
         let binding = binding(["/speed", "/position/x", "/position/y"], json!(0.0));
         assert_eq!(
-            binding.resolve(&payload),
+            binding.resolve(&payload).unwrap(),
             [&json!(3.0), &json!(1.0), &json!(2.0)]
         );
     }
@@ -232,7 +273,7 @@ mod tests {
             json!(1e9),
         );
         assert_eq!(
-            binding.resolve(&payload),
+            binding.resolve(&payload).unwrap(),
             [&json!(10.0), &json!(20.0), &json!(1e9), &json!(1e9)]
         );
     }
@@ -243,15 +284,17 @@ mod tests {
         // boolean and the default for a string is a string.
         let payload = json!({"present": 1.0});
         assert_eq!(
-            binding(["/absent"], json!(true)).resolve(&payload),
+            binding(["/absent"], json!(true)).resolve(&payload).unwrap(),
             [&json!(true)]
         );
         assert_eq!(
-            binding(["/absent"], json!("idle")).resolve(&payload),
+            binding(["/absent"], json!("idle"))
+                .resolve(&payload)
+                .unwrap(),
             [&json!("idle")]
         );
         assert_eq!(
-            binding(["/absent"], json!(-7)).resolve(&payload),
+            binding(["/absent"], json!(-7)).resolve(&payload).unwrap(),
             [&json!(-7)]
         );
     }
@@ -262,8 +305,40 @@ mod tests {
         let binding = InputBinding::new(
             "position.x",
             KeyExpr::new("continuo/w/actor/car/pose").unwrap(),
-            json!(0.0),
         );
-        assert_eq!(binding.resolve(&payload), [&json!(4.5)]);
+        assert_eq!(binding.resolve(&payload).unwrap(), [&json!(4.5)]);
+    }
+
+    #[test]
+    fn a_pointer_that_must_resolve_halts_naming_what_it_looked_for() {
+        // The default, because a scalar reading a field that is always there
+        // has no honest fallback: the mapping and the publisher disagree
+        // about the payload's shape, and a substituted number would drive a
+        // car from a pose nobody published.
+        let payload = json!({"position": {"y": 4.5}});
+        let binding = InputBinding::new(
+            "position.x",
+            KeyExpr::new("continuo/w/actor/car/pose").unwrap(),
+        );
+
+        let reason = binding.resolve(&payload).unwrap_err().to_string();
+        assert!(reason.contains("position.x"), "{reason}");
+        assert!(reason.contains("/position/x"), "{reason}");
+        assert!(reason.contains("continuo/w/actor/car/pose"), "{reason}");
+    }
+
+    #[test]
+    fn a_default_covers_only_the_elements_that_are_missing() {
+        // One default serves every element, so a scan that skips a slot in
+        // the middle is not a special case.
+        let payload = json!({"detections": [{"range": 10.0}, {}, {"range": 30.0}]});
+        let binding = binding(
+            json_pointers_for_array("/detections", 4, "range"),
+            json!(1e9),
+        );
+        assert_eq!(
+            binding.resolve(&payload).unwrap(),
+            [&json!(10.0), &json!(1e9), &json!(30.0), &json!(1e9)]
+        );
     }
 }
