@@ -13,4 +13,5 @@ mod mapping;
 pub use error::FmuConstructionError;
 pub use mapping::{
     FmuMapping, InputBinding, OutputBinding, json_pointer_from_name, json_pointers_for_array,
+    json_pointers_for_dimensions,
 };

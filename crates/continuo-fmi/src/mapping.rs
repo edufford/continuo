@@ -36,6 +36,11 @@ pub struct InputBinding {
     /// The key whose messages feed it.
     pub subscribed_key: KeyExpr,
     /// One JSON Pointer per element, resolved against the decoded payload.
+    ///
+    /// Flat whatever the variable's rank, and as long as the product of its
+    /// dimensions: a matrix is a list in row-major order rather than a list
+    /// of lists. [`json_pointers_for_array`] and
+    /// [`json_pointers_for_dimensions`] write the repetitive cases.
     pub pointers: Vec<String>,
     /// The value for an element whose pointer finds nothing in a message that
     /// did arrive, and `None` if that must never happen.
@@ -182,15 +187,20 @@ pub fn json_pointer_from_name(name: &str) -> String {
     pointer
 }
 
-/// Pointers for one field of every element of an array payload, which is what
-/// an FMU array input needs: `json_pointers_for_array("/detections", 3, "range")`
-/// gives `/detections/0/range` through `/detections/2/range`.
+/// Pointers reading one field out of every element of a JSON array.
 ///
-/// `count` is the variable's dimension rather than the payload's length,
-/// since the payload's length varies per message and the FMU's does not. A
-/// message carrying fewer elements leaves the tail to
-/// [`InputBinding::when_missing`], which is how a short radar scan reads as a
-/// clear road rather than as an error.
+/// For a payload of
+/// `{"detections": [{"range": 8.0}, {"range": 20.0}, {"range": 31.0}]}`,
+/// `json_pointers_for_array("/detections", 3, "range")` gives
+/// `/detections/0/range`, `/detections/1/range` and `/detections/2/range`.
+///
+/// `count` is the FMU variable's dimension rather than the payload's length,
+/// because the variable is a fixed size and a message is not. A message
+/// carrying fewer elements leaves the tail pointers finding nothing, which
+/// is what [`InputBinding::when_missing`] is for.
+///
+/// Use [`json_pointers_for_dimensions`] instead where the payload is nested
+/// arrays of plain values rather than object dictionaries.
 pub fn json_pointers_for_array(array: &str, count: usize, field: &str) -> Vec<String> {
     let field = escape_json_pointer_token(field);
 
@@ -198,6 +208,33 @@ pub fn json_pointers_for_array(array: &str, count: usize, field: &str) -> Vec<St
     (0..count)
         .map(|index| format!("{array}/{index}/{field}"))
         .collect()
+}
+
+/// Pointers for every element of an array or a matrix of plain values.
+///
+/// For a payload of `{"a": [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]}`,
+/// `json_pointers_for_dimensions("/a", &[2, 3])` gives `/a/0/0`, `/a/0/1`,
+/// `/a/0/2`, `/a/1/0`, `/a/1/1` and `/a/1/2`.
+///
+/// One flat list whatever the shape, in **row-major** order, so the last
+/// index varies fastest. That is the order FMI 3.0 specifies for a
+/// multi-dimensional variable's values, and getting it backwards transposes
+/// the matrix. A transposed square matrix still runs and still publishes
+/// numbers, so a test pins the order rather than this sentence.
+///
+/// An empty `dimensions` gives the prefix alone, which is the pointer to a
+/// scalar.
+pub fn json_pointers_for_dimensions(prefix: &str, dimensions: &[usize]) -> Vec<String> {
+    let mut pointers = vec![prefix.to_string()];
+    for &size in dimensions {
+        pointers = pointers
+            .iter()
+            .flat_map(|pointer| (0..size).map(move |index| format!("{pointer}/{index}")))
+            .collect();
+    }
+
+    // Return one pointer per element, the last index varying fastest.
+    pointers
 }
 
 /// Escapes one JSON Pointer reference token per RFC 6901: `~` first, so the
@@ -258,6 +295,46 @@ mod tests {
         assert_eq!(
             json_pointers_for_array("/detections", 0, "range"),
             [] as [String; 0]
+        );
+    }
+
+    #[test]
+    fn a_variable_of_any_rank_binds_through_one_flat_row_major_list() {
+        // The last index varies fastest, which is what FMI specifies and
+        // what a transposed matrix would quietly violate while still
+        // running.
+        assert_eq!(json_pointers_for_dimensions("/a", &[]), ["/a"]);
+        assert_eq!(
+            json_pointers_for_dimensions("/a", &[3]),
+            ["/a/0", "/a/1", "/a/2"]
+        );
+        assert_eq!(
+            json_pointers_for_dimensions("/a", &[2, 3]),
+            ["/a/0/0", "/a/0/1", "/a/0/2", "/a/1/0", "/a/1/1", "/a/1/2"]
+        );
+        assert_eq!(
+            json_pointers_for_dimensions("/a", &[2, 2, 2]),
+            [
+                "/a/0/0/0", "/a/0/0/1", "/a/0/1/0", "/a/0/1/1", "/a/1/0/0", "/a/1/0/1", "/a/1/1/0",
+                "/a/1/1/1"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_matrix_resolves_row_by_row() {
+        let payload = json!({"a": [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]});
+        let binding = binding(json_pointers_for_dimensions("/a", &[2, 3]), json!(0.0));
+        assert_eq!(
+            binding.resolve(&payload).unwrap(),
+            [
+                &json!(1.0),
+                &json!(2.0),
+                &json!(3.0),
+                &json!(4.0),
+                &json!(5.0),
+                &json!(6.0)
+            ]
         );
     }
 
