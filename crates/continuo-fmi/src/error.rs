@@ -4,17 +4,17 @@ use thiserror::Error;
 
 /// Why an FMU could not be made into a component.
 ///
-/// Construction only. Once a component is running, `Component::step` may
+/// Named for when it happens rather than for what it wraps, because that is
+/// the whole distinction: everything here is a wiring mistake that fails
+/// before a run starts. Once a component is running, `Component::step` may
 /// return nothing but [`CoreError`], so every step-time failure travels as
 /// [`CoreError::ComponentFailure`] with a reason naming the instance and the
-/// call. The split is the useful one: everything here is a wiring mistake
-/// that fails before a run starts, while a step-time failure halts a run in
-/// progress.
+/// call, and this type never grows a variant for one.
 ///
 /// [`CoreError`]: continuo_core::CoreError
 /// [`CoreError::ComponentFailure`]: continuo_core::CoreError::ComponentFailure
 #[derive(Debug, Error)]
-pub enum FmuError {
+pub enum FmuConstructionError {
     /// The `.fmu` could not be read: no such file, not a zip, no
     /// `modelDescription.xml` inside it, or one that does not parse.
     #[error("cannot import FMU from {path:?}: {source}")]

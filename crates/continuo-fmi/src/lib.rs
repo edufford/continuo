@@ -9,4 +9,4 @@
 
 mod error;
 
-pub use error::FmuError;
+pub use error::FmuConstructionError;
