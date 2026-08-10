@@ -135,6 +135,14 @@ impl InputBinding {
 /// `accel_cmd` publishes `{"accel_cmd": ...}`. Variables sharing a key merge
 /// into one payload, which is how an FMU whose outputs are named
 /// `position.x` and `position.y` publishes one nested object.
+///
+/// An array variable publishes its whole value at that path as a JSON array,
+/// and a multi-dimensional one as nested arrays, the outermost dimension
+/// first. No pointers and nothing per element, because an output builds its
+/// own payload rather than digging through one somebody else designed. That
+/// asymmetry with [`InputBinding`] is the reason inputs need pointers at
+/// all: an FMU consuming a message has to be told where in it to look, while
+/// an FMU producing one decides the shape.
 pub struct OutputBinding {
     /// The FMU's name for the variable, as `modelDescription.xml` spells it.
     pub fmu_var_name: String,
