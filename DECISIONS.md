@@ -664,6 +664,8 @@ it got there, including the roads not taken.
     admit a replacement built from the same data, which is already how a
     `Box<dyn Component>` avoids having to cross a transport. What must be
     `Send` in all of that is messages and constructors. Never components.
+    PLAN.md's Deferred list carries that shape as an item of its own, so the
+    constraint sits where the work would be planned rather than only here.
   - So the bound guarded nothing that exists or is planned, while an FMU
     instance truthfully is not `Send`. Dropping it keeps the workspace free
     of `unsafe` and lets the type say what is true.

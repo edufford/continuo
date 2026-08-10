@@ -722,6 +722,34 @@ than churning the fingerprint twice.
   only for a subscriber that already keeps just the latest, which the API
   cannot check.
 
+- **Host-local parallelism, built so components stay on the thread that made
+  them.** Stepping components concurrently inside one process is the
+  distribution protocol above run over channels instead of Zenoh: each worker
+  thread owns a set of components and constructs them itself, a step request
+  and its reply are plain data, and the conductor's barrier plus a
+  declaration-order fold keeps the hash byte-identical. So it reuses the seam
+  "What `step_once` becomes" already describes rather than adding a second
+  way to step, and local and remote parallelism stay one mechanism.
+
+  The construct-where-it-runs shape is the requirement, not an incidental
+  choice of how to build it. A thread pool handed components as work items
+  would need `Component: Send`, a bound this project dropped and does not
+  intend to restore (DECISIONS.md, 2026-08-10), and it would exclude any
+  component wrapping foreign state tied to its thread, an imported FMU
+  instance being the first real case. What must be `Send` is messages and
+  constructors.
+
+  A composite is the unit of assignment, because same-instant delivery is a
+  within-composite relationship: the components a conductor may dispatch
+  concurrently are exactly those with no same-instant edge between them, and
+  a composite's internal ordering is its owner's problem. Distribution states
+  that same rule one scale up, where it reads as "same-instant delivery never
+  crosses hosts".
+
+  Worth building when component work dominates the conductor's own per tick,
+  which `traffic_scale` is the instrument for measuring. Nothing at demo
+  scale needs it.
+
 - **Road-network importer**: which format (OpenDRIVE, Lanelet2, other) lowers
   into the world spec; decide when realistic road scenarios are needed.
 
