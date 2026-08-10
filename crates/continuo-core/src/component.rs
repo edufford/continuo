@@ -13,10 +13,17 @@ use crate::time::{SimDuration, SimTime};
 /// Components are transport-blind and hierarchy-blind: the conductor decides
 /// when `step` runs and what the inbox contains (see PLAN.md's visibility
 /// rule); components only see `StepCtx`.
+///
+/// Not `Send`, deliberately. A component is constructed by whoever runs it
+/// and never moves afterwards, which is what a host distributing work across
+/// threads or processes would do anyway: send the construction data, not the
+/// component. Requiring `Send` would rule out components wrapping foreign
+/// state that is legitimately tied to nothing in particular, such as an
+/// imported FMU's instance handle.
 // TODO(PLAN "Deferred"): a component cannot ask to leave. The conductor can
 // remove one, and removes one itself when a timeout says to, but neither
 // route starts with the component: nothing here says "I am done".
-pub trait Component: Send {
+pub trait Component {
     /// This component's name within its parent (one path segment).
     fn id(&self) -> ComponentId;
 

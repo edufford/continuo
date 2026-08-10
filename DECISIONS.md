@@ -639,3 +639,37 @@ it got there, including the roads not taken.
     entry now argues for it on its own terms: sixteen times less work for a
     low-rate observer. It is not a fix for this, and justifying it by this
     would have been justifying it by a pacing artefact.
+- **2026-08-10**: **`Component` no longer requires `Send`.** The bound came
+  in with the milestone 1 skeleton and was never argued for. No design
+  document mentions it, nothing in the workspace moves a component or a
+  conductor between threads, and removing it changes nothing anywhere: the
+  workspace compiles untouched.
+  - It surfaced because milestone 6 wants to wrap an imported FMU, whose
+    instance is a raw pointer into a loaded library and so is `!Send`. The
+    obvious move was an `unsafe impl Send` on a wrapper, which would have
+    been this workspace's first `unsafe`, and it deserved more than a
+    reflex.
+  - What the bound buys is one capability: constructing a component on one
+    thread and moving it to another. Nothing wants that. Running a
+    conductor on a background thread does not need it, since the conductor
+    and its components are built inside the closure that runs them, which
+    is what every in-tree use already does.
+  - The parallel futures do not need it either, and this is the part that
+    settled it. Stepping components concurrently within a process is the
+    milestone 7 host protocol run over channels: each component is
+    constructed on the thread that owns it, a step request and its reply
+    are plain data, and a barrier plus a declaration-order fold keeps the
+    hash byte-identical. Supervising a component that hangs is a timed wait
+    on that reply. Moving one between hosts is membership: remove it and
+    admit a replacement built from the same data, which is already how a
+    `Box<dyn Component>` avoids having to cross a transport. What must be
+    `Send` in all of that is messages and constructors. Never components.
+  - So the bound guarded nothing that exists or is planned, while an FMU
+    instance truthfully is not `Send`. Dropping it keeps the workspace free
+    of `unsafe` and lets the type say what is true.
+  - The trigger to revisit, if it ever comes, is a genuine
+    build-here-run-there hand-off. Restoring the bound would be a breaking
+    change for exactly one implementor, the FMU adapter, which would then
+    carry an `unsafe impl Send` claiming thread-agnosticism only. Concurrent
+    calls into one FMU instance are already impossible, since stepping takes
+    `&mut self`.
