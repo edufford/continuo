@@ -32,9 +32,9 @@ pub struct FmuMapping {
 /// from drifting apart in silence.
 pub struct InputBinding {
     /// The FMU's name for the variable, as `modelDescription.xml` spells it.
-    pub variable: String,
+    pub fmu_var_name: String,
     /// The key whose messages feed it.
-    pub key: KeyExpr,
+    pub subscribed_key: KeyExpr,
     /// One JSON Pointer per element, resolved against the decoded payload.
     pub pointers: Vec<String>,
     /// The value for an element whose pointer finds nothing in a message
@@ -51,14 +51,18 @@ impl InputBinding {
     /// Binds a variable to a key, deriving the pointer from the variable's
     /// name. The scalar case, and correct whenever the FMU was named after
     /// the payload it reads.
-    pub fn new(variable: impl Into<String>, key: KeyExpr, when_missing: Value) -> Self {
-        let variable = variable.into();
-        let pointers = vec![pointer_from_name(&variable)];
+    pub fn new(
+        fmu_var_name: impl Into<String>,
+        subscribed_key: KeyExpr,
+        when_missing: Value,
+    ) -> Self {
+        let fmu_var_name = fmu_var_name.into();
+        let pointers = vec![json_pointer_from_name(&fmu_var_name)];
 
         // Return a scalar binding reading the path its own name spells.
         InputBinding {
-            variable,
-            key,
+            fmu_var_name,
+            subscribed_key,
             pointers,
             when_missing,
         }
@@ -93,16 +97,16 @@ impl InputBinding {
 /// `position.x` and `position.y` publishes one nested object.
 pub struct OutputBinding {
     /// The FMU's name for the variable, as `modelDescription.xml` spells it.
-    pub variable: String,
+    pub fmu_var_name: String,
     /// The key it publishes on.
-    pub key: KeyExpr,
+    pub published_key: KeyExpr,
 }
 
 impl OutputBinding {
-    pub fn new(variable: impl Into<String>, key: KeyExpr) -> Self {
+    pub fn new(fmu_var_name: impl Into<String>, published_key: KeyExpr) -> Self {
         OutputBinding {
-            variable: variable.into(),
-            key,
+            fmu_var_name: fmu_var_name.into(),
+            published_key,
         }
     }
 }
@@ -117,11 +121,13 @@ impl OutputBinding {
 /// pointers at all. It is a convenience rather than an assumption: a
 /// third-party FMU names things in its own vocabulary, and that is what
 /// [`InputBinding::with_pointers`] is for.
-pub fn pointer_from_name(name: &str) -> String {
+pub fn json_pointer_from_name(name: &str) -> String {
     let mut pointer = String::new();
     for segment in name.split(['.', '[']) {
         pointer.push('/');
-        pointer.push_str(&escape(segment.strip_suffix(']').unwrap_or(segment)));
+        pointer.push_str(&escape_json_pointer_token(
+            segment.strip_suffix(']').unwrap_or(segment),
+        ));
     }
 
     // Return the pointer the name spells.
@@ -129,7 +135,7 @@ pub fn pointer_from_name(name: &str) -> String {
 }
 
 /// Pointers for one field of every element of an array payload, which is what
-/// an FMU array input needs: `element_pointers("/detections", 3, "range")`
+/// an FMU array input needs: `json_pointers_for_array("/detections", 3, "range")`
 /// gives `/detections/0/range` through `/detections/2/range`.
 ///
 /// `count` is the variable's dimension rather than the payload's length,
@@ -137,8 +143,8 @@ pub fn pointer_from_name(name: &str) -> String {
 /// message carrying fewer elements leaves the tail to
 /// [`InputBinding::when_missing`], which is how a short radar scan reads as a
 /// clear road rather than as an error.
-pub fn element_pointers(array: &str, count: usize, field: &str) -> Vec<String> {
-    let field = escape(field);
+pub fn json_pointers_for_array(array: &str, count: usize, field: &str) -> Vec<String> {
+    let field = escape_json_pointer_token(field);
 
     // Return one pointer per element the variable declares.
     (0..count)
@@ -148,7 +154,7 @@ pub fn element_pointers(array: &str, count: usize, field: &str) -> Vec<String> {
 
 /// Escapes one JSON Pointer reference token per RFC 6901: `~` first, so the
 /// tildes introduced by `/` are not escaped twice.
-fn escape(token: &str) -> String {
+fn escape_json_pointer_token(token: &str) -> String {
     token.replace('~', "~0").replace('/', "~1")
 }
 
@@ -168,16 +174,16 @@ mod tests {
 
     #[test]
     fn a_structured_name_spells_its_own_pointer() {
-        assert_eq!(pointer_from_name("speed"), "/speed");
-        assert_eq!(pointer_from_name("position.x"), "/position/x");
-        assert_eq!(pointer_from_name("orientation.w"), "/orientation/w");
+        assert_eq!(json_pointer_from_name("speed"), "/speed");
+        assert_eq!(json_pointer_from_name("position.x"), "/position/x");
+        assert_eq!(json_pointer_from_name("orientation.w"), "/orientation/w");
     }
 
     #[test]
     fn an_indexed_name_spells_an_indexed_pointer() {
-        assert_eq!(pointer_from_name("a[1]"), "/a/1");
-        assert_eq!(pointer_from_name("a[1][2]"), "/a/1/2");
-        assert_eq!(pointer_from_name("m.a[1][2].b"), "/m/a/1/2/b");
+        assert_eq!(json_pointer_from_name("a[1]"), "/a/1");
+        assert_eq!(json_pointer_from_name("a[1][2]"), "/a/1/2");
+        assert_eq!(json_pointer_from_name("m.a[1][2].b"), "/m/a/1/2/b");
     }
 
     #[test]
@@ -185,15 +191,15 @@ mod tests {
         // RFC 6901 gives `~` and `/` meaning inside a token, and FMI puts no
         // such restriction on a variable name, so a name carrying either has
         // to survive the derivation rather than silently address elsewhere.
-        assert_eq!(pointer_from_name("a/b"), "/a~1b");
-        assert_eq!(pointer_from_name("a~b"), "/a~0b");
-        assert_eq!(pointer_from_name("a~/b"), "/a~0~1b");
+        assert_eq!(json_pointer_from_name("a/b"), "/a~1b");
+        assert_eq!(json_pointer_from_name("a~b"), "/a~0b");
+        assert_eq!(json_pointer_from_name("a~/b"), "/a~0~1b");
     }
 
     #[test]
-    fn element_pointers_walk_one_field_across_the_array() {
+    fn one_pointer_per_element_walks_one_field_across_the_array() {
         assert_eq!(
-            element_pointers("/detections", 3, "range"),
+            json_pointers_for_array("/detections", 3, "range"),
             [
                 "/detections/0/range",
                 "/detections/1/range",
@@ -201,7 +207,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            element_pointers("/detections", 0, "range"),
+            json_pointers_for_array("/detections", 0, "range"),
             [] as [String; 0]
         );
     }
@@ -221,7 +227,10 @@ mod tests {
         // The radar's case: a scan carrying two cars feeds a variable sized
         // for four, and the empty slots have to read as a clear road.
         let payload = json!({"detections": [{"range": 10.0}, {"range": 20.0}]});
-        let binding = binding(element_pointers("/detections", 4, "range"), json!(1e9));
+        let binding = binding(
+            json_pointers_for_array("/detections", 4, "range"),
+            json!(1e9),
+        );
         assert_eq!(
             binding.resolve(&payload),
             [&json!(10.0), &json!(20.0), &json!(1e9), &json!(1e9)]
