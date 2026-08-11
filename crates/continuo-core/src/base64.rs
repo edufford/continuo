@@ -1,15 +1,19 @@
 //! Base64, owned rather than depended on.
 //!
-//! An FMI Binary variable has no JSON spelling, so it travels as a base64
-//! string, and those bytes reach the world hash. That is the same argument
-//! that made the hash and the random stream owned implementations: a pinned
-//! crate version would become part of the fingerprint's definition, and the
-//! encoding is sixty lines.
+//! Bytes have no JSON spelling, so anything binary travels as a base64 string
+//! and those characters reach the world hash. That is the argument that
+//! already made [`hash`](crate::hash) and [`random`](crate::random) owned
+//! implementations: a pinned crate version would become part of the
+//! fingerprint's definition, and the encoding is sixty lines.
 //!
 //! Standard alphabet (RFC 4648 section 4), padded, no line breaks, and
 //! nothing optional about any of it. Decoding is strict for the same reason
 //! encoding is fixed: two spellings of one value would be two payloads for
 //! one state, and only one of them can be what a run hashed.
+//!
+//! The first user is an imported FMU's Binary variables, in `continuo-fmi`.
+//! PLAN.md's deferred large-payload work is the other, since a camera frame
+//! travels the same way for the same reason.
 
 use thiserror::Error;
 

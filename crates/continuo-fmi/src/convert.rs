@@ -17,10 +17,8 @@
 
 use std::ffi::CString;
 
-use continuo_core::CoreError;
+use continuo_core::{CoreError, base64};
 use serde_json::Value;
-
-use crate::base64;
 
 /// Fails naming the variable, the type it declares, and what it was handed.
 ///
