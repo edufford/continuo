@@ -17,14 +17,19 @@ use std::ffi::CString;
 use continuo_core::CoreError;
 use serde_json::Value;
 
-/// Fails naming the variable, what it is, and what it was handed.
+/// Fails naming the variable, the type it declares, and what it was handed.
 ///
 /// The variable name is the useful half: a mapping points at an FMU built
 /// elsewhere, so "which of the forty numbers was wrong" is the question, and
 /// the value alone does not answer it.
-fn mismatch(variable: &str, wanted: &str, value: &Value) -> CoreError {
+///
+/// `declared_type` is FMI's own spelling, `Int8` or `Float64`, so the message
+/// and `modelDescription.xml` say the same word.
+fn mismatch(variable: &str, declared_type: &str, value: &Value) -> CoreError {
     CoreError::ComponentFailure {
-        reason: format!("variable {variable:?} is {wanted}, and {value} is not a valid one"),
+        reason: format!(
+            "variable {variable:?} is declared {declared_type}, which cannot hold {value}"
+        ),
     }
 }
 
@@ -49,7 +54,7 @@ macro_rules! integer_conversions {
             pub fn $to(value: &Value, variable: &str) -> Result<$ty, CoreError> {
                 as_integer(value)
                     .and_then(|integer| <$ty>::try_from(integer).ok())
-                    .ok_or_else(|| mismatch(variable, concat!("an ", $fmi_name), value))
+                    .ok_or_else(|| mismatch(variable, $fmi_name, value))
             }
 
             #[doc = concat!("An FMI ", $fmi_name, " as a payload value.")]
@@ -77,7 +82,7 @@ integer_conversions! {
 pub fn to_f64(value: &Value, variable: &str) -> Result<f64, CoreError> {
     value
         .as_f64()
-        .ok_or_else(|| mismatch(variable, "a Float64", value))
+        .ok_or_else(|| mismatch(variable, "Float64", value))
 }
 
 /// A payload value as an FMI Float32.
@@ -95,7 +100,7 @@ pub fn to_f32(value: &Value, variable: &str) -> Result<f32, CoreError> {
     if narrow.is_finite() {
         Ok(narrow)
     } else {
-        Err(mismatch(variable, "a Float32", value))
+        Err(mismatch(variable, "Float32", value))
     }
 }
 
@@ -129,7 +134,7 @@ pub fn from_f32(value: f32, variable: &str) -> Result<Value, CoreError> {
 pub fn to_bool(value: &Value, variable: &str) -> Result<bool, CoreError> {
     value
         .as_bool()
-        .ok_or_else(|| mismatch(variable, "a Boolean", value))
+        .ok_or_else(|| mismatch(variable, "Boolean", value))
 }
 
 /// An FMI Boolean as a payload value.
@@ -146,7 +151,7 @@ pub fn from_bool(value: bool, _variable: &str) -> Result<Value, CoreError> {
 pub fn to_cstring(value: &Value, variable: &str) -> Result<CString, CoreError> {
     let text = value
         .as_str()
-        .ok_or_else(|| mismatch(variable, "a String", value))?;
+        .ok_or_else(|| mismatch(variable, "String", value))?;
 
     CString::new(text).map_err(|error| CoreError::ComponentFailure {
         reason: format!(
