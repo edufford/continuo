@@ -327,6 +327,33 @@ impl Component for FmuComponent {
         self.subscriptions.clone()
     }
 
+    /// An FMU is opaque to the per-tick hash, so it is covered in
+    /// output-hash mode: everything it publishes is hashed, and divergence
+    /// shows the first time a changed internal value reaches an output.
+    ///
+    /// State-hash mode is what PLAN.md's determinism rules anticipated for
+    /// FMUs that declare `canSerializeFMUState`, and all four vendored
+    /// fixtures do. Two things stop it, and both are upstream rather than
+    /// here. `fmi` 0.8.0 wraps no serialization call, and disables even
+    /// `get_fmu_state` with `#[cfg(false)]`; the raw bindings do declare
+    /// `fmi3SerializeFMUState`, but `Instance` keeps its library handle and
+    /// instance pointer private, so nothing outside that crate can reach
+    /// them. Not a matter of writing `unsafe`, which this workspace has none
+    /// of: it cannot be written at all without changing `fmi`.
+    ///
+    /// One design note for whoever picks this up, since it is not obvious
+    /// until you try. This method takes `&self` while every FMI state call
+    /// needs `&mut`, so the bytes would have to be captured during `step`
+    /// and cached, which the conductor's "after `step`, at most once" rule
+    /// makes safe.
+    // TODO(PLAN "Deferred"): an FMU that can serialize its state should join
+    // the hash directly, so divergence is caught when it happens rather than
+    // when it surfaces. Also wants a mapping override, for a vendor FMU
+    // whose serialization bytes are not deterministic.
+    fn state_bytes(&self) -> Option<Vec<u8>> {
+        None
+    }
+
     fn step(&mut self, ctx: &mut StepCtx) -> Result<SimTime, CoreError> {
         let now = ctx.now();
 
