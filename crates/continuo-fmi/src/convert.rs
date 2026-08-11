@@ -5,6 +5,9 @@
 //! Int8 handed 999 is a wiring mistake, and the run that hides it is worse
 //! than the run that stops.
 //!
+//! Named for the side they produce: `to_fmi_i32` takes a payload value into
+//! the FMU's type, and `from_fmi_i32` brings one back out.
+//!
 //! Integers never travel through `f64`. Above 2^53 that loses digits in
 //! silence, and `serde_json` carries big integers exactly (the workspace
 //! turns on `arbitrary_precision`), so the round trip is lossless only if the
@@ -66,20 +69,20 @@ macro_rules! integer_conversions {
 }
 
 integer_conversions! {
-    to_i8, from_i8, i8, "Int8";
-    to_i16, from_i16, i16, "Int16";
-    to_i32, from_i32, i32, "Int32";
-    to_i64, from_i64, i64, "Int64";
-    to_u8, from_u8, u8, "UInt8";
-    to_u16, from_u16, u16, "UInt16";
-    to_u32, from_u32, u32, "UInt32";
-    to_u64, from_u64, u64, "UInt64";
+    to_fmi_i8, from_fmi_i8, i8, "Int8";
+    to_fmi_i16, from_fmi_i16, i16, "Int16";
+    to_fmi_i32, from_fmi_i32, i32, "Int32";
+    to_fmi_i64, from_fmi_i64, i64, "Int64";
+    to_fmi_u8, from_fmi_u8, u8, "UInt8";
+    to_fmi_u16, from_fmi_u16, u16, "UInt16";
+    to_fmi_u32, from_fmi_u32, u32, "UInt32";
+    to_fmi_u64, from_fmi_u64, u64, "UInt64";
 }
 
 /// A payload value as an FMI Float64. Whole numbers are accepted, since JSON
 /// writes `3` and `3.0` for the same quantity and only the integer types care
 /// which.
-pub fn to_f64(value: &Value, variable: &str) -> Result<f64, CoreError> {
+pub fn to_fmi_f64(value: &Value, variable: &str) -> Result<f64, CoreError> {
     value
         .as_f64()
         .ok_or_else(|| mismatch(variable, "Float64", value))
@@ -95,8 +98,8 @@ pub fn to_f64(value: &Value, variable: &str) -> Result<f64, CoreError> {
 /// Narrowing is the only way to reach infinity here, because a payload
 /// cannot deliver one. See `a_payload_cannot_deliver_a_non_finite_float`,
 /// which pins that premise.
-pub fn to_f32(value: &Value, variable: &str) -> Result<f32, CoreError> {
-    let narrow = to_f64(value, variable)? as f32;
+pub fn to_fmi_f32(value: &Value, variable: &str) -> Result<f32, CoreError> {
+    let narrow = to_fmi_f64(value, variable)? as f32;
     if narrow.is_finite() {
         Ok(narrow)
     } else {
@@ -111,7 +114,7 @@ pub fn to_f32(value: &Value, variable: &str) -> Result<f32, CoreError> {
 /// as `null`, which decodes nowhere, so a diverging FMU would otherwise
 /// surface as a decode failure at some other component, at a later instant,
 /// with nothing pointing back at the model that produced it.
-pub fn from_f64(value: f64, variable: &str) -> Result<Value, CoreError> {
+pub fn from_fmi_f64(value: f64, variable: &str) -> Result<Value, CoreError> {
     if value.is_finite() {
         Ok(Value::from(value))
     } else {
@@ -122,8 +125,8 @@ pub fn from_f64(value: f64, variable: &str) -> Result<Value, CoreError> {
 }
 
 /// An FMI Float32 as a payload value, widened losslessly.
-pub fn from_f32(value: f32, variable: &str) -> Result<Value, CoreError> {
-    from_f64(f64::from(value), variable)
+pub fn from_fmi_f32(value: f32, variable: &str) -> Result<Value, CoreError> {
+    from_fmi_f64(f64::from(value), variable)
 }
 
 /// A payload value as an FMI Boolean.
@@ -131,14 +134,14 @@ pub fn from_f32(value: f32, variable: &str) -> Result<Value, CoreError> {
 /// A flag rather than a number, so `1` is not `true` here. FMI declares a
 /// Boolean where it means one, `fmi3Boolean` is a C `bool`, and JSON has the
 /// literals, so nothing along the way needs an integer to stand in.
-pub fn to_bool(value: &Value, variable: &str) -> Result<bool, CoreError> {
+pub fn to_fmi_bool(value: &Value, variable: &str) -> Result<bool, CoreError> {
     value
         .as_bool()
         .ok_or_else(|| mismatch(variable, "Boolean", value))
 }
 
 /// An FMI Boolean as a payload value.
-pub fn from_bool(value: bool, _variable: &str) -> Result<Value, CoreError> {
+pub fn from_fmi_bool(value: bool, _variable: &str) -> Result<Value, CoreError> {
     Ok(Value::Bool(value))
 }
 
@@ -148,7 +151,7 @@ pub fn from_bool(value: bool, _variable: &str) -> Result<Value, CoreError> {
 /// it on would hand the FMU a silently shortened value. JSON can carry a NUL
 /// as an escape, so this is reachable from ordinary data rather than only
 /// from a mistake.
-pub fn to_cstring(value: &Value, variable: &str) -> Result<CString, CoreError> {
+pub fn to_fmi_string(value: &Value, variable: &str) -> Result<CString, CoreError> {
     let text = value
         .as_str()
         .ok_or_else(|| mismatch(variable, "String", value))?;
@@ -168,7 +171,7 @@ pub fn to_cstring(value: &Value, variable: &str) -> Result<CString, CoreError> {
 /// so this is an FMU breaking the standard rather than a limitation, and it
 /// is worth saying so out loud instead of substituting replacement
 /// characters.
-pub fn from_cstring(value: &CString, variable: &str) -> Result<Value, CoreError> {
+pub fn from_fmi_string(value: &CString, variable: &str) -> Result<Value, CoreError> {
     value
         .to_str()
         .map(|text| Value::String(text.to_string()))
@@ -193,39 +196,39 @@ mod tests {
         let big = 9_007_199_254_740_993_i64;
         assert_eq!(big as f64 as i64, 9_007_199_254_740_992, "premise");
 
-        let out = from_i64(to_i64(&json!(big), "v").unwrap(), "v").unwrap();
+        let out = from_fmi_i64(to_fmi_i64(&json!(big), "v").unwrap(), "v").unwrap();
         assert_eq!(out, json!(big));
         assert_eq!(out.to_string(), big.to_string());
 
         let huge = u64::MAX;
-        assert_eq!(to_u64(&json!(huge), "v").unwrap(), huge);
+        assert_eq!(to_fmi_u64(&json!(huge), "v").unwrap(), huge);
     }
 
     #[test]
     fn a_value_outside_a_variables_range_halts_naming_the_variable_and_type() {
-        let reason = to_i8(&json!(999), "gear").unwrap_err().to_string();
+        let reason = to_fmi_i8(&json!(999), "gear").unwrap_err().to_string();
         assert!(reason.contains("gear"), "{reason}");
         assert!(reason.contains("Int8"), "{reason}");
         assert!(reason.contains("999"), "{reason}");
 
-        assert!(to_u8(&json!(-1), "v").is_err());
-        assert!(to_i32(&json!(i64::from(i32::MAX) + 1), "v").is_err());
-        assert!(to_u64(&json!(-1), "v").is_err());
+        assert!(to_fmi_u8(&json!(-1), "v").is_err());
+        assert!(to_fmi_i32(&json!(i64::from(i32::MAX) + 1), "v").is_err());
+        assert!(to_fmi_u64(&json!(-1), "v").is_err());
     }
 
     #[test]
     fn a_fractional_number_is_not_an_integer() {
         // `3.0` fed to an Int32 is a type mismatch rather than a rounding
         // question, so nothing here has to decide which way to round.
-        assert!(to_i32(&json!(3.0), "v").is_err());
-        assert!(to_i32(&json!(2.5), "v").is_err());
-        assert_eq!(to_i32(&json!(3), "v").unwrap(), 3);
+        assert!(to_fmi_i32(&json!(3.0), "v").is_err());
+        assert!(to_fmi_i32(&json!(2.5), "v").is_err());
+        assert_eq!(to_fmi_i32(&json!(3), "v").unwrap(), 3);
     }
 
     #[test]
     fn a_float_takes_a_whole_number_as_readily_as_a_fractional_one() {
-        assert_eq!(to_f64(&json!(3), "v").unwrap(), 3.0);
-        assert_eq!(to_f64(&json!(3.5), "v").unwrap(), 3.5);
+        assert_eq!(to_fmi_f64(&json!(3), "v").unwrap(), 3.0);
+        assert_eq!(to_fmi_f64(&json!(3.5), "v").unwrap(), 3.5);
     }
 
     #[test]
@@ -233,71 +236,74 @@ mod tests {
         // Narrowing 0.1 changes digits, which is what asking for a Float32
         // means. Narrowing 1e300 produces infinity, which is a different
         // number rather than a rounder one.
-        assert_eq!(to_f32(&json!(0.1), "v").unwrap(), 0.1_f32);
-        assert!(to_f32(&json!(1e300), "v").is_err());
-        assert!(to_f32(&json!(-1e300), "v").is_err());
+        assert_eq!(to_fmi_f32(&json!(0.1), "v").unwrap(), 0.1_f32);
+        assert!(to_fmi_f32(&json!(1e300), "v").is_err());
+        assert!(to_fmi_f32(&json!(-1e300), "v").is_err());
     }
 
     #[test]
     fn a_payload_cannot_deliver_a_non_finite_float() {
-        // What `to_f32` rests on, and a property of `serde_json` rather than
+        // What `to_fmi_f32` rests on, and a property of `serde_json` rather than
         // of anything here, so it is pinned rather than assumed. With the
         // workspace's `arbitrary_precision`, a number too large for an f64
         // stays exact in the payload and refuses to narrow, and a non-finite
         // float has no JSON spelling to arrive as in the first place.
         let parsed: Value = serde_json::from_str("1e400").unwrap();
         assert!(parsed.is_number(), "kept as a number: {parsed}");
-        assert!(to_f64(&parsed, "v").is_err());
+        assert!(to_fmi_f64(&parsed, "v").is_err());
 
         assert_eq!(json!(f64::INFINITY), Value::Null);
         assert_eq!(json!(f64::NAN), Value::Null);
-        assert!(to_f64(&Value::Null, "v").is_err());
+        assert!(to_fmi_f64(&Value::Null, "v").is_err());
     }
 
     #[test]
     fn a_non_finite_output_halts_naming_the_variable() {
-        let reason = from_f64(f64::NAN, "height").unwrap_err().to_string();
+        let reason = from_fmi_f64(f64::NAN, "height").unwrap_err().to_string();
         assert!(reason.contains("height"), "{reason}");
-        assert!(from_f64(f64::INFINITY, "v").is_err());
-        assert!(from_f32(f32::NEG_INFINITY, "v").is_err());
+        assert!(from_fmi_f64(f64::INFINITY, "v").is_err());
+        assert!(from_fmi_f32(f32::NEG_INFINITY, "v").is_err());
     }
 
     #[test]
     fn a_boolean_is_a_flag_and_not_a_number() {
-        assert!(to_bool(&json!(true), "v").unwrap());
-        assert!(to_bool(&json!(1), "v").is_err());
-        assert!(to_bool(&json!("true"), "v").is_err());
-        assert_eq!(from_bool(false, "v").unwrap(), json!(false));
+        assert!(to_fmi_bool(&json!(true), "v").unwrap());
+        assert!(to_fmi_bool(&json!(1), "v").is_err());
+        assert!(to_fmi_bool(&json!("true"), "v").is_err());
+        assert_eq!(from_fmi_bool(false, "v").unwrap(), json!(false));
     }
 
     #[test]
     fn a_string_containing_an_interior_nul_halts_rather_than_truncating() {
-        let reason = to_cstring(&json!("ab\u{0}cd"), "label")
+        let reason = to_fmi_string(&json!("ab\u{0}cd"), "label")
             .unwrap_err()
             .to_string();
         assert!(reason.contains("label"), "{reason}");
         assert!(reason.contains('2'), "{reason}");
 
-        assert_eq!(to_cstring(&json!("abcd"), "v").unwrap().as_bytes(), b"abcd");
+        assert_eq!(
+            to_fmi_string(&json!("abcd"), "v").unwrap().as_bytes(),
+            b"abcd"
+        );
     }
 
     #[test]
     fn a_non_utf8_string_from_an_fmu_halts_naming_the_variable() {
         let invalid = CString::new(vec![0xff, 0xfe]).unwrap();
-        let reason = from_cstring(&invalid, "label").unwrap_err().to_string();
+        let reason = from_fmi_string(&invalid, "label").unwrap_err().to_string();
         assert!(reason.contains("label"), "{reason}");
         assert!(reason.contains("UTF-8"), "{reason}");
 
         let valid = CString::new("hello").unwrap();
-        assert_eq!(from_cstring(&valid, "v").unwrap(), json!("hello"));
+        assert_eq!(from_fmi_string(&valid, "v").unwrap(), json!("hello"));
     }
 
     #[test]
     fn an_integer_output_publishes_as_an_integer() {
         // `3` and `3.0` are different bytes and so different hashes, and the
         // world hash is taken over published bytes.
-        assert_eq!(from_i32(3, "v").unwrap().to_string(), "3");
-        assert_eq!(from_u8(3, "v").unwrap().to_string(), "3");
-        assert_eq!(from_f64(3.0, "v").unwrap().to_string(), "3.0");
+        assert_eq!(from_fmi_i32(3, "v").unwrap().to_string(), "3");
+        assert_eq!(from_fmi_u8(3, "v").unwrap().to_string(), "3");
+        assert_eq!(from_fmi_f64(3.0, "v").unwrap().to_string(), "3.0");
     }
 }
