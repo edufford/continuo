@@ -6,8 +6,8 @@
 //! implementations: a pinned crate version would become part of the
 //! fingerprint's definition, and the encoding is sixty lines.
 //!
-//! Standard alphabet (RFC 4648 section 4), padded, no line breaks, and
-//! nothing optional about any of it. Decoding is strict for the same reason
+//! Standard alphabet, padded, no line breaks, and nothing optional about any
+//! of it: RFC 4648 section 4, <https://www.rfc-editor.org/rfc/rfc4648>. Decoding is strict for the same reason
 //! encoding is fixed: two spellings of one value would be two payloads for
 //! one state, and only one of them can be what a run hashed.
 //!
@@ -39,7 +39,8 @@ pub enum Base64Error {
     NonCanonical { position: usize },
 }
 
-/// Encodes bytes as canonical base64.
+/// Encodes bytes as canonical base64, per RFC 4648 section 4
+/// (<https://www.rfc-editor.org/rfc/rfc4648#section-4>).
 pub fn encode(bytes: &[u8]) -> String {
     let mut encoded = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for group in bytes.chunks(3) {
@@ -135,7 +136,8 @@ fn sextet(byte: u8) -> Option<u8> {
 mod tests {
     use super::*;
 
-    /// RFC 4648 section 10, which is what "canonical" means here.
+    /// The standard's own test vectors, RFC 4648 section 10, which is what
+    /// "canonical" means here.
     const VECTORS: [(&str, &str); 7] = [
         ("", ""),
         ("f", "Zg=="),
