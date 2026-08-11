@@ -779,11 +779,30 @@ it got there, including the roads not taken.
     bridge it** with no `LogTracer::init()`. That is what makes a model's own
     diagnostics visible, and it turned an opaque "Error" into the sentence
     that identified the resource-path bug below.
-  - **FMU state cannot be serialized through `fmi` 0.8.0**, so an imported FMU
-    is covered in output-hash mode rather than joining the tick hash directly.
-    The crate wraps no serialization call and disables `get_fmu_state` with
-    `#[cfg(false)]`, and `Instance` keeps its library handle and instance
-    pointer private, so the raw bindings cannot be reached either.
+  - **Serialized FMU state is not a fingerprint**, so an imported FMU is
+    covered in output-hash mode rather than joining the tick hash directly.
+    This reverses what the plan assumed, and the flag it keyed on is the
+    wrong question. The reference FMUs do implement serialization, as a
+    `memcpy` of their whole `ModelInstance` struct, and that struct holds an
+    instance name pointer, a `componentEnvironment`, and five callback
+    pointers including the logger, which points back into the importer's own
+    binary. Those are addresses: they differ run to run on one machine, and
+    the padding between fields is never written. Hashing them would move the
+    world hash every run.
+    - So `canSerializeFMUState` promises an FMU can save and restore itself,
+      which is exactly what the deferred snapshot and restore work needs, and
+      promises nothing about whether the bytes identify a state. Reading it
+      as the trigger for state-hash mode was the mistake.
+    - The plan's escape hatch had the polarity backwards too. It expected a
+      mapping override forcing output-hash for the odd vendor FMU whose bytes
+      are not deterministic. The reference FMUs are the standard's own
+      examples and the ones other implementations copy, so the unusable case
+      is the ordinary one, and this wants an opt-in.
+    - A second reason sits behind the first and would matter only if it were
+      solved: `fmi` 0.8.0 wraps no serialization call and disables
+      `get_fmu_state` with `#[cfg(false)]`, and `Instance` keeps its library
+      handle and instance pointer private, so the raw bindings cannot be
+      reached either.
   - **`Fmi3Import::canonical_resource_path_string` omits the trailing
     separator FMI 3.0 requires**, so an FMU that appends its own file name
     builds `resourcesy.txt` and cannot open it. The Resource fixture exists to

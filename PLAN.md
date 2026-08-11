@@ -178,10 +178,17 @@ Baked in from the start, because they are hard to retrofit:
 - Per-tick canonical **state hash** (e.g. xxhash over serialized state) as the
   determinism check. Two runs with the same seed must produce identical hash
   streams; this becomes a CI test.
-- FMU caveat: FMUs are black-box native code. If an FMU supports
-  `SerializeFMUState`, its state joins the hash; otherwise hash its outputs and
-  trust the vendor for internal determinism. Hashing supports both modes per
-  component.
+- FMU caveat: FMUs are black-box native code, and **hashed on their outputs**.
+  Hashing supports both modes per component, so an FMU could join in
+  state-hash mode, but `canSerializeFMUState` is not the signal for it.
+  Measured against Modelica's own reference FMUs, whose implementation other
+  FMUs copy: serialization there is a `memcpy` of the whole instance struct,
+  pointers and padding included, so the bytes differ between runs of one
+  binary on one machine. That flag promises save and restore, which is what
+  snapshot needs, and promises nothing about identifying a state. An FMU
+  whose serialization is a stable function of its state can opt in; the
+  default is to hash outputs and trust the vendor for internal determinism.
+  DECISIONS.md, 2026-08-11, has the measurement.
 - Cross-machine float determinism holds only for same architecture + build flags
   (no fast-math). A known constraint of milestone 7, not a bug.
 

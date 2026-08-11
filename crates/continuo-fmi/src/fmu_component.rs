@@ -331,25 +331,41 @@ impl Component for FmuComponent {
     /// output-hash mode: everything it publishes is hashed, and divergence
     /// shows the first time a changed internal value reaches an output.
     ///
-    /// State-hash mode is what PLAN.md's determinism rules anticipated for
-    /// FMUs that declare `canSerializeFMUState`, and all four vendored
-    /// fixtures do. Two things stop it, and both are upstream rather than
-    /// here. `fmi` 0.8.0 wraps no serialization call, and disables even
-    /// `get_fmu_state` with `#[cfg(false)]`; the raw bindings do declare
-    /// `fmi3SerializeFMUState`, but `Instance` keeps its library handle and
-    /// instance pointer private, so nothing outside that crate can reach
-    /// them. Not a matter of writing `unsafe`, which this workspace has none
-    /// of: it cannot be written at all without changing `fmi`.
+    /// PLAN.md's determinism rules anticipated state-hash mode for an FMU
+    /// declaring `canSerializeFMUState`, and all four vendored fixtures
+    /// declare it. That flag turns out to be the wrong question, which is
+    /// the more interesting of the two reasons this returns `None`.
     ///
-    /// One design note for whoever picks this up, since it is not obvious
-    /// until you try. This method takes `&self` while every FMI state call
-    /// needs `&mut`, so the bytes would have to be captured during `step`
-    /// and cached, which the conductor's "after `step`, at most once" rule
-    /// makes safe.
-    // TODO(PLAN "Deferred"): an FMU that can serialize its state should join
-    // the hash directly, so divergence is caught when it happens rather than
-    // when it surfaces. Also wants a mapping override, for a vendor FMU
-    // whose serialization bytes are not deterministic.
+    /// **Serialized FMU state is not a fingerprint.** The reference FMUs do
+    /// implement it, as a `memcpy` of their whole `ModelInstance` struct,
+    /// and that struct holds an instance name pointer, a
+    /// `componentEnvironment`, and five callback pointers, the logger among
+    /// them, which points back into this binary. Those are addresses. They
+    /// differ between runs of the same program, never mind between
+    /// platforms, and the padding between fields is never written at all.
+    /// Hashing them would move the world hash every run. So
+    /// `canSerializeFMUState` promises an FMU can save and restore itself,
+    /// which is what snapshot and restore need, and promises nothing about
+    /// whether the bytes identify a state.
+    ///
+    /// The second reason is upstream, and would matter only if the first
+    /// were solved: `fmi` 0.8.0 wraps no serialization call and disables
+    /// `get_fmu_state` with `#[cfg(false)]`, and `Instance` keeps its
+    /// library handle and instance pointer private, so the raw bindings
+    /// cannot be reached either.
+    ///
+    /// One design note, since it is not obvious until you try. This method
+    /// takes `&self`, while every call on an FMU instance takes `&mut self`,
+    /// plain getters included: a get in FMI can run model code to compute an
+    /// output, and taking a state allocates. So the bytes would have to be
+    /// captured during `step` and cached. That costs nothing over
+    /// serializing on demand, since the conductor asks every stepped
+    /// component every step, so `&self` is not the obstacle either.
+    // TODO(PLAN "Deferred"): an FMU whose serialization is a stable function
+    // of its state could join the hash directly, so divergence is caught when
+    // it happens rather than when it surfaces. Wants a mapping opt-in rather
+    // than the opt-out the plan expected, since the reference FMUs show the
+    // unusable case is the ordinary one.
     fn state_bytes(&self) -> Option<Vec<u8>> {
         None
     }
