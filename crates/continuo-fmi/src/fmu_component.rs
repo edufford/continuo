@@ -273,16 +273,20 @@ impl FmuComponent {
                 })?;
         }
 
-        // Return a component whose instance drops before the directory its
-        // library was loaded from.
+        // Return a component sized by its structural parameters and ready to
+        // initialize, which it does on its first step.
         Ok(component)
     }
 
-    /// Writes name-and-value pairs from the mapping straight into the FMU.
+    /// Writes values the mapping wrote out straight into the FMU.
     ///
-    /// The values are the mapping's own rather than a message's, so there is
-    /// no payload to resolve against and no pointer involved: each is written
-    /// whole, as an array if the variable is one.
+    /// The mapping supplies these itself rather than binding them to a
+    /// message, so there is no payload to resolve and no pointer involved.
+    /// Each variable is written whole, as an array where it is one.
+    ///
+    /// Used twice, in the two modes the standard allows: structural
+    /// parameters during configuration, and everything else during
+    /// initialization.
     fn set_initial_values(
         &mut self,
         initial_vals: &[(ResolvedVariable, Value)],
@@ -508,9 +512,8 @@ fn set_input_var(
 
 /// Writes one variable, whatever its shape.
 ///
-/// An array is one call with `nValues = N` against a single value reference,
-/// which is what the C API's separate reference and value counts are for, so
-/// nothing here treats an array as a special case.
+/// A variable holding many values is still one call into the FMU, carrying
+/// all of them at once, so an array is not a special case here.
 fn set_values(
     instance: &mut InstanceCS,
     id: &ComponentId,
@@ -631,12 +634,12 @@ fn get_output_var(
             let sizes = instance
                 .get_binary(&references, &mut slices)
                 .map_err(|source| failed(id, name, "get_binary", &source))?;
+            // A size of zero is a length rather than a failure: an FMU may
+            // hold an empty Binary, which encodes as the empty string and
+            // decodes back to no bytes.
             let converted = buffers
                 .iter()
                 .zip(sizes.iter().chain(std::iter::repeat(&0)))
-                // Zero is a length rather than a failure: an FMU may hold an
-                // empty Binary, and that encodes as the empty string, which
-                // decodes back to no bytes.
                 .map(|(buffer, size)| convert::from_fmi_binary(&buffer[..*size], name))
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(variable.shape(converted))
@@ -815,8 +818,13 @@ impl ResolvedVariable {
             return values.into_iter().next().unwrap_or(Value::Null);
         }
 
-        // Fold from the innermost dimension outward, chunking the flat list
-        // each time, which is what row-major order means.
+        // Build the nesting from the inside out. Each pass takes the current
+        // flat list and groups it into arrays of one dimension's size, so a
+        // 2 by 3 matrix goes from six values to two arrays of three. The
+        // outermost dimension is skipped because the return wraps it.
+        //
+        // Innermost first is what makes this row-major: the last index is the
+        // one whose neighbours are adjacent in the flat list.
         let mut level = values;
         for size in self.dimensions.iter().skip(1).rev() {
             level = level
