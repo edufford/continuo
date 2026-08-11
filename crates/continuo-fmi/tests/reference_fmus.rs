@@ -38,21 +38,25 @@ fn show_fmu_logs() {
         .ok();
 }
 
-/// Steps a component once and returns what it published, keyed by key.
-fn step(component: &mut FmuComponent, now: SimTime, inbox: Vec<Message>) -> Vec<(String, Value)> {
+/// One message a step published, with its payload decoded.
+struct Published {
+    key: String,
+    payload: Value,
+}
+
+/// Steps a component once and returns what it published.
+fn step(component: &mut FmuComponent, now: SimTime, inbox: Vec<Message>) -> Vec<Published> {
     show_fmu_logs();
     let mut ctx = StepCtx::new(now, None, WORLD, 0, inbox);
     component.step(&mut ctx).expect("step");
 
-    // Return each published payload decoded, since what matters is the value
+    // Return each payload decoded, since what matters to a test is the value
     // rather than the bytes.
     ctx.take_outbox()
         .into_iter()
-        .map(|(key, payload)| {
-            (
-                key.as_str().to_string(),
-                serde_json::from_slice(&payload).expect("published payload decodes"),
-            )
+        .map(|(key, payload)| Published {
+            key: key.as_str().to_string(),
+            payload: serde_json::from_slice(&payload).expect("published payload decodes"),
         })
         .collect()
 }
@@ -77,15 +81,17 @@ fn a_reference_fmu_loads_instantiates_and_steps() {
     // The first step initializes and publishes what the FMU starts holding,
     // which for a ball is the height it was dropped from.
     let published = step(&mut ball, SimTime::ZERO, Vec::new());
-    let start = published[0].1["h"].as_f64().unwrap();
-    assert_eq!(published[0].0, "continuo/test/ball");
+    let start = published[0].payload["h"].as_f64().unwrap();
+    assert_eq!(published[0].key, "continuo/test/ball");
     assert!(start > 0.9, "starts near 1 m: {start}");
 
     // Then it falls, which is the whole of what this fixture does.
     let mut previous = start;
     for tick in 1..40 {
         let now = SimTime::from_millis(tick * 10);
-        let height = step(&mut ball, now, Vec::new())[0].1["h"].as_f64().unwrap();
+        let height = step(&mut ball, now, Vec::new())[0].payload["h"]
+            .as_f64()
+            .unwrap();
         assert!(height < previous, "still falling at {now}: {height}");
         previous = height;
     }
@@ -113,8 +119,11 @@ fn inputs_reach_the_fmu_and_outputs_carry_them_back() {
     );
 
     assert_eq!(published.len(), 1);
-    assert_eq!(published[0].0, "continuo/test/out");
-    assert_eq!(published[0].1["Float64_continuous_output"], json!(7.25));
+    assert_eq!(published[0].key, "continuo/test/out");
+    assert_eq!(
+        published[0].payload["Float64_continuous_output"],
+        json!(7.25)
+    );
 }
 
 #[test]
@@ -136,7 +145,7 @@ fn an_input_set_during_initialization_survives_to_the_first_output() {
         vec![message("in", json!({"value": 3.5}))],
     );
     assert_eq!(
-        published[0].1["Float64_continuous_output"],
+        published[0].payload["Float64_continuous_output"],
         json!(3.5),
         "a value set during initialization reached the first output"
     );
@@ -155,8 +164,8 @@ fn outputs_route_to_their_declared_keys() {
         FmuComponent::new("feedthrough", fixture_path("Feedthrough"), mapping).expect("build");
     let published = step(&mut fmu, SimTime::ZERO, Vec::new());
     assert_eq!(published.len(), 2);
-    assert_eq!(published[0].0, "continuo/test/a");
-    assert_eq!(published[1].0, "continuo/test/b");
+    assert_eq!(published[0].key, "continuo/test/a");
+    assert_eq!(published[1].key, "continuo/test/b");
 
     let mut mapping = empty_mapping(100);
     mapping.outputs = vec![
@@ -167,8 +176,8 @@ fn outputs_route_to_their_declared_keys() {
         FmuComponent::new("feedthrough", fixture_path("Feedthrough"), mapping).expect("build");
     let published = step(&mut fmu, SimTime::ZERO, Vec::new());
     assert_eq!(published.len(), 1, "one key, one message");
-    assert!(published[0].1["position"]["x"].is_number());
-    assert!(published[0].1["position"]["y"].is_number());
+    assert!(published[0].payload["position"]["x"].is_number());
+    assert!(published[0].payload["position"]["y"].is_number());
 }
 
 #[test]
@@ -230,7 +239,11 @@ fn an_fmu_reads_its_own_resource_files() {
     let published = step(&mut fmu, SimTime::ZERO, Vec::new());
     // 97 is the character `a`, which is what `resources/y.txt` holds, and the
     // file says so in the same line.
-    assert_eq!(published[0].1["y"], json!(97), "read from resources/y.txt");
+    assert_eq!(
+        published[0].payload["y"],
+        json!(97),
+        "read from resources/y.txt"
+    );
 }
 
 #[test]
@@ -270,7 +283,10 @@ fn a_missing_message_holds_the_previous_value() {
         vec![message("in", json!({"value": 9.0}))],
     );
     let published = step(&mut fmu, SimTime::from_millis(100), Vec::new());
-    assert_eq!(published[0].1["Float64_continuous_output"], json!(9.0));
+    assert_eq!(
+        published[0].payload["Float64_continuous_output"],
+        json!(9.0)
+    );
 }
 
 #[test]
@@ -293,7 +309,10 @@ fn only_the_newest_message_on_a_key_is_applied() {
             message("in", json!({"value": 2.0})),
         ],
     );
-    assert_eq!(published[0].1["Float64_continuous_output"], json!(2.0));
+    assert_eq!(
+        published[0].payload["Float64_continuous_output"],
+        json!(2.0)
+    );
 }
 
 #[test]
@@ -307,7 +326,7 @@ fn two_identical_fmu_runs_publish_identically() {
         (0..50)
             .map(|tick| {
                 let now = SimTime::from_millis(tick * 10);
-                step(&mut ball, now, Vec::new())[0].1.to_string()
+                step(&mut ball, now, Vec::new())[0].payload.to_string()
             })
             .collect::<Vec<_>>()
     };
@@ -329,7 +348,9 @@ fn an_fmu_handles_its_own_events_when_event_mode_is_off() {
     let heights: Vec<f64> = (0..100)
         .map(|tick| {
             let now = SimTime::from_millis(tick * 10);
-            step(&mut ball, now, Vec::new())[0].1["h"].as_f64().unwrap()
+            step(&mut ball, now, Vec::new())[0].payload["h"]
+                .as_f64()
+                .unwrap()
         })
         .collect();
 
@@ -409,7 +430,7 @@ fn an_array_sized_by_a_structural_parameter_binds_at_its_declared_start() {
         vec![message("u", json!({"u": [1.0, 2.0, 3.0]}))],
     );
     assert_eq!(
-        published[0].1["y"],
+        published[0].payload["y"],
         json!([1.0, 2.0, 3.0]),
         "with D the identity, y is u, three values wide"
     );
@@ -433,7 +454,7 @@ fn a_structural_parameter_set_at_construction_resizes_its_arrays() {
         vec![message("u", json!({"u": [4.0, 5.0]}))],
     );
     assert_eq!(
-        published[0].1["y"],
+        published[0].payload["y"],
         json!([4.0, 5.0]),
         "every array resized together with the parameter that sizes them"
     );
@@ -470,13 +491,13 @@ fn a_matrix_binds_row_major() {
                 .with_pointers(json_pointers_for_dimensions("/u", &[2])),
         ];
         let mut fmu = FmuComponent::new("ss", fixture_path("StateSpace"), mapping).expect("build");
-        step(
+
+        let published = step(
             &mut fmu,
             SimTime::ZERO,
             vec![message("u", json!({"u": [3.0, 7.0]}))],
-        )[0]
-        .1["y"]
-            .clone()
+        );
+        published[0].payload["y"].clone()
     };
 
     // Row-major means the outer array is the first index, so this D takes the
@@ -497,6 +518,10 @@ fn an_array_output_publishes_as_an_array() {
     let mut fmu = FmuComponent::new("ss", fixture_path("StateSpace"), mapping).expect("build");
 
     let published = step(&mut fmu, SimTime::ZERO, Vec::new());
-    assert!(published[0].1["y"].is_array(), "{}", published[0].1);
-    assert_eq!(published[0].1["y"].as_array().unwrap().len(), 3);
+    assert!(
+        published[0].payload["y"].is_array(),
+        "{}",
+        published[0].payload
+    );
+    assert_eq!(published[0].payload["y"].as_array().unwrap().len(), 3);
 }
