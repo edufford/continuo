@@ -79,7 +79,7 @@ impl FmuComponent {
         mapping: FmuMapping,
     ) -> Result<Self, FmuConstructionError> {
         let fmu_path = fmu_path.as_ref();
-        let id = ComponentId::new(id).map_err(FmuConstructionError::Id)?;
+        let id = ComponentId::new(id)?;
 
         let import: Fmi3Import =
             fmi::import::from_path(fmu_path).map_err(|source| FmuConstructionError::Import {

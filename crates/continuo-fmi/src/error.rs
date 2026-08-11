@@ -46,9 +46,17 @@ pub enum FmuConstructionError {
         available: Vec<String>,
     },
 
-    /// The component id is not a legal one.
-    #[error("{0}")]
-    Id(#[source] continuo_core::CoreError),
+    /// The id this component would register under is not a legal one: empty,
+    /// or carrying a `/` or a wildcard.
+    ///
+    /// Forwarded rather than restated, because [`ComponentId`] owns that rule
+    /// and its message already names the offending id. `transparent` passes
+    /// both the text and the source through, so a caller printing the chain
+    /// does not see one failure written out twice.
+    ///
+    /// [`ComponentId`]: continuo_core::ComponentId
+    #[error(transparent)]
+    Id(#[from] continuo_core::CoreError),
 
     /// The mapping's period does not land on the FMU's own step size.
     ///
