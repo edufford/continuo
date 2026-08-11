@@ -220,13 +220,17 @@ fn an_fmu_reads_its_own_resource_files() {
     // <https://github.com/jondo2010/rust-fmi/blob/v0.8.0/fmi/src/fmi3/import.rs#L66-L76>
     //
     // Kept rather than deleted: it is the only test that would notice, and
-    // running it is how we will know the fix landed.
+    // running it is how we will know a fix landed. Verified against a patched
+    // `fmi` that appends the separator, where this passes and the rest of the
+    // suite is unchanged, so nothing here is waiting on a guess.
     let mut mapping = empty_mapping(1000);
     mapping.outputs = vec![OutputBinding::new("y", key("resource"))];
     let mut fmu = FmuComponent::new("resource", fixture_path("Resource"), mapping).expect("build");
 
     let published = step(&mut fmu, SimTime::ZERO, Vec::new());
-    assert_eq!(published[0].1["y"], json!(1), "read from resources/y.txt");
+    // 97 is the character `a`, which is what `resources/y.txt` holds, and the
+    // file says so in the same line.
+    assert_eq!(published[0].1["y"], json!(97), "read from resources/y.txt");
 }
 
 #[test]
