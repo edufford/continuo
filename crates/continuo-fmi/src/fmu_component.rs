@@ -336,17 +336,33 @@ impl Component for FmuComponent {
     /// declare it. That flag turns out to be the wrong question, which is
     /// the more interesting of the two reasons this returns `None`.
     ///
-    /// **Serialized FMU state is not a fingerprint.** The reference FMUs do
-    /// implement it, as a `memcpy` of their whole `ModelInstance` struct,
-    /// and that struct holds an instance name pointer, a
-    /// `componentEnvironment`, and five callback pointers, the logger among
-    /// them, which points back into this binary. Those are addresses. They
-    /// differ between runs of the same program, never mind between
-    /// platforms, and the padding between fields is never written at all.
-    /// Hashing them would move the world hash every run. So
-    /// `canSerializeFMUState` promises an FMU can save and restore itself,
-    /// which is what snapshot and restore need, and promises nothing about
-    /// whether the bytes identify a state.
+    /// **Nothing promises that serialized state is a fingerprint.** FMI 3.0
+    /// documents the flag as meaning those functions are supported, and
+    /// `fmi3SerializeFMUState` as copying the referenced data into a byte
+    /// vector. Neither says what the bytes contain, and nothing says equal
+    /// states serialize to equal bytes. So byte stability cannot be assumed
+    /// from any FMU, and can only be established one FMU at a time by
+    /// measuring, which is why it belongs in a mapping rather than keyed off
+    /// a capability.
+    ///
+    /// The reference FMUs show the pessimistic case is real, and they are
+    /// published by the same body that wrote the standard. Serialization
+    /// there is a `memcpy` of the whole `ModelInstance` struct, which holds
+    /// an instance
+    /// name pointer, a `componentEnvironment`, and five callback pointers
+    /// including the logger, which points back into this binary. Those are
+    /// addresses, differing between runs of one program on one machine, and
+    /// the padding between fields is never written.
+    ///
+    /// Restoring is unaffected, which is what makes the two capabilities
+    /// different rather than one of them broken. The standard's own example
+    /// for serializing is storing to a file and restarting from it later, so
+    /// surviving a process is the intent, and a conforming FMU deals with
+    /// its own pointers. How is its business: the reference FMUs copy field
+    /// by field when state is set back and skip every pointer, leaving the
+    /// live instance its own callbacks and names. So the surplus bytes are
+    /// ignored by the only consumer that reads them, and bytes nobody reads
+    /// are free to be anything.
     ///
     /// The second reason is upstream, and would matter only if the first
     /// were solved: `fmi` 0.8.0 wraps no serialization call and disables
@@ -363,9 +379,19 @@ impl Component for FmuComponent {
     /// component every step, so `&self` is not the obstacle either.
     // TODO(PLAN "Deferred"): an FMU whose serialization is a stable function
     // of its state could join the hash directly, so divergence is caught when
-    // it happens rather than when it surfaces. Wants a mapping opt-in rather
-    // than the opt-out the plan expected, since the reference FMUs show the
-    // unusable case is the ordinary one.
+    // it happens rather than when it surfaces. A mapping opt-in rather than
+    // the opt-out the plan expected, since stability is never promised and so
+    // has to be measured per FMU. It needs `fmi` to expose the state calls
+    // first: a flag alone cannot be honored while `Instance` keeps its
+    // library handle and pointer private.
+    //
+    // There is a middle option that needs no upstream change, if this is ever
+    // wanted sooner: hash every variable the FMU declares rather than only
+    // the mapped outputs, through the gets already here. Stronger than
+    // output-hash, since locals like StateSpace's `x` and `der(x)` are
+    // exposed and mapped nowhere, and weaker than state-hash, since anything
+    // genuinely hidden stays hidden. Costs one get per declared variable per
+    // step, and is not a pure observation on an FMU whose getters compute.
     fn state_bytes(&self) -> Option<Vec<u8>> {
         None
     }

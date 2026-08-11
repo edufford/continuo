@@ -779,20 +779,42 @@ it got there, including the roads not taken.
     bridge it** with no `LogTracer::init()`. That is what makes a model's own
     diagnostics visible, and it turned an opaque "Error" into the sentence
     that identified the resource-path bug below.
-  - **Serialized FMU state is not a fingerprint**, so an imported FMU is
-    covered in output-hash mode rather than joining the tick hash directly.
-    This reverses what the plan assumed, and the flag it keyed on is the
-    wrong question. The reference FMUs do implement serialization, as a
-    `memcpy` of their whole `ModelInstance` struct, and that struct holds an
-    instance name pointer, a `componentEnvironment`, and five callback
-    pointers including the logger, which points back into the importer's own
-    binary. Those are addresses: they differ run to run on one machine, and
-    the padding between fields is never written. Hashing them would move the
-    world hash every run.
-    - So `canSerializeFMUState` promises an FMU can save and restore itself,
-      which is exactly what the deferred snapshot and restore work needs, and
-      promises nothing about whether the bytes identify a state. Reading it
-      as the trigger for state-hash mode was the mistake.
+  - **Nothing promises that serialized FMU state is a fingerprint**, so an
+    imported FMU is covered in output-hash mode rather than joining the tick
+    hash directly. This reverses what the plan assumed, and the flag it keyed
+    on is the wrong question.
+    - FMI 3.0 documents `canSerializeFMUState` as meaning those three
+      functions are supported, and `fmi3SerializeFMUState` as copying the
+      referenced data into a byte vector. Neither says what the bytes
+      contain, and nothing in the standard says equal states serialize to
+      equal bytes. So byte stability cannot be assumed from any FMU: it can
+      only be established one FMU at a time, by measuring, which is why it
+      belongs in a mapping rather than keyed off a capability flag. The plan
+      expected an override forcing output-hash for the odd unusable FMU, and
+      it wants the opposite polarity.
+    - Our own FMU will not raise the question at all, which is worth knowing
+      before milestone 6's PR B assumes otherwise. `fmi-export` 0.3.0 leaves
+      every state function as `todo!()` and never emits
+      `canSerializeFMUState`, so the capability is absent, a conforming
+      importer never calls those functions, and the panic behind them is
+      unreachable.
+    - The reference FMUs show the pessimistic case is real, and they carry
+      some weight, being published by the same body that wrote the standard
+      and meant as what an importer tests against. Serialization there is a
+      `memcpy` of the whole `ModelInstance` struct, which holds an instance
+      name pointer,
+      a `componentEnvironment`, and five callback pointers including the
+      logger, which points back into the importer's own binary. Those are
+      addresses, differing run to run on one machine, and the padding between
+      fields is never written.
+    - Restoring is unaffected, which is what makes the two capabilities
+      different rather than one of them broken. The standard's own example
+      for serializing is storing to a file and restarting from it later, so
+      surviving a process is the intent, and a conforming FMU deals with its
+      own pointers. How is its business, and the reference FMUs copy field by
+      field when state is set back, skipping every pointer. So the surplus
+      bytes are ignored by the only consumer that reads them, and bytes
+      nobody reads are free to be anything.
     - The plan's escape hatch had the polarity backwards too. It expected a
       mapping override forcing output-hash for the odd vendor FMU whose bytes
       are not deterministic. The reference FMUs are the standard's own

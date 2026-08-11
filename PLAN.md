@@ -180,15 +180,18 @@ Baked in from the start, because they are hard to retrofit:
   streams; this becomes a CI test.
 - FMU caveat: FMUs are black-box native code, and **hashed on their outputs**.
   Hashing supports both modes per component, so an FMU could join in
-  state-hash mode, but `canSerializeFMUState` is not the signal for it.
-  Measured against Modelica's own reference FMUs, whose implementation other
-  FMUs copy: serialization there is a `memcpy` of the whole instance struct,
-  pointers and padding included, so the bytes differ between runs of one
-  binary on one machine. That flag promises save and restore, which is what
-  snapshot needs, and promises nothing about identifying a state. An FMU
-  whose serialization is a stable function of its state can opt in; the
-  default is to hash outputs and trust the vendor for internal determinism.
-  DECISIONS.md, 2026-08-11, has the measurement.
+  state-hash mode, but `canSerializeFMUState` is not the signal for it: the
+  standard defines it as meaning the serialization functions exist, and
+  promises nothing about what the bytes contain or that equal states produce
+  equal bytes. Byte stability can only be established one FMU at a time, by
+  measuring, so it is a per-mapping opt-in. The reference FMUs published by
+  the body that wrote the standard show the pessimistic case is real:
+  serialization there is a `memcpy` of the whole instance struct, pointers
+  and padding included, so the bytes differ between runs of one binary on one
+  machine. Restoring is unaffected, since those FMUs skip every pointer when
+  state is set back. The default stays hashing outputs and
+  trusting the vendor for internal determinism. DECISIONS.md, 2026-08-11, has
+  the measurement.
 - Cross-machine float determinism holds only for same architecture + build flags
   (no fast-math). A known constraint of milestone 7, not a bug.
 
