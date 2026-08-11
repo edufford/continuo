@@ -341,9 +341,17 @@ fn an_fmu_handles_its_own_events_when_event_mode_is_off() {
 /// parameters `m`, `n` and `r`, all declared with a start of 3.
 ///
 /// These tests drive the `D u` half, the direct feedthrough, because it shows
-/// on the first step and needs no state. The `C x` half is unreachable here:
-/// the fixture's own `model.c` writes `x[i] = x0[i]` and then `x[i] = 0` on
-/// the next line, so the initial state vector cannot be observed at all.
+/// on the first step and needs no state. The `C x` half is unreachable here,
+/// and not for want of trying: this fixture's state cannot be set through
+/// co-simulation at all.
+///
+/// Its `x0` is inert. The model's `setStartValues` copies `x = x0` and then
+/// assigns `x = 0` on the next line, and both have been there since the
+/// commit that added the model. The copy could never have worked anyway,
+/// since `setStartValues` runs only at instantiate and reset, while an
+/// importer writes parameters later, in Initialization Mode. Setting `x`
+/// directly is refused too: the model allows it only in Continuous Time Mode
+/// or Event Mode, which an importer with event mode off never enters.
 ///
 /// Every matrix is set explicitly. FMI requires an array to be written again
 /// after a structural parameter changes its size, and these all change size
