@@ -208,7 +208,7 @@ fn an_fmu_reads_its_own_resource_files() {
     // Ignored because it fails, and it fails upstream rather than here. FMI
     // 3.0 requires that path to carry a trailing separator, and
     // `Fmi3Import::canonical_resource_path_string` does not append one, so
-    // the FMU builds `...esourcesy.txt` and cannot open it. The crate's own
+    // the FMU builds a path ending in `resourcesy.txt` and cannot open it. The crate's own
     // doc comment states the requirement the code then misses, and `main`
     // reads the same way as the released 0.8.0.
     //

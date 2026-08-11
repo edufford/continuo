@@ -17,8 +17,9 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
-# `fmi` logs through `log`; tracing-subscriber's default `tracing-log`
-# feature bridges that into tracing, which is what the rest of the workspace
-# uses. An FMU's own diagnostics are otherwise invisible.
-tracing = { workspace = true }
+# Only the tests install a subscriber. `fmi` logs through `log`, and
+# tracing-subscriber's default `tracing-log` feature bridges that into
+# tracing, which is how an FMU's own diagnostics become visible. Installing
+# one from the library itself would fight whatever the host set up, so at
+# runtime this is the binary's job, as the examples already do.
 tracing-subscriber = { workspace = true }

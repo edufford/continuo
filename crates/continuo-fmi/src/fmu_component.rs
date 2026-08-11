@@ -104,7 +104,8 @@ impl FmuComponent {
         let inputs = inputs
             .into_iter()
             .map(|binding| {
-                let (value_reference, declared_type) = resolve(description, &binding.fmu_var_name)?;
+                let (value_reference, declared_type) =
+                    resolve_fmu_var(description, &binding.fmu_var_name)?;
                 Ok(BoundInput {
                     binding,
                     value_reference,
@@ -115,7 +116,8 @@ impl FmuComponent {
         let outputs = outputs
             .into_iter()
             .map(|binding| {
-                let (value_reference, declared_type) = resolve(description, &binding.fmu_var_name)?;
+                let (value_reference, declared_type) =
+                    resolve_fmu_var(description, &binding.fmu_var_name)?;
                 Ok(BoundOutput {
                     binding,
                     value_reference,
@@ -196,7 +198,7 @@ impl FmuComponent {
                 continue;
             };
             let values = input.binding.resolve(payload)?;
-            set_variable(&mut self.instance, &self.id, input, &values)?;
+            set_input_var(&mut self.instance, &self.id, input, &values)?;
         }
 
         Ok(())
@@ -210,7 +212,7 @@ impl FmuComponent {
     fn publish_outputs(&mut self, ctx: &mut StepCtx) -> Result<(), CoreError> {
         let mut payloads: Vec<(KeyExpr, Value)> = Vec::new();
         for output in &self.outputs {
-            let value = get_variable(&mut self.instance, &self.id, output)?;
+            let value = get_output_var(&mut self.instance, &self.id, output)?;
             let key = &output.binding.published_key;
 
             let slot = match payloads.iter_mut().find(|(existing, _)| existing == key) {
@@ -303,7 +305,7 @@ impl Component for FmuComponent {
 ///
 /// A free function rather than a method so the instance and the bindings can
 /// be borrowed at the same time, which `&mut self` does not allow.
-fn set_variable(
+fn set_input_var(
     instance: &mut InstanceCS,
     id: &ComponentId,
     input: &BoundInput,
@@ -361,7 +363,7 @@ fn set_variable(
 }
 
 /// Reads one output variable, dispatching on the type the FMU declares.
-fn get_variable(
+fn get_output_var(
     instance: &mut InstanceCS,
     id: &ComponentId,
     output: &BoundOutput,
@@ -445,7 +447,7 @@ fn failed(id: &ComponentId, variable: &str, call: &str, source: &dyn std::fmt::D
 }
 
 /// The value reference and declared type of a variable the mapping names.
-fn resolve(
+fn resolve_fmu_var(
     description: &Fmi3ModelDescription,
     name: &str,
 ) -> Result<(u32, VariableType), FmuConstructionError> {
