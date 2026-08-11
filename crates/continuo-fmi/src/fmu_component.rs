@@ -13,16 +13,17 @@ use serde_json::Value;
 
 use crate::convert;
 use crate::error::FmuConstructionError;
-use crate::mapping::{FmuMapping, InputBinding, OutputBinding};
+use crate::mapping::{FmuMapping, InputBinding, OutputBinding, unescape_json_pointer_token};
 
 /// How much room to give an FMU for one Binary value.
 ///
 /// `fmi3GetBinary` writes into a buffer the caller sizes, and
 /// `modelDescription.xml` need not say how large a value will be, so there is
 /// nothing honest to read. A megabyte is far past anything a variable
-/// carrying configuration or a small blob would use, and an FMU wanting more
-/// is the large-payload problem PLAN.md defers rather than a constant to
-/// raise.
+/// carrying configuration or a small blob would use.
+// TODO(PLAN "Deferred"): an FMU wanting more than this is the large-payload
+// item rather than a constant to raise, since a value that size should not be
+// travelling base64 inside a JSON string in the first place.
 const MAX_BINARY: usize = 1 << 20;
 
 /// An imported FMI 3.0 Co-Simulation FMU, running as a component.
@@ -92,7 +93,9 @@ impl FmuComponent {
                 model_name: description.model_name.clone(),
             }
         })?;
-        check_period(mapping.period, co_simulation.fixed_internal_step_size, &id)?;
+        if let Some(internal) = co_simulation.fixed_internal_step_size {
+            check_period(mapping.period, internal, &id)?;
+        }
 
         let FmuMapping {
             period,
@@ -143,7 +146,24 @@ impl FmuComponent {
         );
 
         let instance = import
-            .instantiate_cs(id.as_str(), false, true, false, false, &[])
+            .instantiate_cs(
+                id.as_str(),
+                // `visible`: an FMU here has no user to interact with.
+                false,
+                // `logging_on`: a model's own diagnostics are the only
+                // account of why it refused a call, and they reach `tracing`
+                // through `log`.
+                true,
+                // `event_mode_used`: off, so initialization ends in Step Mode
+                // and an FMU handles its own events inside a step. Turning it
+                // on is a milestone of its own.
+                false,
+                // `early_return_allowed`: follows from event mode being off.
+                false,
+                // `required_intermediate_variables`: none, since nothing here
+                // reads an FMU part way through a step.
+                &[],
+            )
             .map_err(|source| FmuConstructionError::Instantiate {
                 instance_name: id.to_string(),
                 source,
@@ -270,6 +290,10 @@ impl Component for FmuComponent {
                     .do_step(
                         last.as_secs_f64(),
                         (now - last).as_secs_f64(),
+                        // `no_set_fmu_state_prior_to_current_point`: this
+                        // adapter never rewinds an FMU, so it promises not
+                        // to, which lets a model discard what it would
+                        // otherwise keep in order to be rewound.
                         true,
                         &mut event_handling_needed,
                         &mut terminate_simulation,
@@ -286,6 +310,42 @@ impl Component for FmuComponent {
                     return Err(CoreError::ComponentFailure {
                         reason: format!(
                             "FMU instance {:?} asked to terminate the simulation",
+                            self.id.as_str()
+                        ),
+                    });
+                }
+
+                // The other two flags are refused rather than ignored, since
+                // continuing past either would publish values from an instant
+                // nobody asked about.
+                //
+                // `early_return` says the FMU stopped short of the requested
+                // end. It cannot arrive while `early_return_allowed` is
+                // false, so seeing it means the FMU broke its side of the
+                // agreement, and the outputs belong to `last_successful_time`
+                // rather than to now. That value is only meaningful when this
+                // flag is set, which is why nothing reads it otherwise.
+                if early_return {
+                    return Err(CoreError::ComponentFailure {
+                        reason: format!(
+                            "FMU instance {:?} stopped at {last_successful_time} s rather than \
+                             {} s, after being told early return was not allowed",
+                            self.id.as_str(),
+                            now.as_secs_f64()
+                        ),
+                    });
+                }
+
+                // TODO(PLAN "Deferred"): `event_handling_needed` is where
+                // event mode would begin. With it switched off an FMU handles
+                // its own events inside a step and must not ask, so the flag
+                // arriving means the model expects a mode this adapter does
+                // not enter, and its state is not what the next step assumes.
+                if event_handling_needed {
+                    return Err(CoreError::ComponentFailure {
+                        reason: format!(
+                            "FMU instance {:?} asked to handle an event, which needs the event \
+                             mode this adapter switches off at instantiation",
                             self.id.as_str()
                         ),
                     });
@@ -372,6 +432,9 @@ fn get_output_var(
     let references = [output.value_reference];
 
     macro_rules! get_with {
+        // `$zero` fills a buffer the FMU writes into, so it is a size rather
+        // than a fallback: whatever it holds is overwritten by the get, and
+        // a failed get returns before the value is read.
         ($convert:path, $getter:ident, $zero:expr) => {{
             let mut values = [$zero];
             instance
@@ -394,9 +457,11 @@ fn get_output_var(
         VariableType::FmiUInt64 => get_with!(convert::from_fmi_u64, get_uint64, 0),
         VariableType::FmiBoolean => get_with!(convert::from_fmi_bool, get_boolean, false),
         VariableType::FmiString => {
-            // What the FMU hands back is valid only until the next call on
-            // this instance, so the value is copied out here rather than
-            // borrowed. Getting that wrong reads as intermittent corruption
+            // What the FMU hands back is valid only until the next call
+            // on this instance. `get_string` copies it into these owned
+            // `CString`s before returning, and `from_fmi_string` copies again
+            // into an owned `Value`, so nothing here holds a borrow into FMU
+            // memory. Getting that wrong reads as intermittent corruption
             // rather than as a failure.
             let mut values = [CString::default()];
             instance
@@ -410,6 +475,9 @@ fn get_output_var(
             let sizes = instance
                 .get_binary(&references, &mut slices)
                 .map_err(|source| failed(id, name, "get_binary", &source))?;
+            // Zero is a length rather than a failure: an FMU may hold an
+            // empty Binary, and that encodes as the empty string, which
+            // decodes back to no bytes.
             let size = sizes.first().copied().unwrap_or(0);
             convert::from_fmi_binary(&buffer[..size], name)
         }
@@ -419,6 +487,9 @@ fn get_output_var(
 
 /// A Clock is a scheduling concept rather than data, and it belongs with the
 /// event mode this adapter switches off.
+// TODO(PLAN "Deferred"): binding Clock is part of taking on event mode, and
+// the larger part: clocked FMUs add the interval and shift APIs on top of the
+// mode itself, which is why an FMU with plain state events needs none of it.
 fn unbound_clock(variable: &str) -> CoreError {
     CoreError::ComponentFailure {
         reason: format!(
@@ -473,44 +544,48 @@ fn resolve_fmu_var(
 /// Better to say so than to run a world quietly a fraction of a step out.
 fn check_period(
     period: SimDuration,
-    fixed_internal_step_size: Option<f64>,
+    fixed_internal_step_size: f64,
     id: &ComponentId,
 ) -> Result<(), FmuConstructionError> {
-    let Some(internal) = fixed_internal_step_size else {
-        return Ok(());
-    };
-
-    let steps = period.as_secs_f64() / internal;
-    if internal > 0.0 && steps >= 1.0 && (steps - steps.round()).abs() < 1e-9 {
+    // Compared as whole nanoseconds rather than as floats, so "a multiple of"
+    // is exact and no tolerance has to be chosen. `modelDescription.xml`
+    // writes the FMU's step as a decimal, and rounding that to the nearest
+    // nanosecond is what sim time does with every other duration, so the two
+    // land on the same grid by construction.
+    let internal_ns = SimDuration::from_secs_f64(fixed_internal_step_size).as_nanos();
+    let period_ns = period.as_nanos();
+    if internal_ns > 0 && period_ns >= internal_ns && period_ns % internal_ns == 0 {
         Ok(())
     } else {
         Err(FmuConstructionError::Period {
             instance_name: id.to_string(),
             period: period.as_secs_f64(),
-            fixed_internal_step_size: internal,
+            fixed_internal_step_size,
         })
     }
 }
 
-/// Puts `value` into `payload` at a JSON Pointer, building the objects on the
-/// way down.
+/// Puts `value` into the message payload being built, at a JSON Pointer.
 ///
 /// Objects rather than arrays, because a payload under construction has no
 /// shape to read an index against. Only an FMU's own variable names produce
 /// these paths, and a name is a name whatever it looks like.
-fn insert_at_pointer(payload: &mut Value, pointer: &str, value: Value) {
+fn insert_at_pointer(message_payload: &mut Value, pointer: &str, value: Value) {
+    // A pointer starts with the separator, so splitting it gives an empty
+    // first token standing for the whole document, which is where the walk
+    // starts rather than a name to descend into.
     let tokens: Vec<String> = pointer
         .split('/')
         .skip(1)
-        .map(|token| token.replace("~1", "/").replace("~0", "~"))
+        .map(unescape_json_pointer_token)
         .collect();
 
     let Some((last, parents)) = tokens.split_last() else {
-        *payload = value;
+        *message_payload = value;
         return;
     };
 
-    let mut cursor = payload;
+    let mut cursor = message_payload;
     for token in parents {
         if !cursor.is_object() {
             *cursor = Value::Object(serde_json::Map::new());

@@ -15,6 +15,6 @@ mod mapping;
 pub use error::FmuConstructionError;
 pub use fmu_component::{FmuComponent, fixture_path};
 pub use mapping::{
-    FmuMapping, InputBinding, OutputBinding, json_pointer_from_name, json_pointers_for_array,
-    json_pointers_for_dimensions,
+    FmuMapping, InputBinding, OutputBinding, escape_json_pointer_token, json_pointer_from_name,
+    json_pointers_for_array, json_pointers_for_dimensions, unescape_json_pointer_token,
 };

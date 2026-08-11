@@ -266,8 +266,17 @@ pub fn json_pointers_for_dimensions(prefix: &str, dimensions: &[usize]) -> Vec<S
 
 /// Escapes one JSON Pointer reference token per RFC 6901: `~` first, so the
 /// tildes introduced by `/` are not escaped twice.
-fn escape_json_pointer_token(token: &str) -> String {
+///
+/// See [`unescape_json_pointer_token`] for the way back.
+pub fn escape_json_pointer_token(token: &str) -> String {
     token.replace('~', "~0").replace('/', "~1")
+}
+
+/// Reverses [`escape_json_pointer_token`]: `~1` first, so a `~` that
+/// unescaping just produced is not then read as introducing an escape of its
+/// own.
+pub fn unescape_json_pointer_token(token: &str) -> String {
+    token.replace("~1", "/").replace("~0", "~")
 }
 
 #[cfg(test)]
@@ -283,6 +292,14 @@ mod tests {
         InputBinding::new("v", KeyExpr::new("continuo/w/x").unwrap())
             .with_pointers(pointers)
             .when_missing(when_missing)
+    }
+
+    #[test]
+    fn escaping_a_token_and_unescaping_it_gives_the_name_back() {
+        for name in ["plain", "a/b", "a~b", "a~/b", "~", "/", "~0", "~1"] {
+            let escaped = escape_json_pointer_token(name);
+            assert_eq!(unescape_json_pointer_token(&escaped), name, "{name:?}");
+        }
     }
 
     #[test]

@@ -212,6 +212,10 @@ fn an_fmu_reads_its_own_resource_files() {
     // doc comment states the requirement the code then misses, and `main`
     // reads the same way as the released 0.8.0.
     //
+    // Upstream, where the doc comment states the requirement and the six
+    // lines under it miss it:
+    // <https://github.com/jondo2010/rust-fmi/blob/v0.8.0/fmi/src/fmi3/import.rs#L66-L76>
+    //
     // Kept rather than deleted: it is the only test that would notice, and
     // running it is how we will know the fix landed.
     let mut mapping = empty_mapping(1000);
@@ -302,4 +306,30 @@ fn two_identical_fmu_runs_publish_identically() {
     };
 
     assert_eq!(run(), run());
+}
+
+#[test]
+fn an_fmu_handles_its_own_events_when_event_mode_is_off() {
+    // Instantiated with `event_mode_used = false`, so an FMU must deal with
+    // its own events inside a step rather than asking to be taken into event
+    // mode. A bouncing ball is the case with an event in it: the bounce is a
+    // state event at a time nothing predicted, and the height has to come
+    // back up without the adapter doing anything about it.
+    let mut mapping = empty_mapping(10);
+    mapping.outputs = vec![OutputBinding::new("h", key("ball"))];
+    let mut ball = FmuComponent::new("ball", fixture_path("BouncingBall"), mapping).expect("build");
+
+    let heights: Vec<f64> = (0..100)
+        .map(|tick| {
+            let now = SimTime::from_millis(tick * 10);
+            step(&mut ball, now, Vec::new())[0].1["h"].as_f64().unwrap()
+        })
+        .collect();
+
+    let lowest = heights.iter().cloned().fold(f64::MAX, f64::min);
+    let after = heights.iter().skip_while(|h| **h > lowest).cloned();
+    assert!(
+        after.clone().any(|h| h > lowest + 0.01),
+        "bounced without the adapter entering event mode: lowest {lowest}"
+    );
 }
