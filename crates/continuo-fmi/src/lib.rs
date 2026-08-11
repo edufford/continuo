@@ -10,11 +10,22 @@
 pub mod convert;
 mod error;
 mod fmu_component;
-mod mapping;
+mod fmu_get_set;
+mod fmu_mapping;
+mod fmu_variable;
+
+use std::path::PathBuf;
 
 pub use error::FmuConstructionError;
-pub use fmu_component::{FmuComponent, fixture_path};
-pub use mapping::{
+pub use fmu_component::FmuComponent;
+pub use fmu_mapping::{
     FmuMapping, InputBinding, OutputBinding, escape_json_pointer_token, json_pointer_from_name,
     json_pointers_for_array, json_pointers_for_dimensions, unescape_json_pointer_token,
 };
+
+/// Where a vendored reference FMU lives, for tests and examples.
+pub fn fixture_path(name: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(format!("{name}.fmu"))
+}

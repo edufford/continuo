@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use continuo_core::{ComponentId, CoreError};
 use thiserror::Error;
 
 /// Why an FMU could not be made into a component.
@@ -121,4 +122,38 @@ pub enum FmuConstructionError {
     /// different thing to build than an adapter.
     #[error("FMU {model_name:?} declares no co-simulation interface")]
     NotCoSimulation { model_name: String },
+}
+
+/// A failed call into the FMU, named so the halt says which instance and
+/// which call.
+pub(crate) fn step_failure(
+    id: &ComponentId,
+    variable: &str,
+    call: &str,
+    source: &dyn std::fmt::Debug,
+) -> CoreError {
+    let about = if variable.is_empty() {
+        String::new()
+    } else {
+        format!(" for variable {variable:?}")
+    };
+
+    // Return a halt naming the instance and the call that refused.
+    CoreError::ComponentFailure {
+        reason: format!(
+            "FMU instance {:?} refused {call}{about}: {source:?}",
+            id.as_str()
+        ),
+    }
+}
+
+/// A Clock is a scheduling concept rather than data, and it belongs with the
+/// event mode this adapter switches off.
+// TODO(PLAN "Deferred"): binding Clock is part of taking on event mode, and
+// the larger part: clocked FMUs add the interval and shift APIs on top of the
+// mode itself, which is why an FMU with plain state events needs none of it.
+pub(crate) fn unbound_clock(variable: &str) -> CoreError {
+    CoreError::ComponentFailure {
+        reason: format!("variable {variable:?} is a Clock, which this adapter does not bind"),
+    }
 }

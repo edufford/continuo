@@ -263,6 +263,13 @@ pub fn json_pointers_for_dimensions(prefix: &str, dimensions: &[usize]) -> Vec<S
     pointers
 }
 
+// TODO(PLAN "Scenario configuration"): this pair and `insert_at_pointer` are
+// plain RFC 6901 rather than anything to do with FMI, so they would belong in
+// core if a second crate ever addressed into a payload. Nothing does today,
+// and reading is already served by `serde_json::Value::pointer`. What is
+// missing there is writing, which only a component that builds a payload
+// without a Rust type for it needs, so the trigger is a second such component
+// rather than a second reader.
 /// Escapes one JSON Pointer reference token per RFC 6901: `~` first, so the
 /// tildes introduced by `/` are not escaped twice.
 ///
@@ -276,6 +283,47 @@ pub fn escape_json_pointer_token(token: &str) -> String {
 /// own.
 pub fn unescape_json_pointer_token(token: &str) -> String {
     token.replace("~1", "/").replace("~0", "~")
+}
+
+/// Puts `value` into the message payload being built, at a JSON Pointer.
+///
+/// Objects rather than arrays, because a payload under construction has no
+/// shape to read an index against. Only an FMU's own variable names produce
+/// these paths, and a name is a name whatever it looks like.
+pub(crate) fn insert_at_pointer(message_payload: &mut Value, pointer: &str, value: Value) {
+    // A pointer starts with the separator, so splitting it gives an empty
+    // first token standing for the whole document, which is where the walk
+    // starts rather than a name to descend into.
+    let tokens: Vec<String> = pointer
+        .split('/')
+        .skip(1)
+        .map(unescape_json_pointer_token)
+        .collect();
+
+    let Some((last, parents)) = tokens.split_last() else {
+        *message_payload = value;
+        return;
+    };
+
+    let mut cursor = message_payload;
+    for token in parents {
+        if !cursor.is_object() {
+            *cursor = Value::Object(serde_json::Map::new());
+        }
+        cursor = cursor
+            .as_object_mut()
+            .expect("just made an object")
+            .entry(token.clone())
+            .or_insert(Value::Null);
+    }
+
+    if !cursor.is_object() {
+        *cursor = Value::Object(serde_json::Map::new());
+    }
+    cursor
+        .as_object_mut()
+        .expect("just made an object")
+        .insert(last.clone(), value);
 }
 
 #[cfg(test)]
