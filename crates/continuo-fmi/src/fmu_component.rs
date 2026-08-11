@@ -48,10 +48,9 @@ pub struct FmuComponent {
     outputs: Vec<BoundOutput>,
     subscriptions: Vec<KeyExpr>,
     period: SimDuration,
-    /// Mapping values that are neither structural nor fed by a message, held
-    /// until the first step because Initialization Mode is where they may be
-    /// written.
-    at_initialization: Vec<(ResolvedVariable, Value)>,
+    /// Variables the mapping gives a starting value. Held until the first
+    /// step, which is where Initialization Mode happens.
+    vars_to_initialize: Vec<(ResolvedVariable, Value)>,
     /// When this component last stepped, and `None` until it has. The FMU's
     /// own clock: `fmi3DoStep` is told the point it steps from, so the
     /// adapter has to remember where it left the model.
@@ -133,31 +132,36 @@ impl FmuComponent {
         // are, so they are set first, in their own mode, and everything after
         // this reads the sizes they chose rather than the ones the XML
         // declares.
-        let mut structural = Vec::new();
-        let mut at_initialization = Vec::new();
+        let mut structural_vars = Vec::new();
+        let mut vars_to_initialize = Vec::new();
         for (name, value) in initial_values {
             let variable = resolve_fmu_var(description, &name)?;
             if variable.is_structural(description) {
-                structural.push((variable, value));
+                structural_vars.push((variable, value));
             } else {
-                at_initialization.push((variable, value));
+                vars_to_initialize.push((variable, value));
             }
         }
 
-        let sizes = StructuralSizes::new(description, &structural)?;
+        let structural_sizes = StructuralSizes::new(description, &structural_vars)?;
 
         // Only now can the rest be sized, since a structural parameter set
         // above may have changed how many values a variable holds.
-        let at_initialization = at_initialization
+        let vars_to_initialize = vars_to_initialize
             .into_iter()
-            .map(|(variable, value)| Ok((variable.with_dimensions(description, &sizes)?, value)))
+            .map(|(variable, value)| {
+                Ok((
+                    variable.with_dimensions(description, &structural_sizes)?,
+                    value,
+                ))
+            })
             .collect::<Result<Vec<_>, FmuConstructionError>>()?;
 
         let inputs = inputs
             .into_iter()
             .map(|binding| {
                 let variable = resolve_fmu_var(description, &binding.fmu_var_name)?
-                    .with_dimensions(description, &sizes)?;
+                    .with_dimensions(description, &structural_sizes)?;
 
                 // The pointer count is the mapping's claim about how large
                 // this variable is, and the FMU is the authority. Left
@@ -178,7 +182,7 @@ impl FmuComponent {
             .into_iter()
             .map(|binding| {
                 let variable = resolve_fmu_var(description, &binding.fmu_var_name)?
-                    .with_dimensions(description, &sizes)?;
+                    .with_dimensions(description, &structural_sizes)?;
                 Ok(BoundOutput { binding, variable })
             })
             .collect::<Result<Vec<_>, FmuConstructionError>>()?;
@@ -231,7 +235,7 @@ impl FmuComponent {
             outputs,
             subscriptions,
             period,
-            at_initialization,
+            vars_to_initialize,
             last_step: None,
         };
 
@@ -239,7 +243,7 @@ impl FmuComponent {
         // may be written, and it comes before initialization. Entering it for
         // nothing would be a call an FMU need not implement, so an FMU with
         // no structural parameters in its mapping never sees it.
-        if !structural.is_empty() {
+        if !structural_vars.is_empty() {
             component
                 .instance
                 .enter_configuration_mode()
@@ -247,7 +251,7 @@ impl FmuComponent {
                     instance_name: component.id.to_string(),
                     reason: format!("{source:?}"),
                 })?;
-            component.set_initial(&structural)?;
+            component.set_initial_values(&structural_vars)?;
             component
                 .instance
                 .exit_configuration_mode()
@@ -267,11 +271,11 @@ impl FmuComponent {
     /// The values are the mapping's own rather than a message's, so there is
     /// no payload to resolve against and no pointer involved: each is written
     /// whole, as an array if the variable is one.
-    fn set_initial(
+    fn set_initial_values(
         &mut self,
-        values: &[(ResolvedVariable, Value)],
+        initial_vals: &[(ResolvedVariable, Value)],
     ) -> Result<(), FmuConstructionError> {
-        for (variable, value) in values {
+        for (variable, value) in initial_vals {
             let elements = variable.flatten(value);
             if elements.len() != variable.len() {
                 return Err(FmuConstructionError::Dimension {
@@ -387,8 +391,8 @@ impl Component for FmuComponent {
                 // The mapping's values first, then the inbox, so a message
                 // arriving at instant zero wins over a start value written
                 // for the case where none does.
-                let waiting = std::mem::take(&mut self.at_initialization);
-                self.set_initial(&waiting)
+                let vars_to_initialize = std::mem::take(&mut self.vars_to_initialize);
+                self.set_initial_values(&vars_to_initialize)
                     .map_err(|error| CoreError::ComponentFailure {
                         reason: error.to_string(),
                     })?;
