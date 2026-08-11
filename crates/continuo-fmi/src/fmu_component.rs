@@ -170,8 +170,8 @@ impl FmuComponent {
                 if binding.pointers.len() != variable.len() {
                     return Err(FmuConstructionError::Dimension {
                         variable: variable.name.clone(),
-                        pointers: binding.pointers.len(),
-                        values: variable.len(),
+                        supplied: binding.pointers.len(),
+                        expected: variable.len(),
                         dimensions: variable.dimensions.clone(),
                     });
                 }
@@ -280,8 +280,8 @@ impl FmuComponent {
             if elements.len() != variable.len() {
                 return Err(FmuConstructionError::Dimension {
                     variable: variable.name.clone(),
-                    pointers: elements.len(),
-                    values: variable.len(),
+                    supplied: elements.len(),
+                    expected: variable.len(),
                     dimensions: variable.dimensions.clone(),
                 });
             }

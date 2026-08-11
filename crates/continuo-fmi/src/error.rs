@@ -72,19 +72,22 @@ pub enum FmuConstructionError {
         fixed_internal_step_size: f64,
     },
 
-    /// The mapping's pointer count does not match how many values the
-    /// variable holds.
+    /// The mapping supplies a different number of values than the variable
+    /// holds.
     ///
-    /// The FMU is the authority on that, and the mapping is a claim about it.
-    /// Unchecked, a rebuilt FMU and a stale mapping drift apart and the model
-    /// reads whatever the tail of the buffer held.
+    /// The FMU is the authority on that count, and the mapping is a claim
+    /// about it. Unchecked, a rebuilt FMU and a stale mapping drift apart and
+    /// the model reads whatever the tail of the buffer held.
     #[error(
-        "variable {variable:?} holds {values} values {dimensions:?}, and the mapping supplies {pointers}"
+        "variable {variable:?} holds {expected} values {dimensions:?}, and the mapping supplies {supplied}"
     )]
     Dimension {
         variable: String,
-        pointers: usize,
-        values: usize,
+        /// How many the mapping supplies, counting JSON Pointers where it
+        /// binds a message and values where it writes them out.
+        supplied: usize,
+        /// How many the variable holds, the product of its dimensions.
+        expected: usize,
         dimensions: Vec<usize>,
     },
 
