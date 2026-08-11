@@ -64,8 +64,7 @@ pub enum FmuConstructionError {
     /// whatever it is asked for, so a period that is not a whole number of
     /// them reads values from an instant other than the one the caller means.
     #[error(
-        "instance {instance_name:?} would step every {period} s, which is not a whole number \
-         of the {fixed_internal_step_size} s steps this FMU takes internally"
+        "period {period} s is not a multiple of the {fixed_internal_step_size} s step {instance_name:?} takes"
     )]
     Period {
         instance_name: String,
@@ -80,7 +79,7 @@ pub enum FmuConstructionError {
     /// Unchecked, a rebuilt FMU and a stale mapping drift apart and the model
     /// reads whatever the tail of the buffer held.
     #[error(
-        "variable {variable:?} holds {values} values (dimensions {dimensions:?}), and the          mapping supplies {pointers}"
+        "variable {variable:?} holds {values} values {dimensions:?}, and the mapping supplies {pointers}"
     )]
     Dimension {
         variable: String,
@@ -91,7 +90,7 @@ pub enum FmuConstructionError {
 
     /// A dimension names a variable whose value is not known.
     #[error(
-        "variable {variable:?} is sized by value reference {value_reference}, which is not a          structural parameter with a value"
+        "variable {variable:?} is sized by value reference {value_reference}, which has no value"
     )]
     UnresolvedDimension {
         variable: String,

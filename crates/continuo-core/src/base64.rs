@@ -7,9 +7,11 @@
 //! fingerprint's definition, and the encoding is sixty lines.
 //!
 //! Standard alphabet, padded, no line breaks, and nothing optional about any
-//! of it: RFC 4648 section 4, <https://www.rfc-editor.org/rfc/rfc4648>. Decoding is strict for the same reason
-//! encoding is fixed: two spellings of one value would be two payloads for
-//! one state, and only one of them can be what a run hashed.
+//! of it: RFC 4648 section 4, <https://www.rfc-editor.org/rfc/rfc4648>.
+//!
+//! Decoding is strict for the same reason encoding is fixed: two spellings
+//! of one value would be two payloads for one state, and only one of them
+//! can be what a run hashed.
 //!
 //! The first user is an imported FMU's Binary variables, in `continuo-fmi`.
 //! PLAN.md's deferred large-payload work is the other, since a camera frame
@@ -32,10 +34,7 @@ pub enum Base64Error {
     #[error("padding at byte {position} is not at the end, or is more than two characters")]
     Padding { position: usize },
 
-    #[error(
-        "byte {position} sets bits that a canonical encoding leaves zero, \
-         so this text decodes to the same value as some other text"
-    )]
+    #[error("byte {position} sets bits a canonical encoding leaves zero, so it is one of several")]
     NonCanonical { position: usize },
 }
 

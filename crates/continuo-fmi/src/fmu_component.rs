@@ -446,8 +446,7 @@ impl Component for FmuComponent {
                 if early_return {
                     return Err(CoreError::ComponentFailure {
                         reason: format!(
-                            "FMU instance {:?} stopped at {last_successful_time} s rather than \
-                             {} s, after being told early return was not allowed",
+                            "FMU instance {:?} stopped early at {last_successful_time} s, not {} s",
                             self.id.as_str(),
                             now.as_secs_f64()
                         ),
@@ -462,8 +461,7 @@ impl Component for FmuComponent {
                 if event_handling_needed {
                     return Err(CoreError::ComponentFailure {
                         reason: format!(
-                            "FMU instance {:?} asked to handle an event, which needs the event \
-                             mode this adapter switches off at instantiation",
+                            "FMU instance {:?} asked for event mode, which it was instantiated without",
                             self.id.as_str()
                         ),
                     });
@@ -638,10 +636,7 @@ fn get_output_var(
 // mode itself, which is why an FMU with plain state events needs none of it.
 fn unbound_clock(variable: &str) -> CoreError {
     CoreError::ComponentFailure {
-        reason: format!(
-            "variable {variable:?} is a Clock, which this adapter does not bind: clocks are \
-             scheduling rather than data, and belong with the event mode it switches off"
-        ),
+        reason: format!("variable {variable:?} is a Clock, which this adapter does not bind"),
     }
 }
 

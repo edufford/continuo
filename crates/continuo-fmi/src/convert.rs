@@ -158,8 +158,7 @@ pub fn to_fmi_string(value: &Value, variable: &str) -> Result<CString, CoreError
 
     CString::new(text).map_err(|error| CoreError::ComponentFailure {
         reason: format!(
-            "variable {variable:?} is a String, and this one carries a NUL at byte {}, \
-             which cannot cross into C without being cut short there",
+            "String variable {variable:?} carries a NUL at byte {}, where C would cut it short",
             error.nul_position()
         ),
     })
@@ -177,8 +176,7 @@ pub fn from_fmi_string(value: &CString, variable: &str) -> Result<Value, CoreErr
         .map(|text| Value::String(text.to_string()))
         .map_err(|_| CoreError::ComponentFailure {
             reason: format!(
-                "variable {variable:?} is a String, and this FMU returned bytes that are not \
-                 UTF-8, which FMI 3.0 requires"
+                "String variable {variable:?} returned bytes that are not the UTF-8 FMI 3.0 requires"
             ),
         })
 }

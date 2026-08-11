@@ -127,8 +127,7 @@ impl InputBinding {
                     .or(self.when_missing.as_ref())
                     .ok_or_else(|| CoreError::ComponentFailure {
                         reason: format!(
-                            "input {:?}: nothing at {:?} in the message on {}, \
-                             and the mapping declares no value for its absence",
+                            "input {:?}: nothing at {:?} on {}, and no value declared for its absence",
                             self.fmu_var_name,
                             pointer,
                             self.subscribed_key.as_str()
