@@ -6,7 +6,10 @@ use continuo_core::{
     Component, ComponentId, CoreError, KeyExpr, Message, SimDuration, SimTime, StepCtx,
 };
 use fmi::fmi3::instance::InstanceCS;
-use fmi::fmi3::schema::{Fmi3ModelDescription, VariableType};
+use fmi::fmi3::schema::{
+    AbstractVariableTrait, ArrayableVariableTrait, Causality, Dimension, Fmi3ModelDescription,
+    InitializableVariableTrait, Variable, VariableType,
+};
 use fmi::fmi3::{CoSimulation, Common, Fmi3Model, GetSet, import::Fmi3Import};
 use fmi::traits::FmiImport;
 use serde_json::Value;
@@ -45,6 +48,10 @@ pub struct FmuComponent {
     outputs: Vec<BoundOutput>,
     subscriptions: Vec<KeyExpr>,
     period: SimDuration,
+    /// Mapping values that are neither structural nor fed by a message, held
+    /// until the first step because Initialization Mode is where they may be
+    /// written.
+    at_initialization: Vec<(ResolvedVariable, Value)>,
     /// When this component last stepped, and `None` until it has. The FMU's
     /// own clock: `fmi3DoStep` is told the point it steps from, so the
     /// adapter has to remember where it left the model.
@@ -54,15 +61,33 @@ pub struct FmuComponent {
 /// An input binding with its variable resolved against the FMU.
 struct BoundInput {
     binding: InputBinding,
-    value_reference: u32,
-    declared_type: VariableType,
+    variable: ResolvedVariable,
 }
 
 /// An output binding with its variable resolved against the FMU.
 struct BoundOutput {
     binding: OutputBinding,
+    variable: ResolvedVariable,
+}
+
+/// What a variable's name resolves to once the FMU has been read.
+struct ResolvedVariable {
+    name: String,
     value_reference: u32,
     declared_type: VariableType,
+    /// The size of each dimension, outermost first, and empty for a scalar.
+    /// Resolved rather than read: a dimension may name a structural parameter
+    /// instead of stating a number, so these are the sizes this instance
+    /// actually has rather than the ones the XML declares.
+    dimensions: Vec<usize>,
+}
+
+impl ResolvedVariable {
+    /// How many values this variable holds: the product of its dimensions,
+    /// and one for a scalar.
+    fn len(&self) -> usize {
+        self.dimensions.iter().product::<usize>().max(1)
+    }
 }
 
 impl FmuComponent {
@@ -101,31 +126,60 @@ impl FmuComponent {
             period,
             inputs,
             outputs,
-            initial_values: _,
+            initial_values,
         } = mapping;
+
+        // Structural parameters are the ones that decide how large the arrays
+        // are, so they are set first, in their own mode, and everything after
+        // this reads the sizes they chose rather than the ones the XML
+        // declares.
+        let mut structural = Vec::new();
+        let mut at_initialization = Vec::new();
+        for (name, value) in initial_values {
+            let variable = resolve_fmu_var(description, &name)?;
+            if variable.is_structural(description) {
+                structural.push((variable, value));
+            } else {
+                at_initialization.push((variable, value));
+            }
+        }
+
+        let sizes = StructuralSizes::new(description, &structural)?;
+
+        // Only now can the rest be sized, since a structural parameter set
+        // above may have changed how many values a variable holds.
+        let at_initialization = at_initialization
+            .into_iter()
+            .map(|(variable, value)| Ok((variable.with_dimensions(description, &sizes)?, value)))
+            .collect::<Result<Vec<_>, FmuConstructionError>>()?;
 
         let inputs = inputs
             .into_iter()
             .map(|binding| {
-                let (value_reference, declared_type) =
-                    resolve_fmu_var(description, &binding.fmu_var_name)?;
-                Ok(BoundInput {
-                    binding,
-                    value_reference,
-                    declared_type,
-                })
+                let variable = resolve_fmu_var(description, &binding.fmu_var_name)?
+                    .with_dimensions(description, &sizes)?;
+
+                // The pointer count is the mapping's claim about how large
+                // this variable is, and the FMU is the authority. Left
+                // unchecked, a rebuilt FMU and a stale mapping drift apart
+                // and the FMU reads whatever the tail of the buffer held.
+                if binding.pointers.len() != variable.len() {
+                    return Err(FmuConstructionError::Dimension {
+                        variable: variable.name.clone(),
+                        pointers: binding.pointers.len(),
+                        values: variable.len(),
+                        dimensions: variable.dimensions.clone(),
+                    });
+                }
+                Ok(BoundInput { binding, variable })
             })
             .collect::<Result<Vec<_>, FmuConstructionError>>()?;
         let outputs = outputs
             .into_iter()
             .map(|binding| {
-                let (value_reference, declared_type) =
-                    resolve_fmu_var(description, &binding.fmu_var_name)?;
-                Ok(BoundOutput {
-                    binding,
-                    value_reference,
-                    declared_type,
-                })
+                let variable = resolve_fmu_var(description, &binding.fmu_var_name)?
+                    .with_dimensions(description, &sizes)?;
+                Ok(BoundOutput { binding, variable })
             })
             .collect::<Result<Vec<_>, FmuConstructionError>>()?;
 
@@ -169,9 +223,7 @@ impl FmuComponent {
                 source,
             })?;
 
-        // Return a component whose instance drops before the directory its
-        // library was loaded from.
-        Ok(FmuComponent {
+        let mut component = FmuComponent {
             id,
             instance,
             import,
@@ -179,8 +231,65 @@ impl FmuComponent {
             outputs,
             subscriptions,
             period,
+            at_initialization,
             last_step: None,
-        })
+        };
+
+        // Configuration Mode is the only state where a structural parameter
+        // may be written, and it comes before initialization. Entering it for
+        // nothing would be a call an FMU need not implement, so an FMU with
+        // no structural parameters in its mapping never sees it.
+        if !structural.is_empty() {
+            component
+                .instance
+                .enter_configuration_mode()
+                .map_err(|source| FmuConstructionError::Configure {
+                    instance_name: component.id.to_string(),
+                    reason: format!("{source:?}"),
+                })?;
+            component.set_initial(&structural)?;
+            component
+                .instance
+                .exit_configuration_mode()
+                .map_err(|source| FmuConstructionError::Configure {
+                    instance_name: component.id.to_string(),
+                    reason: format!("{source:?}"),
+                })?;
+        }
+
+        // Return a component whose instance drops before the directory its
+        // library was loaded from.
+        Ok(component)
+    }
+
+    /// Writes name-and-value pairs from the mapping straight into the FMU.
+    ///
+    /// The values are the mapping's own rather than a message's, so there is
+    /// no payload to resolve against and no pointer involved: each is written
+    /// whole, as an array if the variable is one.
+    fn set_initial(
+        &mut self,
+        values: &[(ResolvedVariable, Value)],
+    ) -> Result<(), FmuConstructionError> {
+        for (variable, value) in values {
+            let elements = variable.flatten(value);
+            if elements.len() != variable.len() {
+                return Err(FmuConstructionError::Dimension {
+                    variable: variable.name.clone(),
+                    pointers: elements.len(),
+                    values: variable.len(),
+                    dimensions: variable.dimensions.clone(),
+                });
+            }
+            set_values(&mut self.instance, &self.id, variable, &elements).map_err(|source| {
+                FmuConstructionError::InitialValue {
+                    variable: variable.name.clone(),
+                    reason: source.to_string(),
+                }
+            })?;
+        }
+
+        Ok(())
     }
 
     /// Where this FMU was extracted to, a temporary directory the importer
@@ -274,6 +383,15 @@ impl Component for FmuComponent {
                 self.instance
                     .enter_initialization_mode(None, now.as_secs_f64(), None)
                     .map_err(|source| failed(&self.id, "", "enter_initialization_mode", &source))?;
+
+                // The mapping's values first, then the inbox, so a message
+                // arriving at instant zero wins over a start value written
+                // for the case where none does.
+                let waiting = std::mem::take(&mut self.at_initialization);
+                self.set_initial(&waiting)
+                    .map_err(|error| CoreError::ComponentFailure {
+                        reason: error.to_string(),
+                    })?;
                 self.apply_inbox(ctx.inbox())?;
                 self.instance
                     .exit_initialization_mode()
@@ -371,8 +489,22 @@ fn set_input_var(
     input: &BoundInput,
     values: &[&Value],
 ) -> Result<(), CoreError> {
-    let name = input.binding.fmu_var_name.as_str();
-    let references = [input.value_reference];
+    set_values(instance, id, &input.variable, values)
+}
+
+/// Writes one variable, whatever its shape.
+///
+/// An array is one call with `nValues = N` against a single value reference,
+/// which is what the C API's separate reference and value counts are for, so
+/// nothing here treats an array as a special case.
+fn set_values(
+    instance: &mut InstanceCS,
+    id: &ComponentId,
+    variable: &ResolvedVariable,
+    values: &[&Value],
+) -> Result<(), CoreError> {
+    let name = variable.name.as_str();
+    let references = [variable.value_reference];
 
     macro_rules! set_with {
         ($convert:path, $setter:ident) => {{
@@ -387,7 +519,7 @@ fn set_input_var(
         }};
     }
 
-    match input.declared_type {
+    match variable.declared_type {
         VariableType::FmiFloat64 => set_with!(convert::to_fmi_f64, set_float64),
         VariableType::FmiFloat32 => set_with!(convert::to_fmi_f32, set_float32),
         VariableType::FmiInt8 => set_with!(convert::to_fmi_i8, set_int8),
@@ -428,23 +560,29 @@ fn get_output_var(
     id: &ComponentId,
     output: &BoundOutput,
 ) -> Result<Value, CoreError> {
-    let name = output.binding.fmu_var_name.as_str();
-    let references = [output.value_reference];
+    let variable = &output.variable;
+    let name = variable.name.as_str();
+    let references = [variable.value_reference];
+    let count = variable.len();
 
     macro_rules! get_with {
         // `$zero` fills a buffer the FMU writes into, so it is a size rather
         // than a fallback: whatever it holds is overwritten by the get, and
         // a failed get returns before the value is read.
         ($convert:path, $getter:ident, $zero:expr) => {{
-            let mut values = [$zero];
+            let mut values = vec![$zero; count];
             instance
                 .$getter(&references, &mut values)
                 .map_err(|source| failed(id, name, stringify!($getter), &source))?;
-            $convert(values[0], name)
+            let converted = values
+                .into_iter()
+                .map(|value| $convert(value, name))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(variable.shape(converted))
         }};
     }
 
-    match output.declared_type {
+    match variable.declared_type {
         VariableType::FmiFloat64 => get_with!(convert::from_fmi_f64, get_float64, 0.0),
         VariableType::FmiFloat32 => get_with!(convert::from_fmi_f32, get_float32, 0.0),
         VariableType::FmiInt8 => get_with!(convert::from_fmi_i8, get_int8, 0),
@@ -463,23 +601,31 @@ fn get_output_var(
             // into an owned `Value`, so nothing here holds a borrow into FMU
             // memory. Getting that wrong reads as intermittent corruption
             // rather than as a failure.
-            let mut values = [CString::default()];
+            let mut values = vec![CString::default(); count];
             instance
                 .get_string(&references, &mut values)
                 .map_err(|source| failed(id, name, "get_string", &source))?;
-            convert::from_fmi_string(&values[0], name)
+            let converted = values
+                .iter()
+                .map(|value| convert::from_fmi_string(value, name))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(variable.shape(converted))
         }
         VariableType::FmiBinary => {
-            let mut buffer = vec![0u8; MAX_BINARY];
-            let mut slices = [buffer.as_mut_slice()];
+            let mut buffers = vec![vec![0u8; MAX_BINARY]; count];
+            let mut slices: Vec<&mut [u8]> = buffers.iter_mut().map(Vec::as_mut_slice).collect();
             let sizes = instance
                 .get_binary(&references, &mut slices)
                 .map_err(|source| failed(id, name, "get_binary", &source))?;
-            // Zero is a length rather than a failure: an FMU may hold an
-            // empty Binary, and that encodes as the empty string, which
-            // decodes back to no bytes.
-            let size = sizes.first().copied().unwrap_or(0);
-            convert::from_fmi_binary(&buffer[..size], name)
+            let converted = buffers
+                .iter()
+                .zip(sizes.iter().chain(std::iter::repeat(&0)))
+                // Zero is a length rather than a failure: an FMU may hold an
+                // empty Binary, and that encodes as the empty string, which
+                // decodes back to no bytes.
+                .map(|(buffer, size)| convert::from_fmi_binary(&buffer[..*size], name))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(variable.shape(converted))
         }
         VariableType::FmiClock => Err(unbound_clock(name)),
     }
@@ -517,15 +663,24 @@ fn failed(id: &ComponentId, variable: &str, call: &str, source: &dyn std::fmt::D
     }
 }
 
-/// The value reference and declared type of a variable the mapping names.
+/// What the FMU says about a variable the mapping names.
+///
+/// Dimensions are left empty here and filled by
+/// [`ResolvedVariable::with_dimensions`], because resolving them needs the
+/// structural parameters settled first.
 fn resolve_fmu_var(
     description: &Fmi3ModelDescription,
     name: &str,
-) -> Result<(u32, VariableType), FmuConstructionError> {
+) -> Result<ResolvedVariable, FmuConstructionError> {
     description
         .model_variables
         .find_by_name(name)
-        .map(|variable| (variable.value_reference(), variable.data_type()))
+        .map(|variable| ResolvedVariable {
+            name: name.to_string(),
+            value_reference: variable.value_reference(),
+            declared_type: variable.data_type(),
+            dimensions: Vec::new(),
+        })
         .ok_or_else(|| FmuConstructionError::UnknownVariable {
             variable: name.to_string(),
             available: description
@@ -534,6 +689,163 @@ fn resolve_fmu_var(
                 .map(|variable| variable.name().to_string())
                 .collect(),
         })
+}
+
+/// The effective size of every dimension that names a structural parameter.
+///
+/// A dimension is either a constant or a reference to a variable's value, and
+/// where it is a reference the value in force is the mapping's if it set one
+/// and the FMU's declared start otherwise. Reading the XML alone would size
+/// an array by numbers the mapping has already overridden.
+struct StructuralSizes {
+    by_value_reference: BTreeMap<u32, usize>,
+}
+
+impl StructuralSizes {
+    fn new(
+        description: &Fmi3ModelDescription,
+        structural: &[(ResolvedVariable, Value)],
+    ) -> Result<Self, FmuConstructionError> {
+        let mut by_value_reference = BTreeMap::new();
+
+        // Declared starts first, so a mapping's value replaces one rather
+        // than competing with it.
+        for variable in &description.model_variables.variables {
+            if let Variable::UInt64(declared) = variable
+                && declared.causality() == Causality::StructuralParameter
+                && let Some(start) = declared.start().and_then(|start| start.first())
+            {
+                by_value_reference.insert(declared.value_reference, *start as usize);
+            }
+        }
+
+        for (variable, value) in structural {
+            let size = value
+                .as_u64()
+                .ok_or_else(|| FmuConstructionError::StructuralParameter {
+                    variable: variable.name.clone(),
+                    value: value.to_string(),
+                })?;
+            by_value_reference.insert(variable.value_reference, size as usize);
+        }
+
+        // Return the sizes this instance runs with.
+        Ok(StructuralSizes { by_value_reference })
+    }
+}
+
+impl ResolvedVariable {
+    /// Whether this variable is one of the structural parameters that size
+    /// the arrays, and so has to be written before initialization begins.
+    fn is_structural(&self, description: &Fmi3ModelDescription) -> bool {
+        description
+            .model_variables
+            .find_by_name(&self.name)
+            .is_some_and(|variable| variable.causality() == Causality::StructuralParameter)
+    }
+
+    /// Fills in the dimensions this instance actually has.
+    fn with_dimensions(
+        mut self,
+        description: &Fmi3ModelDescription,
+        sizes: &StructuralSizes,
+    ) -> Result<Self, FmuConstructionError> {
+        self.dimensions = declared_dimensions(description, &self.name)
+            .iter()
+            .map(|dimension| match dimension {
+                Dimension::Fixed(size) => Ok(*size as usize),
+                Dimension::Variable(value_reference) => sizes
+                    .by_value_reference
+                    .get(value_reference)
+                    .copied()
+                    .ok_or_else(|| FmuConstructionError::UnresolvedDimension {
+                        variable: self.name.clone(),
+                        value_reference: *value_reference,
+                    }),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(self)
+    }
+
+    /// Reads a value the mapping wrote into the flat, row-major list an FMI
+    /// call takes, which is [`ResolvedVariable::shape`] backwards.
+    ///
+    /// Nesting to the variable's own depth, so a matrix may be written either
+    /// as arrays of arrays or as one flat list. The standard itself spells a
+    /// matrix flat in a `start` attribute, so accepting both costs nothing
+    /// and refusing one would be arbitrary.
+    fn flatten<'a>(&self, value: &'a Value) -> Vec<&'a Value> {
+        fn walk<'a>(value: &'a Value, depth: usize, flat: &mut Vec<&'a Value>) {
+            match value {
+                Value::Array(elements) if depth > 0 => {
+                    for element in elements {
+                        walk(element, depth - 1, flat);
+                    }
+                }
+                leaf => flat.push(leaf),
+            }
+        }
+
+        let mut flat = Vec::new();
+        walk(value, self.dimensions.len(), &mut flat);
+
+        // Return the values in the order the FMU reads them.
+        flat
+    }
+
+    /// Nests a flat, row-major list of values back into the shape the
+    /// variable declares: a scalar as itself, a vector as an array, a matrix
+    /// as arrays of arrays.
+    fn shape(&self, values: Vec<Value>) -> Value {
+        if self.dimensions.is_empty() {
+            return values.into_iter().next().unwrap_or(Value::Null);
+        }
+
+        // Fold from the innermost dimension outward, chunking the flat list
+        // each time, which is what row-major order means.
+        let mut level = values;
+        for size in self.dimensions.iter().skip(1).rev() {
+            level = level
+                .chunks(*size)
+                .map(|chunk| Value::Array(chunk.to_vec()))
+                .collect();
+        }
+
+        Value::Array(level)
+    }
+}
+
+/// The dimensions `modelDescription.xml` declares for a variable, before any
+/// structural parameter is resolved.
+///
+/// Matched over the variable enum because `dimensions` belongs to the
+/// arrayable trait rather than the abstract one, and a name lookup hands back
+/// the abstract view.
+fn declared_dimensions<'a>(description: &'a Fmi3ModelDescription, name: &str) -> &'a [Dimension] {
+    const NONE: &[Dimension] = &[];
+
+    macro_rules! arms {
+        ($variable:expr, $($case:ident),*) => {
+            match $variable {
+                $(Variable::$case(var) => (var.name(), var.dimensions()),)*
+                Variable::Clock(var) => (var.name(), NONE),
+            }
+        };
+    }
+
+    description
+        .model_variables
+        .variables
+        .iter()
+        .find_map(|variable| {
+            let (declared_name, dimensions) = arms!(
+                variable, Int8, UInt8, Int16, UInt16, Int32, UInt32, Int64, UInt64, Float32,
+                Float64, Boolean, String, Binary
+            );
+            (declared_name == name).then_some(dimensions)
+        })
+        .unwrap_or(NONE)
 }
 
 /// Fails unless the mapping's period lands on the FMU's own step size.

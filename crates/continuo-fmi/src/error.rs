@@ -73,6 +73,47 @@ pub enum FmuConstructionError {
         fixed_internal_step_size: f64,
     },
 
+    /// The mapping's pointer count does not match how many values the
+    /// variable holds.
+    ///
+    /// The FMU is the authority on that, and the mapping is a claim about it.
+    /// Unchecked, a rebuilt FMU and a stale mapping drift apart and the model
+    /// reads whatever the tail of the buffer held.
+    #[error(
+        "variable {variable:?} holds {values} values (dimensions {dimensions:?}), and the          mapping supplies {pointers}"
+    )]
+    Dimension {
+        variable: String,
+        pointers: usize,
+        values: usize,
+        dimensions: Vec<usize>,
+    },
+
+    /// A dimension names a variable whose value is not known.
+    #[error(
+        "variable {variable:?} is sized by value reference {value_reference}, which is not a          structural parameter with a value"
+    )]
+    UnresolvedDimension {
+        variable: String,
+        value_reference: u32,
+    },
+
+    /// A structural parameter was given something that is not a size.
+    #[error("structural parameter {variable:?} sizes an array, and {value} is not a count")]
+    StructuralParameter { variable: String, value: String },
+
+    /// The FMU refused to enter or leave Configuration Mode, which is the
+    /// only state where a structural parameter may be written.
+    #[error("instance {instance_name:?} refused configuration mode: {reason}")]
+    Configure {
+        instance_name: String,
+        reason: String,
+    },
+
+    /// The FMU refused a value the mapping asked to set before the run.
+    #[error("initial value for {variable:?}: {reason}")]
+    InitialValue { variable: String, reason: String },
+
     /// The FMU ships no co-simulation interface, so it cannot be stepped by a
     /// conductor at all. Model exchange FMUs need a solver, which is a
     /// different thing to build than an adapter.

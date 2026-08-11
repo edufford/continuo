@@ -6,7 +6,10 @@
 //! suites for scheduling and delivery.
 
 use continuo_core::{Component, ComponentPath, KeyExpr, Message, SimDuration, SimTime, StepCtx};
-use continuo_fmi::{FmuComponent, FmuMapping, InputBinding, OutputBinding, fixture_path};
+use continuo_fmi::{
+    FmuComponent, FmuMapping, InputBinding, OutputBinding, fixture_path,
+    json_pointers_for_dimensions,
+};
 use serde_json::{Value, json};
 
 const WORLD: &str = "continuo/test";
@@ -332,4 +335,156 @@ fn an_fmu_handles_its_own_events_when_event_mode_is_off() {
         after.clone().any(|h| h > lowest + 0.01),
         "bounced without the adapter entering event mode: lowest {lowest}"
     );
+}
+
+/// StateSpace computes `y = C x + D u` over matrices sized by the structural
+/// parameters `m`, `n` and `r`, all declared with a start of 3.
+///
+/// These tests drive the `D u` half, the direct feedthrough, because it shows
+/// on the first step and needs no state. The `C x` half is unreachable here:
+/// the fixture's own `model.c` writes `x[i] = x0[i]` and then `x[i] = 0` on
+/// the next line, so the initial state vector cannot be observed at all.
+///
+/// Every matrix is set explicitly. FMI requires an array to be written again
+/// after a structural parameter changes its size, and these all change size
+/// together.
+fn state_space(sizes: &[(&str, u64)], d: Value) -> FmuMapping {
+    let width = sizes
+        .iter()
+        .find(|(name, _)| *name == "n")
+        .map_or(3, |(_, size)| *size as usize);
+    let zeros = json!(vec![vec![0.0; width]; width]);
+
+    let mut mapping = empty_mapping(1000);
+    mapping.initial_values = sizes
+        .iter()
+        .map(|(name, size)| ((*name).to_string(), json!(size)))
+        .chain([
+            ("A".to_string(), zeros.clone()),
+            ("B".to_string(), zeros.clone()),
+            ("C".to_string(), zeros),
+            ("D".to_string(), d),
+        ])
+        .collect();
+    mapping.outputs = vec![OutputBinding::new("y", key("y"))];
+    mapping
+}
+
+/// An identity matrix of `size`, written as nested arrays.
+fn identity(size: usize) -> Value {
+    json!(
+        (0..size)
+            .map(|row| (0..size)
+                .map(|column| if row == column { 1.0 } else { 0.0 })
+                .collect::<Vec<_>>())
+            .collect::<Vec<_>>()
+    )
+}
+
+#[test]
+fn an_array_sized_by_a_structural_parameter_binds_at_its_declared_start() {
+    // No size set, so they are the XML's own: m = n = r = 3, and `u` takes
+    // three values.
+    let mut mapping = state_space(&[], identity(3));
+    mapping.inputs = vec![
+        InputBinding::new("u", key("u")).with_pointers(json_pointers_for_dimensions("/u", &[3])),
+    ];
+    let mut fmu = FmuComponent::new("ss", fixture_path("StateSpace"), mapping).expect("build");
+
+    let published = step(
+        &mut fmu,
+        SimTime::ZERO,
+        vec![message("u", json!({"u": [1.0, 2.0, 3.0]}))],
+    );
+    assert_eq!(
+        published[0].1["y"],
+        json!([1.0, 2.0, 3.0]),
+        "with D the identity, y is u, three values wide"
+    );
+}
+
+#[test]
+fn a_structural_parameter_set_at_construction_resizes_its_arrays() {
+    // Two rather than three, which is only possible if configuration mode ran
+    // and the dimensions were resolved from the mapping rather than from the
+    // XML. Binding `u` with two pointers would fail construction otherwise,
+    // and `y` would come back three wide.
+    let mut mapping = state_space(&[("m", 2), ("n", 2), ("r", 2)], identity(2));
+    mapping.inputs = vec![
+        InputBinding::new("u", key("u")).with_pointers(json_pointers_for_dimensions("/u", &[2])),
+    ];
+    let mut fmu = FmuComponent::new("ss", fixture_path("StateSpace"), mapping).expect("build");
+
+    let published = step(
+        &mut fmu,
+        SimTime::ZERO,
+        vec![message("u", json!({"u": [4.0, 5.0]}))],
+    );
+    assert_eq!(
+        published[0].1["y"],
+        json!([4.0, 5.0]),
+        "every array resized together with the parameter that sizes them"
+    );
+}
+
+#[test]
+fn an_array_binding_whose_pointer_count_misses_the_dimension_fails_at_construction() {
+    // The check that stops a rebuilt FMU and a stale mapping from drifting
+    // apart in silence, where the FMU would otherwise read whatever the tail
+    // of the buffer held.
+    let mut mapping = state_space(&[], identity(3));
+    mapping.inputs = vec![
+        InputBinding::new("u", key("u")).with_pointers(json_pointers_for_dimensions("/u", &[2])),
+    ];
+
+    let reason = match FmuComponent::new("ss", fixture_path("StateSpace"), mapping) {
+        Err(error) => error.to_string(),
+        Ok(_) => panic!("two pointers should not bind a three-value variable"),
+    };
+    assert!(reason.contains("\"u\""), "{reason}");
+    assert!(reason.contains('3'), "{reason}");
+    assert!(reason.contains('2'), "{reason}");
+}
+
+#[test]
+fn a_matrix_binds_row_major() {
+    // A transposed matrix still runs and still publishes numbers, so the
+    // order is pinned by a value rather than left to a comment. `D` is
+    // asymmetric here, and `y = D u` reads it out directly.
+    let run = |d: Value| {
+        let mut mapping = state_space(&[("m", 2), ("n", 2), ("r", 2)], d);
+        mapping.inputs = vec![
+            InputBinding::new("u", key("u"))
+                .with_pointers(json_pointers_for_dimensions("/u", &[2])),
+        ];
+        let mut fmu = FmuComponent::new("ss", fixture_path("StateSpace"), mapping).expect("build");
+        step(
+            &mut fmu,
+            SimTime::ZERO,
+            vec![message("u", json!({"u": [3.0, 7.0]}))],
+        )[0]
+        .1["y"]
+            .clone()
+    };
+
+    // Row-major means the outer array is the first index, so this D takes the
+    // second element of u into the first element of y.
+    assert_eq!(run(json!([[0.0, 1.0], [0.0, 0.0]])), json!([7.0, 0.0]));
+    assert_eq!(run(json!([[0.0, 0.0], [1.0, 0.0]])), json!([0.0, 3.0]));
+
+    // The same matrix written flat, which is how the standard spells one in a
+    // start attribute, has to mean the same thing.
+    assert_eq!(run(json!([0.0, 1.0, 0.0, 0.0])), json!([7.0, 0.0]));
+}
+
+#[test]
+fn an_array_output_publishes_as_an_array() {
+    // The shape an output takes is the FMU's own, so a vector publishes as a
+    // JSON array at the pointer its name derives rather than as N messages.
+    let mapping = state_space(&[], identity(3));
+    let mut fmu = FmuComponent::new("ss", fixture_path("StateSpace"), mapping).expect("build");
+
+    let published = step(&mut fmu, SimTime::ZERO, Vec::new());
+    assert!(published[0].1["y"].is_array(), "{}", published[0].1);
+    assert_eq!(published[0].1["y"].as_array().unwrap().len(), 3);
 }
