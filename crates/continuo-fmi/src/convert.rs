@@ -20,6 +20,8 @@ use std::ffi::CString;
 use continuo_core::CoreError;
 use serde_json::Value;
 
+use crate::base64;
+
 /// Fails naming the variable, the type it declares, and what it was handed.
 ///
 /// The variable name is the useful half: a mapping points at an FMU built
@@ -183,6 +185,31 @@ pub fn from_fmi_string(value: &CString, variable: &str) -> Result<Value, CoreErr
         })
 }
 
+/// A payload value as an FMI Binary, decoded from base64.
+///
+/// Strict about the spelling: one encoding is pinned, standard alphabet with
+/// padding and no line breaks, and accepting a second spelling would mean two
+/// payloads for one value.
+pub fn to_fmi_binary(value: &Value, variable: &str) -> Result<Vec<u8>, CoreError> {
+    let text = value
+        .as_str()
+        .ok_or_else(|| mismatch(variable, "Binary", value))?;
+
+    base64::decode(text).map_err(|source| CoreError::ComponentFailure {
+        reason: format!("variable {variable:?} is declared Binary, and {source}"),
+    })
+}
+
+/// An FMI Binary as a payload value, encoded as base64.
+///
+/// JSON has no bytes, so this is the one type whose payload shape is a
+/// convention rather than a match. CBOR does carry byte strings natively, so
+/// a binary wire mode would want this to change, and that is the concrete
+/// thing that would earn core a payload value type of its own.
+pub fn from_fmi_binary(value: &[u8], _variable: &str) -> Result<Value, CoreError> {
+    Ok(Value::String(base64::encode(value)))
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -296,6 +323,30 @@ mod tests {
 
         let valid = CString::new("hello").unwrap();
         assert_eq!(from_fmi_string(&valid, "v").unwrap(), json!("hello"));
+    }
+
+    #[test]
+    fn a_binary_value_round_trips_through_canonical_base64() {
+        let bytes: Vec<u8> = (0..=255).collect();
+        let encoded = from_fmi_binary(&bytes, "blob").unwrap();
+        assert_eq!(to_fmi_binary(&encoded, "blob").unwrap(), bytes);
+
+        // Pinned as text, since a Binary output reaches the world hash as
+        // whatever these characters are.
+        assert_eq!(from_fmi_binary(b"foobar", "v").unwrap(), json!("Zm9vYmFy"));
+        assert_eq!(to_fmi_binary(&json!("Zm9vYmFy"), "v").unwrap(), b"foobar");
+    }
+
+    #[test]
+    fn binary_that_is_not_canonical_base64_halts_naming_the_variable() {
+        let reason = to_fmi_binary(&json!("Zg="), "blob")
+            .unwrap_err()
+            .to_string();
+        assert!(reason.contains("blob"), "{reason}");
+        assert!(reason.contains("Binary"), "{reason}");
+
+        assert!(to_fmi_binary(&json!("Zh=="), "v").is_err());
+        assert!(to_fmi_binary(&json!(3), "v").is_err());
     }
 
     #[test]
