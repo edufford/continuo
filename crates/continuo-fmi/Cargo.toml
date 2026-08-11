@@ -14,3 +14,11 @@ fmi = { workspace = true }
 # the wire format out of this crate.
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+# `fmi` logs through `log`; tracing-subscriber's default `tracing-log`
+# feature bridges that into tracing, which is what the rest of the workspace
+# uses. An FMU's own diagnostics are otherwise invisible.
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

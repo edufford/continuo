@@ -46,6 +46,25 @@ pub enum FmuConstructionError {
         available: Vec<String>,
     },
 
+    /// The component id is not a legal one.
+    #[error("{0}")]
+    Id(#[source] continuo_core::CoreError),
+
+    /// The mapping's period does not land on the FMU's own step size.
+    ///
+    /// An FMU declaring `fixedInternalStepSize` steps internally at that size
+    /// whatever it is asked for, so a period that is not a whole number of
+    /// them reads values from an instant other than the one the caller means.
+    #[error(
+        "instance {instance_name:?} would step every {period} s, which is not a whole number \
+         of the {fixed_internal_step_size} s steps this FMU takes internally"
+    )]
+    Period {
+        instance_name: String,
+        period: f64,
+        fixed_internal_step_size: f64,
+    },
+
     /// The FMU ships no co-simulation interface, so it cannot be stepped by a
     /// conductor at all. Model exchange FMUs need a solver, which is a
     /// different thing to build than an adapter.

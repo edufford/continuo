@@ -7,10 +7,12 @@
 //!
 //! [`Component`]: continuo_core::Component
 
+mod component;
 pub mod convert;
 mod error;
 mod mapping;
 
+pub use component::{FmuComponent, fixture_path};
 pub use error::FmuConstructionError;
 pub use mapping::{
     FmuMapping, InputBinding, OutputBinding, json_pointer_from_name, json_pointers_for_array,
