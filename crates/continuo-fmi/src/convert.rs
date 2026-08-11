@@ -86,10 +86,13 @@ pub fn to_f64(value: &Value, variable: &str) -> Result<f64, CoreError> {
 /// changes the digits after the fifteenth, which is what asking for a
 /// Float32 means, while narrowing 1e300 produces infinity, which is a
 /// different number rather than a rounder one.
+///
+/// Narrowing is the only way to reach infinity here, because a payload
+/// cannot deliver one. See `a_payload_cannot_deliver_a_non_finite_float`,
+/// which pins that premise.
 pub fn to_f32(value: &Value, variable: &str) -> Result<f32, CoreError> {
-    let wide = to_f64(value, variable)?;
-    let narrow = wide as f32;
-    if narrow.is_finite() || !wide.is_finite() {
+    let narrow = to_f64(value, variable)? as f32;
+    if narrow.is_finite() {
         Ok(narrow)
     } else {
         Err(mismatch(variable, "a Float32", value))
@@ -228,6 +231,22 @@ mod tests {
         assert_eq!(to_f32(&json!(0.1), "v").unwrap(), 0.1_f32);
         assert!(to_f32(&json!(1e300), "v").is_err());
         assert!(to_f32(&json!(-1e300), "v").is_err());
+    }
+
+    #[test]
+    fn a_payload_cannot_deliver_a_non_finite_float() {
+        // What `to_f32` rests on, and a property of `serde_json` rather than
+        // of anything here, so it is pinned rather than assumed. With the
+        // workspace's `arbitrary_precision`, a number too large for an f64
+        // stays exact in the payload and refuses to narrow, and a non-finite
+        // float has no JSON spelling to arrive as in the first place.
+        let parsed: Value = serde_json::from_str("1e400").unwrap();
+        assert!(parsed.is_number(), "kept as a number: {parsed}");
+        assert!(to_f64(&parsed, "v").is_err());
+
+        assert_eq!(json!(f64::INFINITY), Value::Null);
+        assert_eq!(json!(f64::NAN), Value::Null);
+        assert!(to_f64(&Value::Null, "v").is_err());
     }
 
     #[test]
