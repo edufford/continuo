@@ -203,9 +203,12 @@ pub fn to_fmi_binary(value: &Value, variable: &str) -> Result<Vec<u8>, CoreError
 /// An FMI Binary as a payload value, encoded as base64.
 ///
 /// JSON has no bytes, so this is the one type whose payload shape is a
-/// convention rather than a match. CBOR does carry byte strings natively, so
-/// a binary wire mode would want this to change, and that is the concrete
-/// thing that would earn core a payload value type of its own.
+/// convention rather than a match.
+// TODO(PLAN "Deferred"): CBOR carries byte strings natively, so a binary wire
+// mode would put these bytes on the wire as bytes. This is the concrete case
+// that would earn core a payload value of its own, since `serde_json::Value`
+// has no variant to hold one, and it is where the deferred large-payload item
+// first bites.
 pub fn from_fmi_binary(value: &[u8], _variable: &str) -> Result<Value, CoreError> {
     Ok(Value::String(base64::encode(value)))
 }
