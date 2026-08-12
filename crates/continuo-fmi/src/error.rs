@@ -85,10 +85,31 @@ pub enum FmuConstructionError {
     Dimension {
         variable: String,
         /// How many the mapping supplies, counting JSON Pointers where it
-        /// binds a message and values where it writes them out.
+        /// binds a message and values where it writes them out. A pattern
+        /// never lands here, since it takes its count from the variable
+        /// rather than stating one.
         supplied: usize,
         /// How many the variable holds, the product of its dimensions.
         expected: usize,
+        dimensions: Vec<usize>,
+    },
+
+    /// A pointer pattern's wildcards do not match the variable's rank.
+    ///
+    /// One `*` per dimension, so a scalar's pattern carries none, a vector's
+    /// one, a matrix's two, and a variable of N dimensions N.
+    ///
+    /// Reported instead of the count it leads to, because the missing
+    /// wildcard is the mistake: `/u` against a variable holding three values
+    /// would otherwise be told it supplies one of three, which says nothing
+    /// about where the other two were meant to come from.
+    #[error(
+        "variable {variable:?} takes one wildcard per dimension {dimensions:?}, and pattern {pattern:?} has {wildcards}"
+    )]
+    Wildcard {
+        variable: String,
+        pattern: String,
+        wildcards: usize,
         dimensions: Vec<usize>,
     },
 

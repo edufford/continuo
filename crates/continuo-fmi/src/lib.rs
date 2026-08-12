@@ -19,8 +19,8 @@ use std::path::PathBuf;
 pub use error::FmuConstructionError;
 pub use fmu_component::FmuComponent;
 pub use fmu_mapping::{
-    FmuMapping, InputBinding, OutputBinding, escape_json_pointer_token, json_pointer_from_name,
-    json_pointers_for_array, json_pointers_for_dimensions, unescape_json_pointer_token,
+    FmuMapping, InputBinding, InputSource, OutputBinding, escape_json_pointer_token,
+    json_pointer_from_name, unescape_json_pointer_token,
 };
 
 /// Where a vendored reference FMU lives, for tests and examples.

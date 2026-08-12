@@ -728,6 +728,35 @@ it got there, including the roads not taken.
     diverging FMU is the likeliest thing to emit one. The existing tripwire
     is `the_fast_path_premise_holds`.
 
+- **2026-08-11**: **An array input binds through one pattern, whose `*` the
+  FMU's own dimensions expand.** `/detections/*/range` feeds a variable of any
+  size, one `*` per dimension and row-major, so a mapping never writes down a
+  count the model already declares. The plan had a helper generating a pointer
+  per element from a prefix, a count and a field name, which meant stating a
+  size the FMU states too, and the dimension check existed because the two
+  could drift.
+  - Omitting the source entirely derives it from the variable's name, plus one
+    wildcard per dimension, so an FMU authored beside its host writes no
+    addresses at all whatever the rank.
+  - Pointers written out stay, for a payload no single pattern reaches:
+    elements scattered rather than lying in one array, or an order the message
+    does not carry. That is now the only form stating a count of its own, and
+    so the only one the dimension check still guards.
+  - The two forms are told apart by shape rather than by a tag, which is a
+    decision about the scenario file rather than about Rust. A pointer is a
+    string and a list of them is a list, so neither can be read as the other,
+    and no name of a Rust variant has to leak into a config format. An object
+    was the obvious third form, `{array, field}`, and it is the one that was
+    dropped: a string is constrained by being a string, but "an object"
+    constrains nothing, so every key inside it would have to be policed by
+    hand. Putting the field into the pointer removes the open container
+    instead of fencing it, and reaches nested fields an object form could not
+    name.
+  - The cost is a payload key spelled exactly `*`, which no escape gives back,
+    since RFC 6901 has none and inventing one would be extending the RFC. Only
+    a whole token counts, so `/a*b` still addresses `a*b`, and payload keys
+    come from serde field names, where `*` is not a legal identifier.
+
 - **2026-08-11**: **Every FMI 3.0 variable type binds except Clock, dispatched
   from what the FMU declares.** The adapter reads each variable's type out of
   `modelDescription.xml`; a mapping never names one, since that would be a

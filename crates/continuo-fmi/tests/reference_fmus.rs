@@ -6,10 +6,7 @@
 //! suites for scheduling and delivery.
 
 use continuo_core::{Component, ComponentPath, KeyExpr, Message, SimDuration, SimTime, StepCtx};
-use continuo_fmi::{
-    FmuComponent, FmuMapping, InputBinding, OutputBinding, fixture_path,
-    json_pointers_for_dimensions,
-};
+use continuo_fmi::{FmuComponent, FmuMapping, InputBinding, OutputBinding, fixture_path};
 use serde_json::{Value, json};
 
 const WORLD: &str = "continuo/test";
@@ -102,7 +99,7 @@ fn a_reference_fmu_loads_instantiates_and_steps() {
 fn inputs_reach_the_fmu_and_outputs_carry_them_back() {
     let mut mapping = empty_mapping(100);
     mapping.inputs =
-        vec![InputBinding::new("Float64_continuous_input", key("in")).with_pointers(["/value"])];
+        vec![InputBinding::new("Float64_continuous_input", key("in")).with_pointer("/value")];
     mapping.outputs = vec![OutputBinding::new("Float64_continuous_output", key("out"))];
     let mut fmu =
         FmuComponent::new("feedthrough", fixture_path("Feedthrough"), mapping).expect("build");
@@ -134,7 +131,7 @@ fn an_input_set_during_initialization_survives_to_the_first_output() {
     // so the first published value answers it.
     let mut mapping = empty_mapping(100);
     mapping.inputs =
-        vec![InputBinding::new("Float64_continuous_input", key("in")).with_pointers(["/value"])];
+        vec![InputBinding::new("Float64_continuous_input", key("in")).with_pointer("/value")];
     mapping.outputs = vec![OutputBinding::new("Float64_continuous_output", key("out"))];
     let mut fmu =
         FmuComponent::new("feedthrough", fixture_path("Feedthrough"), mapping).expect("build");
@@ -272,7 +269,7 @@ fn a_missing_message_holds_the_previous_value() {
     // variable, so the FMU keeps what it had rather than reading a default.
     let mut mapping = empty_mapping(100);
     mapping.inputs =
-        vec![InputBinding::new("Float64_continuous_input", key("in")).with_pointers(["/value"])];
+        vec![InputBinding::new("Float64_continuous_input", key("in")).with_pointer("/value")];
     mapping.outputs = vec![OutputBinding::new("Float64_continuous_output", key("out"))];
     let mut fmu =
         FmuComponent::new("feedthrough", fixture_path("Feedthrough"), mapping).expect("build");
@@ -296,7 +293,7 @@ fn only_the_newest_message_on_a_key_is_applied() {
     // and overwritten, it is never read at all.
     let mut mapping = empty_mapping(100);
     mapping.inputs =
-        vec![InputBinding::new("Float64_continuous_input", key("in")).with_pointers(["/value"])];
+        vec![InputBinding::new("Float64_continuous_input", key("in")).with_pointer("/value")];
     mapping.outputs = vec![OutputBinding::new("Float64_continuous_output", key("out"))];
     let mut fmu =
         FmuComponent::new("feedthrough", fixture_path("Feedthrough"), mapping).expect("build");
@@ -419,9 +416,7 @@ fn an_array_sized_by_a_structural_parameter_binds_at_its_declared_start() {
     // No size set, so they are the XML's own: m = n = r = 3, and `u` takes
     // three values.
     let mut mapping = state_space(&[], identity(3));
-    mapping.inputs = vec![
-        InputBinding::new("u", key("u")).with_pointers(json_pointers_for_dimensions("/u", &[3])),
-    ];
+    mapping.inputs = vec![InputBinding::new("u", key("u")).with_pointer("/u/*")];
     let mut fmu = FmuComponent::new("ss", fixture_path("StateSpace"), mapping).expect("build");
 
     let published = step(
@@ -440,12 +435,11 @@ fn an_array_sized_by_a_structural_parameter_binds_at_its_declared_start() {
 fn a_structural_parameter_set_at_construction_resizes_its_arrays() {
     // Two rather than three, which is only possible if configuration mode ran
     // and the dimensions were resolved from the mapping rather than from the
-    // XML. Binding `u` with two pointers would fail construction otherwise,
-    // and `y` would come back three wide.
+    // XML. `/u/*` would otherwise expand to three pointers, the third of
+    // which this message does not answer, and the step would halt rather than
+    // publish.
     let mut mapping = state_space(&[("m", 2), ("n", 2), ("r", 2)], identity(2));
-    mapping.inputs = vec![
-        InputBinding::new("u", key("u")).with_pointers(json_pointers_for_dimensions("/u", &[2])),
-    ];
+    mapping.inputs = vec![InputBinding::new("u", key("u")).with_pointer("/u/*")];
     let mut fmu = FmuComponent::new("ss", fixture_path("StateSpace"), mapping).expect("build");
 
     let published = step(
@@ -464,11 +458,10 @@ fn a_structural_parameter_set_at_construction_resizes_its_arrays() {
 fn an_array_binding_whose_pointer_count_misses_the_dimension_fails_at_construction() {
     // The check that stops a rebuilt FMU and a stale mapping from drifting
     // apart in silence, where the FMU would otherwise read whatever the tail
-    // of the buffer held.
+    // of the buffer held. Only a written-out list can drift, since it is the
+    // only form that states a count.
     let mut mapping = state_space(&[], identity(3));
-    mapping.inputs = vec![
-        InputBinding::new("u", key("u")).with_pointers(json_pointers_for_dimensions("/u", &[2])),
-    ];
+    mapping.inputs = vec![InputBinding::new("u", key("u")).with_pointer(["/u/0", "/u/1"])];
 
     let reason = match FmuComponent::new("ss", fixture_path("StateSpace"), mapping) {
         Err(error) => error.to_string(),
@@ -480,16 +473,68 @@ fn an_array_binding_whose_pointer_count_misses_the_dimension_fails_at_constructi
 }
 
 #[test]
+fn one_pattern_binds_whatever_size_the_fmu_turns_out_to_be() {
+    // The same mapping text against two differently sized FMUs, which is what
+    // taking the count from the variable buys: nothing here says three or
+    // two, and the FMU is asked instead.
+    let bind = |sizes: &[(&str, u64)], size: usize, u: Value| {
+        let mut mapping = state_space(sizes, identity(size));
+        mapping.inputs = vec![InputBinding::new("u", key("u")).with_pointer("/u/*")];
+        let mut fmu = FmuComponent::new("ss", fixture_path("StateSpace"), mapping).expect("build");
+        step(
+            &mut fmu,
+            SimTime::ZERO,
+            vec![message("u", json!({ "u": u }))],
+        )[0]
+        .payload["y"]
+            .clone()
+    };
+
+    assert_eq!(bind(&[], 3, json!([1.0, 2.0, 3.0])), json!([1.0, 2.0, 3.0]));
+    assert_eq!(
+        bind(&[("m", 2), ("n", 2), ("r", 2)], 2, json!([4.0, 5.0])),
+        json!([4.0, 5.0])
+    );
+}
+
+#[test]
+fn a_wildcard_gathers_one_field_out_of_every_element() {
+    // The radar's shape against a real FMU: the payload is a list of object
+    // dictionaries and the variable is a plain array, so the elements have to
+    // be picked out one field at a time.
+    let mut mapping = state_space(&[], identity(3));
+    mapping.inputs = vec![InputBinding::new("u", key("u")).with_pointer("/detections/*/range")];
+    let mut fmu = FmuComponent::new("ss", fixture_path("StateSpace"), mapping).expect("build");
+
+    let scan = json!({"detections": [{"range": 8.0}, {"range": 20.0}, {"range": 31.0}]});
+    let published = step(&mut fmu, SimTime::ZERO, vec![message("u", scan)]);
+    assert_eq!(published[0].payload["y"], json!([8.0, 20.0, 31.0]));
+}
+
+#[test]
+fn a_pattern_that_walks_the_wrong_number_of_axes_fails_at_construction() {
+    // A pattern says which axes it walks by where its wildcards sit, so `/u`
+    // against an array would bind one element of a variable holding three.
+    let mut mapping = state_space(&[], identity(3));
+    mapping.inputs = vec![InputBinding::new("u", key("u")).with_pointer("/u")];
+
+    let reason = match FmuComponent::new("ss", fixture_path("StateSpace"), mapping) {
+        Err(error) => error.to_string(),
+        Ok(_) => panic!("a pattern with no wildcard should not bind an array"),
+    };
+    assert!(reason.contains("\"u\""), "{reason}");
+    assert!(reason.contains("\"/u\""), "{reason}");
+    assert!(reason.contains('3'), "{reason}");
+}
+
+#[test]
 fn a_matrix_binds_row_major() {
     // A transposed matrix still runs and still publishes numbers, so the
     // order is pinned by a value rather than left to a comment. `D` is
     // asymmetric here, and `y = D u` reads it out directly.
     let run = |d: Value| {
         let mut mapping = state_space(&[("m", 2), ("n", 2), ("r", 2)], d);
-        mapping.inputs = vec![
-            InputBinding::new("u", key("u"))
-                .with_pointers(json_pointers_for_dimensions("/u", &[2])),
-        ];
+        mapping.inputs = vec![InputBinding::new("u", key("u")).with_pointer("/u/*")];
         let mut fmu = FmuComponent::new("ss", fixture_path("StateSpace"), mapping).expect("build");
 
         let published = step(

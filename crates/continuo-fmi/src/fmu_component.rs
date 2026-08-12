@@ -105,25 +105,16 @@ impl FmuComponent {
             }
         }
 
+        // Binding is where the FMU's own sizes reach the mapping, so it comes
+        // after the structural parameters and not before: a pattern's
+        // wildcards expand over those dimensions, and a list written out is
+        // checked against them.
         let inputs = inputs
             .into_iter()
             .map(|binding| {
                 let variable =
                     resolve_fmu_var(description, &binding.fmu_var_name, &structural_sizes)?;
-
-                // The pointer count is the mapping's claim about how large
-                // this variable is, and the FMU is the authority. Left
-                // unchecked, a rebuilt FMU and a stale mapping drift apart
-                // and the FMU reads whatever the tail of the buffer held.
-                if binding.pointers.len() != variable.len() {
-                    return Err(FmuConstructionError::Dimension {
-                        variable: variable.name.clone(),
-                        supplied: binding.pointers.len(),
-                        expected: variable.len(),
-                        dimensions: variable.dimensions.clone(),
-                    });
-                }
-                Ok(BoundInput { binding, variable })
+                BoundInput::new(binding, variable)
             })
             .collect::<Result<Vec<_>, FmuConstructionError>>()?;
         let outputs = outputs
@@ -282,7 +273,7 @@ impl FmuComponent {
             let Some(payload) = payloads.get(input.binding.subscribed_key.as_str()) else {
                 continue;
             };
-            let values = input.binding.resolve(payload)?;
+            let values = input.resolve(payload)?;
             set_input_var(&mut self.instance, &self.id, input, &values)?;
         }
 
