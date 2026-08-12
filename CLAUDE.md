@@ -28,6 +28,28 @@ closes, so nothing there is a permanent record.
   divide, sqrt.
 - The workspace contains no `unsafe`.
 
+## Scale and churn are design constraints
+
+A world is not a fixed handful of actors in one process. A design has to hold
+up as the population grows, as actors join and leave mid-run, and as
+components end up on separate hosts.
+
+- **Many actors.** Prefer work that grows with what changed over work that
+  grows with the population. `traffic_scale` is where that gets measured, and
+  PLAN.md's deferred list already names what it expects to bite first: a
+  subscriber that can ask for only the latest message per key, and a
+  consolidated scene view for consumers that want the world rather than every
+  message in it.
+- **Actors come and go.** Join and leave are ordinary rather than an edge
+  case. The conductor publishes each on the world's membership key as status,
+  saying it already happened, and anything holding per-actor state must
+  subscribe there and drop what it kept.
+- **One process now, several hosts later.** Milestone 7 puts components on a
+  network, so anything assuming shared memory, a shared clock, or that every
+  component is reachable in this address space is written to be rewritten.
+  Messages are data and a step is a request and a reply, which is what keeps
+  that move a change of transport rather than of design.
+
 ## Verify before every commit
 
 In CI's order, cheapest first, so a formatting slip is reported in seconds
