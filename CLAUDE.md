@@ -79,10 +79,13 @@ messages, PR descriptions, console strings.
   before, a semicolon between two independent clauses, or two sentences. A
   clause that needs a dash to attach usually wants to be its own sentence.
   Hyphens inside compound words, numeric ranges and CLI flags stay.
-- **Plain ASCII characters.** Write `...` and not `…`, `->` and not `→`, `x`
-  and not `×`, and spell out `pi` and `+/-` rather than reaching for `π` and
-  `±`. README's architecture diagram is the one place a non-ASCII character
-  earns its keep, since box drawing is what draws it.
+- **Plain ASCII characters.** Write three periods rather than an ellipsis
+  character, `->` rather than an arrow, `x` rather than a multiplication
+  sign, and spell out `pi` and `+/-` rather than reaching for the Greek
+  letter or the plus-minus sign. Named here rather than shown, so this file
+  stays ASCII itself and a search for the offenders never lands on the rule
+  against them. README's architecture diagram is the one place a non-ASCII
+  character earns its keep, since box drawing is what draws it.
 - **Comments describe the code as it is now**, never what it used to do or
   what an earlier version got wrong. That history belongs in git and the PR.
   Saying why an alternative was rejected is welcome, in the conditional:
@@ -127,9 +130,9 @@ messages, PR descriptions, console strings.
   there is no need to paste it into chat.
 - Never force push.
 - Comments posted through `gh` authenticate as the repository owner. Every one
-  Claude writes is italicized throughout and ends with
-  `*🤖 Posted by Claude Code*`, so it reads as distinct from the owner's own
-  words.
+  Claude writes is italicized throughout and ends with a footer line reading
+  "Posted by Claude Code" behind a robot-face emoji, italic like the rest, so
+  it reads as distinct from the owner's own words.
 
 ## Editing files
 
