@@ -219,7 +219,7 @@ impl InputBinding {
             // ordinary pattern below, and one that cannot fail the count
             // check, having been built from the same count.
             None => {
-                let mut derived = json_pointer_from_name(&self.fmu_var_name);
+                let mut derived = json_pointer_from_fmu_var_name(&self.fmu_var_name);
                 for _ in dimensions {
                     derived.push_str("/*");
                 }
@@ -314,7 +314,7 @@ impl OutputBinding {
     /// Publishes a variable on a key, at the payload path its name spells.
     pub fn new(fmu_var_name: impl Into<String>, published_key: KeyExpr) -> Self {
         let fmu_var_name = fmu_var_name.into();
-        let payload_pointer = json_pointer_from_name(&fmu_var_name);
+        let payload_pointer = json_pointer_from_fmu_var_name(&fmu_var_name);
 
         // Return a binding publishing where its own name spells.
         OutputBinding {
@@ -331,9 +331,20 @@ impl OutputBinding {
     }
 }
 
-/// The JSON Pointer an FMI structured name spells: `.` nests and `[i]`
-/// indexes, so `position.x` addresses `/position/x` and `a[1][2]` addresses
-/// `/a/1/2`.
+/// The JSON Pointer an FMI structured name spells, read as the standard's
+/// own grammar writes one.
+///
+/// | name | pointer |
+/// | ---- | ------- |
+/// | `position.x` | `/position/x` |
+/// | `pipe[3,4].T[14]` | `/pipe/3/4/T/14` |
+/// | `robot.axis.'motor #234'` | `/robot/axis/motor #234` |
+///
+/// So `.` nests, one bracket group indexes as many axes as it lists commas,
+/// and a quoted name is a single token however it is punctuated, since the
+/// grammar lets one hold `.`, `[`, `]` and `,` alike. An index travels as it
+/// was written, because FMI leaves it undefined whether the convention counts
+/// from 0 or from 1, and only the payload can say.
 ///
 /// FMI 3.0's structured naming convention and RFC 6901 describe the same
 /// shape in different punctuation, which is why an FMU authored beside its
@@ -341,17 +352,100 @@ impl OutputBinding {
 /// pointers at all. It is a convenience rather than an assumption: a
 /// third-party FMU names things in its own vocabulary, and that is what
 /// [`InputBinding::with_pointer`] is for.
-pub fn json_pointer_from_name(name: &str) -> String {
-    let mut pointer = String::new();
-    for segment in name.split(['.', '[']) {
-        pointer.push('/');
-        pointer.push_str(&escape_json_pointer_token(
-            segment.strip_suffix(']').unwrap_or(segment),
-        ));
+///
+/// The FMU's `variableNamingConvention` is not consulted. Strictly it should
+/// be, since the grammar above is what `structured` means and an FMU
+/// declaring nothing is `flat`. But a dotted name means hierarchy in practice
+/// wherever it appears, and plenty of exporters never set the attribute. An
+/// FMU that really did mean a literal `a.b` gets a pointer that finds
+/// nothing, which one `with_pointer` line corrects.
+///
+/// A name that does not parse is taken literally rather than refused, on the
+/// same argument: the pointer it then spells finds nothing and halts naming
+/// itself, which says more than a complaint about punctuation would.
+pub fn json_pointer_from_fmu_var_name(fmu_var_name: &str) -> String {
+    // A derivative names another variable rather than a path through a
+    // payload, so there is nothing to nest and its punctuation is syntax.
+    if fmu_var_name.starts_with("der(") {
+        return format!("/{}", escape_json_pointer_token(fmu_var_name));
     }
 
+    let mut tokens: Vec<String> = Vec::new();
+    let mut token = String::new();
+    let mut characters = fmu_var_name.chars();
+
+    while let Some(character) = characters.next() {
+        match character {
+            // Quotes are the standard's way of admitting a name that would
+            // otherwise read as punctuation, so what they enclose is taken
+            // whole and the quotes themselves do not travel.
+            '\'' => {
+                while let Some(quoted) = characters.next() {
+                    match quoted {
+                        '\'' => break,
+                        '\\' => token.push(unescape_modelica(characters.next())),
+                        other => token.push(other),
+                    }
+                }
+            }
+            '.' => finish_token(&mut tokens, &mut token),
+            '[' => {
+                finish_token(&mut tokens, &mut token);
+
+                // One group indexes every axis at this level, so `a[1,2]`
+                // names two of them rather than a token spelled `1,2`.
+                let mut index = String::new();
+                for indexed in characters.by_ref() {
+                    match indexed {
+                        ',' => finish_token(&mut tokens, &mut index),
+                        ']' => break,
+                        other => index.push(other),
+                    }
+                }
+                finish_token(&mut tokens, &mut index);
+            }
+            other => token.push(other),
+        }
+    }
+    finish_token(&mut tokens, &mut token);
+
     // Return the pointer the name spells.
-    pointer
+    tokens
+        .iter()
+        .map(|token| format!("/{}", escape_json_pointer_token(token)))
+        .collect()
+}
+
+/// Finishes a token, if the name has actually put anything in one, and
+/// clears the buffer for the next.
+///
+/// Nothing separates the `]` of an index from the `.` that may follow it, so
+/// emptiness is how that pair is told apart from a name with a gap in it.
+fn finish_token(tokens: &mut Vec<String>, token: &mut String) {
+    if !token.is_empty() {
+        tokens.push(std::mem::take(token));
+    }
+}
+
+/// What one escape inside a quoted name stands for, per the Modelica string
+/// escapes the naming grammar borrows.
+///
+/// `\'`, `\"`, `\?` and `\\` all stand for the character itself, which is
+/// what the fallback covers. A backslash at the very end of a name escapes
+/// nothing, so it is kept as itself, which is how the rest of the parser
+/// treats a malformed name.
+fn unescape_modelica(escaped: Option<char>) -> char {
+    match escaped {
+        Some('a') => '\u{7}',
+        Some('b') => '\u{8}',
+        Some('f') => '\u{c}',
+        Some('n') => '\n',
+        Some('r') => '\r',
+        Some('t') => '\t',
+        Some('v') => '\u{b}',
+        Some(other) => other,
+        None => '\\',
+    }
 }
 
 // TODO(PLAN "Scenario configuration"): this pair and `insert_at_pointer` are
@@ -456,16 +550,67 @@ mod tests {
 
     #[test]
     fn a_structured_name_spells_its_own_pointer() {
-        assert_eq!(json_pointer_from_name("speed"), "/speed");
-        assert_eq!(json_pointer_from_name("position.x"), "/position/x");
-        assert_eq!(json_pointer_from_name("orientation.w"), "/orientation/w");
+        assert_eq!(json_pointer_from_fmu_var_name("speed"), "/speed");
+        assert_eq!(json_pointer_from_fmu_var_name("position.x"), "/position/x");
+        assert_eq!(
+            json_pointer_from_fmu_var_name("orientation.w"),
+            "/orientation/w"
+        );
     }
 
     #[test]
-    fn an_indexed_name_spells_an_indexed_pointer() {
-        assert_eq!(json_pointer_from_name("a[1]"), "/a/1");
-        assert_eq!(json_pointer_from_name("a[1][2]"), "/a/1/2");
-        assert_eq!(json_pointer_from_name("m.a[1][2].b"), "/m/a/1/2/b");
+    fn an_indexed_name_spells_one_token_per_axis() {
+        // FMI writes a multi-dimensional index as one bracket group with
+        // commas inside it, which the standard's own `der(pipe[3,4].T[14],2)`
+        // example shows. A JSON Pointer wants one token per axis.
+        assert_eq!(json_pointer_from_fmu_var_name("a[1]"), "/a/1");
+        assert_eq!(json_pointer_from_fmu_var_name("a[1,2]"), "/a/1/2");
+        assert_eq!(json_pointer_from_fmu_var_name("m.a[1,2].b"), "/m/a/1/2/b");
+        assert_eq!(
+            json_pointer_from_fmu_var_name("pipe[3,4].T[14]"),
+            "/pipe/3/4/T/14"
+        );
+
+        // Chained brackets are not a form the grammar generates, and cost
+        // nothing to accept.
+        assert_eq!(json_pointer_from_fmu_var_name("a[1][2]"), "/a/1/2");
+    }
+
+    #[test]
+    fn a_quoted_name_is_one_token_however_it_is_punctuated() {
+        // A quoted name may hold any of the separators, so splitting on them
+        // would spell a path out of somebody's variable name.
+        assert_eq!(json_pointer_from_fmu_var_name("'a.b'"), "/a.b");
+        assert_eq!(json_pointer_from_fmu_var_name("'a[1]'"), "/a[1]");
+        assert_eq!(
+            json_pointer_from_fmu_var_name("robot.axis.'motor #234'"),
+            "/robot/axis/motor #234"
+        );
+
+        // The quotes are the standard's syntax rather than part of the name,
+        // and what RFC 6901 reserves still needs escaping inside them.
+        assert_eq!(json_pointer_from_fmu_var_name("'a/b'"), "/a~1b");
+    }
+
+    #[test]
+    fn an_escape_inside_a_quoted_name_stands_for_its_character() {
+        // Without this a `\'` would end the quote early, and the rest of the
+        // name would be read as though it were syntax.
+        assert_eq!(json_pointer_from_fmu_var_name(r"'a\'b'"), "/a'b");
+        assert_eq!(json_pointer_from_fmu_var_name(r"'a\\b'"), "/a\\b");
+        assert_eq!(json_pointer_from_fmu_var_name(r"'a\tb'"), "/a\tb");
+    }
+
+    #[test]
+    fn a_derivative_name_stays_one_token() {
+        // `der(x)` names another variable rather than a path through a
+        // payload, so there is nothing to nest, and splitting on the
+        // punctuation inside would spell a path out of the syntax.
+        assert_eq!(json_pointer_from_fmu_var_name("der(x)"), "/der(x)");
+        assert_eq!(
+            json_pointer_from_fmu_var_name("der(pipe[3,4].T[14],2)"),
+            "/der(pipe[3,4].T[14],2)"
+        );
     }
 
     #[test]
@@ -473,9 +618,9 @@ mod tests {
         // RFC 6901 gives `~` and `/` meaning inside a token, and FMI puts no
         // such restriction on a variable name, so a name carrying either has
         // to survive the derivation rather than silently address elsewhere.
-        assert_eq!(json_pointer_from_name("a/b"), "/a~1b");
-        assert_eq!(json_pointer_from_name("a~b"), "/a~0b");
-        assert_eq!(json_pointer_from_name("a~/b"), "/a~0~1b");
+        assert_eq!(json_pointer_from_fmu_var_name("a/b"), "/a~1b");
+        assert_eq!(json_pointer_from_fmu_var_name("a~b"), "/a~0b");
+        assert_eq!(json_pointer_from_fmu_var_name("a~/b"), "/a~0~1b");
     }
 
     #[test]

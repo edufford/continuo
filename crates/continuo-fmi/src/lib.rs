@@ -20,7 +20,7 @@ pub use error::FmuConstructionError;
 pub use fmu_component::FmuComponent;
 pub use fmu_mapping::{
     FmuMapping, InputBinding, InputSource, OutputBinding, escape_json_pointer_token,
-    json_pointer_from_name, unescape_json_pointer_token,
+    json_pointer_from_fmu_var_name, unescape_json_pointer_token,
 };
 
 /// Where a vendored reference FMU lives, for tests and examples.
