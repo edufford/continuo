@@ -14,6 +14,10 @@ continuo-transport = { path = "crates/continuo-transport" }
 continuo-conductor = { path = "crates/continuo-conductor" }
 continuo-actors = { path = "crates/continuo-actors" }
 continuo-viz-bridge = { path = "crates/continuo-viz-bridge" }
+continuo-fmi = { path = "crates/continuo-fmi" }
+# Default also pulls FMI 2.0 and the layered LS-BUS standard, neither of which
+# this workspace imports.
+fmi = { version = "0.8", default-features = false, features = ["fmi3"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["arbitrary_precision", "raw_value"] }
 thiserror = "2"

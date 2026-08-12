@@ -100,6 +100,7 @@ instant, and repeats.
 | [`continuo-conductor`](crates/continuo-conductor/) | Registry (component tree as data), event schedule, the conductor loop, tick fingerprints, and the event log: `record`, `verify`, `playback` |
 | [`continuo-actors`](crates/continuo-actors/) | Sample components: waypoint path, path-follow controller, unicycle physics, pose logger, traffic spawner |
 | [`continuo-viz-bridge`](crates/continuo-viz-bridge/) | Relays a run's published messages and membership changes to a live viewer, as a transport monitor rather than a component |
+| [`continuo-fmi`](crates/continuo-fmi/) | Runs an imported FMI 3.0 Co-Simulation FMU as a component, wired to the world by a mapping rather than by code |
 | [`continuo-examples`](crates/continuo-examples/) | Runnable example worlds: `traffic` (base demo), `traffic_realtime`, `traffic_record`, `traffic_verify`, `traffic_resim`, `traffic_viz`, `traffic_scale` |
 | [`python/continuo_viz`](python/) | The viewer: reads a recorded log or a live Zenoh session, and draws the world top-down |
 
@@ -125,7 +126,9 @@ lists them all.
 
 ## Usage
 
-Requires a recent stable Rust toolchain (edition 2024, rust ≥ 1.85).
+Requires a recent stable Rust toolchain (edition 2024, rust ≥ 1.85) and
+libclang, the workspace's only native-code prerequisite. See
+[Installing libclang](#installing-libclang) below.
 
 ```sh
 # Build everything
@@ -203,6 +206,30 @@ after T, which is next-step visibility), and the logger schedules its samples
 **1 ns after** each second boundary, the smallest offset that clears same-instant
 deferral, so on-boundary poses are visible and nothing can be scheduled
 between a boundary and its sample.
+
+### Installing libclang
+
+The FMI importer's `fmi-sys` dependency runs `bindgen` over the FMI 3.0 C
+headers at build time, so **libclang** has to be present. Without it,
+`cargo build` fails in `fmi-sys` with bindgen's own message about not finding
+it.
+
+A C compiler is not enough on its own: bindgen wants the libclang shared
+library, so MSVC alone does not satisfy it. Bindgen's own
+[requirements page][bindgen-req] lists the package for each platform and is
+the place to look first.
+
+Two things that page does not cover:
+
+- On Windows, Visual Studio can supply libclang, but not by default. It is the
+  optional **C++ Clang Compiler for Windows** component, ticked under Desktop
+  development with C++ in the installer, and bindgen does not look there on
+  its own, so that route also needs `LIBCLANG_PATH` pointing at the
+  `VC\Tools\Llvm\x64\bin` directory inside the Visual Studio install.
+- CI installs nothing. Every GitHub runner image in the matrix ships LLVM,
+  which the build itself checks on all four rather than assuming.
+
+[bindgen-req]: https://rust-lang.github.io/rust-bindgen/requirements.html
 
 ### Watching a run
 

@@ -1,0 +1,25 @@
+[package]
+name = "continuo-fmi"
+description = "Runs an imported FMI 3.0 Co-Simulation FMU as a component"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+continuo-core = { workspace = true }
+fmi = { workspace = true }
+# For `Value` as the in-memory payload model and for JSON Pointer resolution,
+# not for encoding: encoding and decoding go through core, which is what keeps
+# the wire format out of this crate.
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+# Only the tests install a subscriber. `fmi` logs through `log`, and
+# tracing-subscriber's default `tracing-log` feature bridges that into
+# tracing, which is how an FMU's own diagnostics become visible. Installing
+# one from the library itself would fight whatever the host set up, so at
+# runtime this is the binary's job, as the examples already do.
+tracing-subscriber = { workspace = true }

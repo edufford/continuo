@@ -3,6 +3,7 @@
 //!
 //! Design reference: PLAN.md at the workspace root.
 
+pub mod base64;
 mod component;
 mod error;
 mod finite;

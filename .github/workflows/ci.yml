@@ -26,6 +26,14 @@ jobs:
     #
     # `fail-fast: false` earns its place here: one agent disagreeing is the
     # result, and cancelling the rest would throw away which agreed with what.
+    #
+    # Every one of these images ships LLVM, which is why no step installs
+    # libclang: `fmi-sys` runs bindgen over the FMI 3.0 headers at build time
+    # and needs it. Nothing asserts that they ship it, because the build
+    # already fails on whichever agent stops doing so, which is the report
+    # worth having. If one ever does, the fix is an install step on that
+    # agent rather than all four, and README's Installing libclang section
+    # has the packages.
     strategy:
       fail-fast: false
       matrix:

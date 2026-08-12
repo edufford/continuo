@@ -639,3 +639,228 @@ it got there, including the roads not taken.
     entry now argues for it on its own terms: sixteen times less work for a
     low-rate observer. It is not a fix for this, and justifying it by this
     would have been justifying it by a pacing artefact.
+- **2026-08-10**: **`Component` no longer requires `Send`.** The bound came
+  in with the milestone 1 skeleton and was never argued for. No design
+  document mentions it, nothing in the workspace moves a component or a
+  conductor between threads, and removing it changes nothing anywhere: the
+  workspace compiles untouched.
+  - It surfaced because milestone 6 wants to wrap an imported FMU, whose
+    instance is a raw pointer into a loaded library and so is `!Send`. The
+    obvious move was an `unsafe impl Send` on a wrapper, which would have
+    been this workspace's first `unsafe`, and it deserved more than a
+    reflex.
+  - What the bound buys is one capability: constructing a component on one
+    thread and moving it to another. Nothing wants that. Running a
+    conductor on a background thread does not need it, since the conductor
+    and its components are built inside the closure that runs them, which
+    is what every in-tree use already does.
+  - The parallel futures do not need it either, and this is the part that
+    settled it. Stepping components concurrently within a process is the
+    milestone 7 host protocol run over channels: each component is
+    constructed on the thread that owns it, a step request and its reply
+    are plain data, and a barrier plus a declaration-order fold keeps the
+    hash byte-identical. Supervising a component that hangs is a timed wait
+    on that reply. Moving one between hosts is membership: remove it and
+    admit a replacement built from the same data, which is already how a
+    `Box<dyn Component>` avoids having to cross a transport. What must be
+    `Send` in all of that is messages and constructors. Never components.
+    PLAN.md's Deferred list carries that shape as an item of its own, so the
+    constraint sits where the work would be planned rather than only here.
+  - So the bound guarded nothing that exists or is planned, while an FMU
+    instance truthfully is not `Send`. Dropping it keeps the workspace free
+    of `unsafe` and lets the type say what is true.
+  - The trigger to revisit, if it ever comes, is a genuine
+    build-here-run-there hand-off. Restoring the bound would be a breaking
+    change for exactly one implementor, the FMU adapter, which would then
+    carry an `unsafe impl Send` claiming thread-agnosticism only. Concurrent
+    calls into one FMU instance are already impossible, since stepping takes
+    `&mut self`.
+
+- **2026-08-11**: **FMU import goes through the `fmi` crate, and it is the
+  workspace's first native-code dependency.** PLAN.md named `fmi-rs` as the
+  candidate. That is a real and separate project, from CATIA-Systems, who also
+  maintain FMPy, and it is more substantial than its star count suggests, with
+  its own `fmi2` and `fmi3` modules and schema handling. Two things decided
+  against it. It is unreleased, at version 0.1.0 with nothing on crates.io, so
+  depending on it means pinning a git revision of a moving target. And its
+  build script compiles C on every build, so the native-toolchain cost it
+  appears to save by skipping bindgen is not actually saved.
+  - `fmi` 0.8.0 is released, documented and widely downloaded, and its
+    `fmi-export` and `cargo-fmi` siblings are what authoring our own FMU will
+    need. Taken with `default-features = false, features = ["fmi3"]`, which
+    leaves out FMI 2.0 and the layered LS-BUS standard. `zip` arrives with it,
+    so `.fmu` archives are read directly rather than needing a separate step.
+  - Its `fmi-sys` runs bindgen, so libclang is now a build prerequisite. All
+    four CI runner images ship LLVM. A Windows dev box may already have it
+    through Visual Studio, whose bundled toolchain sets `LIBCLANG_PATH`;
+    otherwise `winget install LLVM`.
+  - Cost of the dependency, measured: the workspace's normal-edge tree goes
+    from 24 crates to 97, most of it `zip` and the XML schema stack.
+  - Worth revisiting if `fmi-rs` releases. The provenance is strong, its
+    hand-written bindings are appealing beside bindgen, and `continuo-fmi`
+    would be the only crate that changed.
+
+- **2026-08-11**: **An FMU is data, not a Rust type.** There is one
+  `FmuComponent`, and adding an FMU to a world writes a `.fmu` path and an
+  `FmuMapping` rather than a type. A trait with a subtype per FMU would mean
+  recompiling the host to add a model, which is the thing a standard that
+  ships models as binaries exists to avoid, and it would sink the
+  demonstration this milestone owes: that a third-party `.fmu` runs with no
+  code written.
+  - This is also where PLAN.md's scenario configuration already points, since
+    a registry instantiating component types from data cannot know a model's
+    layout. Today's Rust literals become JSON5 later with no new Rust either
+    way.
+  - The polymorphism lives one level up, at `Component`. If some future FMU
+    ever needs behavior a mapping cannot express, the answer is an ordinary
+    component wrapping an `FmuComponent`: composition rather than subclassing.
+
+- **2026-08-11**: **A mapping addresses the decoded payload, not its bytes.**
+  Bindings carry JSON Pointers resolved against the value `Message::decode`
+  returns, and outputs are published through `ctx.publish`, so this crate
+  never calls `serde_json` to encode or decode anything.
+  - That is what keeps the deferred binary wire format out of it. CBOR's data
+    model is the same shape for these payloads, so `/detections/3/range` means
+    the identical thing, and integers above 2^53 stay exact in either mode.
+  - One hazard is core's rather than this crate's but has its most likely
+    trigger here: CBOR can carry NaN and Inf natively, so the non-finite
+    publish guard's fast path needs revisiting when binary mode lands, and a
+    diverging FMU is the likeliest thing to emit one. The existing tripwire
+    is `the_fast_path_premise_holds`.
+
+- **2026-08-11**: **An array input binds through one pattern, whose `*` the
+  FMU's own dimensions expand.** `/detections/*/range` feeds a variable of any
+  size, one `*` per dimension and row-major, so a mapping never writes down a
+  count the model already declares. The plan had a helper generating a pointer
+  per element from a prefix, a count and a field name, which meant stating a
+  size the FMU states too, and the dimension check existed because the two
+  could drift.
+  - Omitting the source entirely derives it from the variable's name, plus one
+    wildcard per dimension, so an FMU authored beside its host writes no
+    addresses at all whatever the rank.
+  - Pointers written out stay, for a payload no single pattern reaches:
+    elements scattered rather than lying in one array, or an order the message
+    does not carry. That is now the only form stating a count of its own, and
+    so the only one the dimension check still guards.
+  - The two forms are told apart by shape rather than by a tag, which is a
+    decision about the scenario file rather than about Rust. A pointer is a
+    string and a list of them is a list, so neither can be read as the other,
+    and no name of a Rust variant has to leak into a config format. An object
+    was the obvious third form, `{array, field}`, and it is the one that was
+    dropped: a string is constrained by being a string, but "an object"
+    constrains nothing, so every key inside it would have to be policed by
+    hand. Putting the field into the pointer removes the open container
+    instead of fencing it, and reaches nested fields an object form could not
+    name.
+  - The cost is a payload key spelled exactly `*`, which no escape gives back,
+    since RFC 6901 has none and inventing one would be extending the RFC. Only
+    a whole token counts, so `/a*b` still addresses `a*b`, and payload keys
+    come from serde field names, where `*` is not a legal identifier.
+
+- **2026-08-11**: **Every FMI 3.0 variable type binds except Clock, dispatched
+  from what the FMU declares.** The adapter reads each variable's type out of
+  `modelDescription.xml`; a mapping never names one, since that would be a
+  second source of truth able to disagree with the binary it points at.
+  - Dispatching by type is a correctness requirement rather than generality
+    for its own sake. Routing an Int64 or UInt64 through `f64` loses digits
+    above 2^53 in silence, and `serde_json` carries big integers exactly here
+    because the workspace enables `arbitrary_precision`, so the round trip is
+    lossless only if the integer path stays integral end to end. A test pins
+    the trap at 2^53 + 1.
+  - Outputs publish as their natural type, integers as integers, because `3`
+    and `3.0` are different bytes and so different hashes.
+  - Where the two type systems disagree, the stricter reading wins: a
+    fractional number is not an integer, `1` is not `true`, and a Float32
+    accepts precision loss but not range overflow. Anything that does not fit
+    halts naming the variable, its declared type and the value.
+  - String and Binary are in, though nothing in the demo uses them, because an
+    importer that covers only what one FMU happens to need is not general, and
+    both are cheap now against a later retrofit of the dispatch and its tests
+    together. Binary travels base64, which is why that encoding moved into
+    core beside the hash and the random stream.
+  - Clock stays out. It is a scheduling concept rather than data, and it
+    belongs with the event mode this adapter switches off.
+
+- **2026-08-11**: **An FMU that fails to step halts the world**, as
+  `CoreError::ComponentFailure` naming the instance and the call. Core gained
+  that variant because a failure originating in a foreign binary has no error
+  type of ours to carry it, and core cannot depend on the crate that wraps one.
+  - `do_step` setting `terminate_simulation`, `early_return` or
+    `event_handling_needed` all halt. The last two cannot legitimately arrive,
+    since the instance is created with early return disallowed and event mode
+    off, so either one means the FMU is not where the next step assumes.
+  - Construction-time failures are a different type, `FmuConstructionError`,
+    named for when it happens rather than what it wraps. Everything there is a
+    wiring mistake that fails before a run starts, and since `step` may return
+    nothing but `CoreError`, that type can never grow a step-time variant.
+
+- **2026-08-11**: **What running the reference FMUs settled, which the plan had
+  left open.** Recorded because each cost an experiment and would cost another.
+  - **A value set during initialization survives.** Feedthrough handed 3.5
+    between `EnterInitializationMode` and `ExitInitializationMode` publishes
+    3.5 at the first step, with no `do_step` in between. So the adapter sets
+    the mapping's values there, before applying the inbox, and no second
+    placement is needed.
+  - **An FMU handles its own events when event mode is off.** BouncingBall
+    crosses a bounce, a state event at a time nothing predicted, without ever
+    setting `event_handling_needed`.
+  - **`fmi` logs through `log`, and tracing-subscriber's default features
+    bridge it** with no `LogTracer::init()`. That is what makes a model's own
+    diagnostics visible, and it turned an opaque "Error" into the sentence
+    that identified the resource-path bug below.
+  - **Nothing promises that serialized FMU state is a fingerprint**, so an
+    imported FMU is covered in output-hash mode rather than joining the tick
+    hash directly. This reverses what the plan assumed, and the flag it keyed
+    on is the wrong question.
+    - FMI 3.0 documents `canSerializeFMUState` as meaning those three
+      functions are supported, and `fmi3SerializeFMUState` as copying the
+      referenced data into a byte vector. Neither says what the bytes
+      contain, and nothing in the standard says equal states serialize to
+      equal bytes. So byte stability cannot be assumed from any FMU: it can
+      only be established one FMU at a time, by measuring, which is why it
+      belongs in a mapping rather than keyed off a capability flag. The plan
+      expected an override forcing output-hash for the odd unusable FMU, and
+      it wants the opposite polarity.
+    - Our own FMU will not raise the question at all, which is worth knowing
+      before milestone 6's PR B assumes otherwise. `fmi-export` 0.3.0 leaves
+      every state function as `todo!()` and never emits
+      `canSerializeFMUState`, so the capability is absent, a conforming
+      importer never calls those functions, and the panic behind them is
+      unreachable.
+    - The reference FMUs show the pessimistic case is real, and they carry
+      some weight, being published by the same body that wrote the standard
+      and meant as what an importer tests against. Serialization there is a
+      `memcpy` of the whole `ModelInstance` struct, which holds an instance
+      name pointer,
+      a `componentEnvironment`, and five callback pointers including the
+      logger, which points back into the importer's own binary. Those are
+      addresses, differing run to run on one machine, and the padding between
+      fields is never written.
+    - Restoring is unaffected, which is what makes the two capabilities
+      different rather than one of them broken. The standard's own example
+      for serializing is storing to a file and restarting from it later, so
+      surviving a process is the intent, and a conforming FMU deals with its
+      own pointers. How is its business, and the reference FMUs copy field by
+      field when state is set back, skipping every pointer. So the surplus
+      bytes are ignored by the only consumer that reads them, and bytes
+      nobody reads are free to be anything.
+    - The plan's escape hatch had the polarity backwards too. It expected a
+      mapping override forcing output-hash for the odd vendor FMU whose bytes
+      are not deterministic. The reference FMUs are the standard's own
+      examples and the ones other implementations copy, so the unusable case
+      is the ordinary one, and this wants an opt-in.
+    - A second reason sits behind the first and would matter only if it were
+      solved: `fmi` 0.8.0 wraps no serialization call and disables
+      `get_fmu_state` with `#[cfg(false)]`, and `Instance` keeps its library
+      handle and instance pointer private, so the raw bindings cannot be
+      reached either.
+  - **`Fmi3Import::canonical_resource_path_string` omits the trailing
+    separator FMI 3.0 requires**, so an FMU that appends its own file name
+    builds `resourcesy.txt` and cannot open it. The Resource fixture exists to
+    catch exactly this and did. A five-line fix is verified against a local
+    patch, and the test stays ignored until a released version carries it.
+  - **StateSpace's `x0` is inert**, so its initial state cannot be set through
+    co-simulation at all. Its `setStartValues` copies `x = x0` and assigns
+    `x = 0` on the next line, and runs only at instantiate and reset, before
+    an importer can write a parameter. Setting `x` directly is refused outside
+    Continuous Time Mode and Event Mode.
