@@ -2,6 +2,10 @@
 //! path-following controller, unicycle physics, a pose logger, and a
 //! traffic spawner.
 //!
+//! [`control_laws`] holds the laws themselves, as pure functions over
+//! their arguments. A controller component is then the wiring around one:
+//! read the inbox, call the law, publish the answer.
+//!
 //! [`PathFollowController`] and [`UnicyclePhysics`] form a car: the
 //! composite `[controller, physics]`, where the controller runs at the
 //! slower period and intra-composite same-instant delivery feeds its
@@ -20,6 +24,7 @@
 //! one freeway scenario; both carry TODOs pointing at the world spec and
 //! scenario configuration that replace them.
 
+pub mod control_laws;
 mod controller;
 mod logger;
 mod path;
