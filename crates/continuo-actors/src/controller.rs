@@ -33,7 +33,7 @@ pub struct PathFollowController {
     road: Arc<Waypoints>,
     period: SimDuration,
     speed: f64,
-    pursuit: PurePursuitParams,
+    pursuit_params: PurePursuitParams,
     last_pose: Pose,
 }
 
@@ -42,11 +42,11 @@ impl PathFollowController {
     pub fn new(
         actor_name: impl Into<String>,
         road: Arc<Waypoints>,
-        lateral: f64,
+        lateral_tgt: f64,
         period: SimDuration,
         speed: f64,
         lookahead: f64,
-        gain: f64,
+        gain_yaw_rate: f64,
         max_yaw_rate: f64,
         initial_pose: Pose,
     ) -> Self {
@@ -55,10 +55,10 @@ impl PathFollowController {
             road,
             period,
             speed,
-            pursuit: PurePursuitParams {
-                lateral,
+            pursuit_params: PurePursuitParams {
+                lateral_tgt,
                 lookahead,
-                gain,
+                gain_yaw_rate,
                 max_yaw_rate,
             },
             last_pose: initial_pose,
@@ -90,7 +90,7 @@ impl Component for PathFollowController {
 
         let cmd = Cmd {
             speed: self.speed,
-            yaw_rate: pure_pursuit_yaw_rate(&self.road, self.last_pose, self.pursuit),
+            yaw_rate: pure_pursuit_yaw_rate(&self.road, self.last_pose, self.pursuit_params),
         };
 
         let key = crate::cmd_key(ctx.world_name(), &self.actor_name);

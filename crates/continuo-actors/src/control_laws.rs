@@ -16,17 +16,17 @@ use crate::path::Waypoints;
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PurePursuitParams {
     /// Meters left of the road's centerline to hold, the Frenet `d`.
-    pub lateral: f64,
+    pub lateral_tgt: f64,
     /// How far along the road the aim point sits, in meters.
     pub lookahead: f64,
     /// Yaw rate commanded per radian of heading error, in 1/s.
-    pub gain: f64,
+    pub gain_yaw_rate: f64,
     /// The most yaw rate to command in either direction, rad/s.
     pub max_yaw_rate: f64,
 }
 
-/// Yaw rate that steers a follower at `pose` onto the lane `lateral`
-/// meters left of `road`, positive counter-clockwise.
+/// Yaw rate that steers a follower at `pose` onto the lane
+/// `lateral_tgt` meters left of `road`, positive counter-clockwise.
 ///
 /// Projects the pose onto the road, aims at the point `lookahead` further
 /// along it, and turns toward that point in proportion to how far off the
@@ -36,12 +36,12 @@ pub struct PurePursuitParams {
 pub fn pure_pursuit_yaw_rate(road: &Waypoints, pose: Pose, params: PurePursuitParams) -> f64 {
     let position = pose.position;
     let s = road.project(position.x, position.y);
-    let target = road.point_at_offset(s + params.lookahead, params.lateral);
+    let target = road.point_at_offset(s + params.lookahead, params.lateral_tgt);
     let desired_heading = f64::atan2(target.y - position.y, target.x - position.x);
     let heading_error = wrap_pi(desired_heading - pose.orientation.yaw());
 
     // Return the turn toward the aim point, inside the clamp.
-    (params.gain * heading_error).clamp(-params.max_yaw_rate, params.max_yaw_rate)
+    (params.gain_yaw_rate * heading_error).clamp(-params.max_yaw_rate, params.max_yaw_rate)
 }
 
 fn wrap_pi(angle: f64) -> f64 {
@@ -76,9 +76,9 @@ mod tests {
     /// Aims 10 m ahead at the road itself, turning a radian per radian.
     fn tuning() -> PurePursuitParams {
         PurePursuitParams {
-            lateral: 0.0,
+            lateral_tgt: 0.0,
             lookahead: 10.0,
-            gain: 1.0,
+            gain_yaw_rate: 1.0,
             max_yaw_rate: 1.0,
         }
     }
@@ -108,7 +108,7 @@ mod tests {
     #[test]
     fn a_lane_offset_is_what_the_law_holds_rather_than_the_road() {
         let holding_a_lane = PurePursuitParams {
-            lateral: 3.0,
+            lateral_tgt: 3.0,
             ..tuning()
         };
 
@@ -126,7 +126,7 @@ mod tests {
     #[test]
     fn the_command_never_leaves_the_clamp() {
         let hard_and_capped = PurePursuitParams {
-            gain: 10.0,
+            gain_yaw_rate: 10.0,
             max_yaw_rate: 0.5,
             ..tuning()
         };
