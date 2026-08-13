@@ -116,15 +116,6 @@ pub fn nearest_detection(scan: &[Detection]) -> Detection {
     nearest
 }
 
-/// The smallest gap [`idm_accel`] will divide by, in meters.
-///
-/// Not IDM's. The published equation divides by the gap and says nothing
-/// about a gap of nothing, so this is what keeps the answer a number.
-/// What it is set to hardly matters: a run that reaches it has put two
-/// bodies in one place already, which is a problem for something other
-/// than the follower to report.
-const GAP_FLOOR: f64 = 0.1;
-
 /// How an IDM follower is tuned: how fast it wants to go, how much room
 /// it wants at that speed, and how hard it will work for either.
 ///
@@ -213,7 +204,12 @@ pub fn idm_accel(speed: f64, gap: f64, approach_rate: f64, params: IdmParams) ->
     let speed_ratio = speed / params.v0_speed_tgt;
     let speed_ratio_squared = speed_ratio * speed_ratio;
     let free_road = 1.0 - speed_ratio_squared * speed_ratio_squared;
-    let crowding = gap_wanted / gap.max(GAP_FLOOR);
+    // Every real gap divides as it stands. The floor only keeps a zero
+    // out of the divisor, since a wanted gap of zero over it would be a
+    // NaN spreading into everything downstream. What comes out of a gap
+    // of nothing is an enormous quotient, and the clamp takes that to
+    // the braking limit, which is the answer a collided pair deserves.
+    let crowding = gap_wanted / gap.max(f64::MIN_POSITIVE);
 
     // Return what the road leaves once the lead has had its share.
     (params.a_accel_max * (free_road - crowding * crowding))
@@ -474,7 +470,7 @@ mod tests {
     }
 
     #[test]
-    fn the_gap_floor_keeps_a_touching_lead_finite() {
+    fn a_gap_of_nothing_brakes_rather_than_answering_nothing() {
         // Both of these are already a collision, and the law's business
         // with them is only to stay a number.
         assert_eq!(
