@@ -425,7 +425,7 @@ mod tests {
     }
 
     /// A car wanting 30 m/s, tuned the way the demo tunes every car.
-    fn following() -> IdmParams {
+    fn idm_tuning() -> IdmParams {
         IdmParams::highway_car(30.0)
     }
 
@@ -435,14 +435,14 @@ mod tests {
         // car will do and exactly that, since the room a standstill asks
         // for is nothing against a free road.
         assert_eq!(
-            idm_accel(0.0, FREE_ROAD_RANGE, 0.0, following()),
-            following().a_accel_max
+            idm_accel(0.0, FREE_ROAD_RANGE, 0.0, idm_tuning()),
+            idm_tuning().a_accel_max
         );
     }
 
     #[test]
     fn an_open_road_at_the_speed_it_wants_commands_nothing() {
-        let accel = idm_accel(30.0, FREE_ROAD_RANGE, 0.0, following());
+        let accel = idm_accel(30.0, FREE_ROAD_RANGE, 0.0, idm_tuning());
         assert!(accel.abs() < 1e-12, "{accel}");
     }
 
@@ -458,18 +458,64 @@ mod tests {
         // Sixty meters rather than forty so the answer lands inside the
         // limits, since a clamped value would check the clamp instead of
         // the equation.
-        let accel = idm_accel(20.0, 60.0, 5.0, following());
+        let accel = idm_accel(20.0, 60.0, 5.0, idm_tuning());
         assert!((accel + 0.339_985_544_104_686_07).abs() < 1e-12, "{accel}");
     }
 
     #[test]
     fn the_equilibrium_gap_commands_nothing() {
-        // Where IDM settles behind a lead holding a steady speed. It is
-        // further back than the room the law asks for, because the open
-        // road term is already short of full at 20 against a wanted 30,
-        // and the two only cancel where the gap makes up the difference.
-        let accel = idm_accel(20.0, 35.722_003_561_692_034, 0.0, following());
-        assert!(accel.abs() < 1e-12, "{accel}");
+        // Where IDM settles behind a lead holding a steady speed: the
+        // two terms cancel, so (s*/gap)^2 is the open-road term and the
+        // gap is s* over its root. Derived rather than written down,
+        // since a constant here would be a number nobody could check.
+        let params = idm_tuning();
+        let speed = 20.0;
+        let gap_wanted = params.s0_gap_min + speed * params.t_headway;
+        let open_road = 1.0 - (speed / params.v0_speed_tgt).powi(4);
+        let gap = gap_wanted / open_road.sqrt();
+
+        // It sits further back than the room the law asks for, because
+        // at 20 against a wanted 30 the open-road term is already short
+        // of full, and only a longer gap makes up the difference.
+        assert!(gap > gap_wanted, "{gap} {gap_wanted}");
+        let accel = idm_accel(speed, gap, 0.0, params);
+        assert!(accel.abs() < 1e-12, "{accel} at {gap} m");
+    }
+
+    /// The paper's stated highway values: v0 = 120 km/h, T = 1.6 s,
+    /// a = 0.73 and b = 1.67 m/s^2, with the jam distance at the 2 m in
+    /// common use.
+    fn the_papers_highway_car() -> IdmParams {
+        IdmParams {
+            v0_speed_tgt: 120.0 / 3.6,
+            t_headway: 1.6,
+            s0_gap_min: 2.0,
+            a_accel_max: 0.73,
+            b_decel_comfort: 1.67,
+        }
+    }
+
+    #[test]
+    fn the_papers_own_parameters_settle_where_its_equation_says() {
+        // The paper tabulates parameters and plots figures, and puts no
+        // worked acceleration on the page to check a number against. So
+        // what its parameters can check is its own algebra, over the
+        // range of speeds they were quoted for.
+        let params = the_papers_highway_car();
+        for &speed in &[5.0, 15.0, 25.0, 33.0] {
+            let gap_wanted = params.s0_gap_min + speed * params.t_headway;
+            let open_road = 1.0 - (speed / params.v0_speed_tgt).powi(4);
+            let gap = gap_wanted / open_road.sqrt();
+            let accel = idm_accel(speed, gap, 0.0, params);
+            assert!(accel.abs() < 1e-12, "{speed} m/s at {gap} m gave {accel}");
+        }
+
+        // And the one value the paper does state outright: on an open
+        // road from rest, a car accelerates at a.
+        assert_eq!(
+            idm_accel(0.0, FREE_ROAD_RANGE, 0.0, params),
+            params.a_accel_max
+        );
     }
 
     #[test]
@@ -477,8 +523,8 @@ mod tests {
         // Thirty meters a second onto something 5 m ahead: the equation
         // asks for hundreds, and the car commands what it has.
         assert_eq!(
-            idm_accel(30.0, 5.0, 20.0, following()),
-            -following().b_decel_comfort
+            idm_accel(30.0, 5.0, 20.0, idm_tuning()),
+            -idm_tuning().b_decel_comfort
         );
     }
 
@@ -488,15 +534,15 @@ mod tests {
         // away, what is left is an open road rather than a negative
         // distance squaring back into braking. Two different retreats
         // therefore answer alike, and both accelerate.
-        let fast = idm_accel(20.0, 32.0, -1000.0, following());
-        let faster = idm_accel(20.0, 32.0, -5000.0, following());
+        let fast = idm_accel(20.0, 32.0, -1000.0, idm_tuning());
+        let faster = idm_accel(20.0, 32.0, -5000.0, idm_tuning());
         assert_eq!(fast, faster);
         assert!(fast > 0.0, "{fast}");
 
         // The case that made the floor necessary, which is ordinary
         // rather than extreme: a lead pulling away to 30 with 20 m of
         // gap. Unfloored the equation commands -1.28 here.
-        let clearing = idm_accel(20.0, 20.0, -10.0, following());
+        let clearing = idm_accel(20.0, 20.0, -10.0, idm_tuning());
         assert!(clearing > 1.0, "{clearing}");
     }
 
@@ -505,18 +551,18 @@ mod tests {
         // Both of these are already a collision, and the law's business
         // with them is only to stay a number.
         assert_eq!(
-            idm_accel(20.0, 0.0, 0.0, following()),
-            -following().b_decel_comfort
+            idm_accel(20.0, 0.0, 0.0, idm_tuning()),
+            -idm_tuning().b_decel_comfort
         );
         assert_eq!(
-            idm_accel(20.0, -3.0, 0.0, following()),
-            -following().b_decel_comfort
+            idm_accel(20.0, -3.0, 0.0, idm_tuning()),
+            -idm_tuning().b_decel_comfort
         );
     }
 
     #[test]
     fn the_command_is_always_finite_and_inside_the_limits() {
-        let params = following();
+        let params = idm_tuning();
         for &speed in &[0.0, 5.0, 20.0, 30.0, 60.0] {
             for &gap in &[-1.0, 0.0, 0.5, 5.0, 40.0, FREE_ROAD_RANGE] {
                 for &approach_rate in &[-60.0, -1.0, 0.0, 1.0, 60.0] {
