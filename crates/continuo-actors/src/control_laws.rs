@@ -128,22 +128,23 @@ const GAP_FLOOR: f64 = 0.1;
 /// How an IDM follower is tuned: how fast it wants to go, how much room
 /// it wants at that speed, and how hard it will work for either.
 ///
-/// Each field gives its name in the published equation, since that
-/// equation is what the law here is written from.
+/// Every parameter the published equation has carries its symbol, so
+/// the two can be read side by side. The one without a symbol is the one
+/// the equation does not have.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct IdmParams {
-    /// Speed held on an open road, m/s. IDM's `v0`.
-    pub speed_tgt: f64,
-    /// Seconds of gap wanted at whatever speed is being held. IDM's `T`.
-    pub time_headway: f64,
-    /// Meters of gap wanted at a standstill. IDM's `s0`.
-    pub gap_min: f64,
-    /// The most acceleration commanded, m/s^2. IDM's `a`.
-    pub accel_max: f64,
-    /// The braking taken as comfortable, m/s^2 and positive. IDM's `b`.
-    pub decel_comfort: f64,
-    /// The most braking commanded, m/s^2 and positive. Not IDM's, which
-    /// bounds braking nowhere. A law free to ask for anything is a poor
+    /// Speed held on an open road, m/s.
+    pub v0_speed_tgt: f64,
+    /// Seconds of gap wanted at whatever speed is being held.
+    pub t_headway: f64,
+    /// Meters of gap wanted at a standstill.
+    pub s0_gap_min: f64,
+    /// The most acceleration commanded, m/s^2.
+    pub a_accel_max: f64,
+    /// The braking taken as comfortable, m/s^2 and positive.
+    pub b_decel_comfort: f64,
+    /// The most braking commanded, m/s^2 and positive. IDM bounds
+    /// braking nowhere, and a law free to ask for anything is a poor
     /// thing to put in front of an actuator.
     pub decel_max: f64,
 }
@@ -152,26 +153,22 @@ impl IdmParams {
     /// The set this project drives cars with, taking the speed each one
     /// wants to hold.
     ///
-    /// `time_headway` and `gap_min` are the values Treiber's own
+    /// `t_headway` and `s0_gap_min` are the values Treiber's own
     /// simulator lists for a car, at
     /// <https://traffic-simulation.de/info/info_IDM.html>. The
     /// acceleration and braking there, 0.3 and 3.0, are picked to bring
     /// stop-and-go waves out of a crowded road, which is a different
-    /// thing to show than a car following another car, so `accel_max`
-    /// and `decel_comfort` are this project's, within what ordinary
+    /// thing to show than a car following another car, so `a_accel_max`
+    /// and `b_decel_comfort` are this project's, within what ordinary
     /// driving uses. So is `decel_max`, at firm braking rather than
     /// emergency braking.
-    ///
-    /// None of them are knobs. A scenario misbehaving with these is a
-    /// reason to look at the wiring, because numbers fitted until a demo
-    /// looks right are where a wiring mistake goes to hide.
-    pub fn highway_car(speed_tgt: f64) -> Self {
+    pub fn highway_car(v0_speed_tgt: f64) -> Self {
         IdmParams {
-            speed_tgt,
-            time_headway: 1.5,
-            gap_min: 2.0,
-            accel_max: 1.5,
-            decel_comfort: 2.0,
+            v0_speed_tgt,
+            t_headway: 1.5,
+            s0_gap_min: 2.0,
+            a_accel_max: 1.5,
+            b_decel_comfort: 2.0,
             decel_max: 4.0,
         }
     }
@@ -189,11 +186,11 @@ impl IdmParams {
 /// Both are relative, which is what a radar measures and all the law
 /// wants: the lead's own speed appears nowhere in it.
 ///
-/// The room it asks for is `gap_min`, plus `time_headway` seconds of
+/// The room it asks for is `s0_gap_min`, plus `t_headway` seconds of
 /// travel, plus enough to shed the approach rate against a brake between
 /// comfortable and hardest. It accelerates when it has more room than
 /// that and brakes when it has less, easing off either way as it nears
-/// `speed_tgt`. An open road is the same expression rather than a case
+/// `v0_speed_tgt`. An open road is the same expression rather than a case
 /// of its own, since at [`FREE_ROAD_RANGE`] the room asked for is
 /// nothing beside the room there is.
 ///
@@ -204,23 +201,23 @@ impl IdmParams {
 pub fn idm_accel(speed: f64, gap: f64, approach_rate: f64, params: IdmParams) -> f64 {
     // A lead pulling away asks for no extra room at all, which is what
     // the floor at zero says. Without it a fast enough retreat would
-    // talk the law into wanting less room than gap_min.
+    // talk the law into wanting less room than s0_gap_min.
     let closing_room =
-        speed * approach_rate / (2.0 * (params.accel_max * params.decel_comfort).sqrt());
-    let gap_wanted = params.gap_min + (speed * params.time_headway + closing_room).max(0.0);
+        speed * approach_rate / (2.0 * (params.a_accel_max * params.b_decel_comfort).sqrt());
+    let gap_wanted = params.s0_gap_min + (speed * params.t_headway + closing_room).max(0.0);
 
     // How much of the open road is left to take, and how much of it the
     // lead has taken. The fourth power is what holds the first term near
     // full until the speed is nearly there, rather than easing off from
     // a standstill onward.
-    let speed_ratio = speed / params.speed_tgt;
+    let speed_ratio = speed / params.v0_speed_tgt;
     let speed_ratio_squared = speed_ratio * speed_ratio;
     let free_road = 1.0 - speed_ratio_squared * speed_ratio_squared;
     let crowding = gap_wanted / gap.max(GAP_FLOOR);
 
     // Return what the road leaves once the lead has had its share.
-    (params.accel_max * (free_road - crowding * crowding))
-        .clamp(-params.decel_max, params.accel_max)
+    (params.a_accel_max * (free_road - crowding * crowding))
+        .clamp(-params.decel_max, params.a_accel_max)
 }
 
 #[cfg(test)]
@@ -423,7 +420,7 @@ mod tests {
         // for is nothing against a free road.
         assert_eq!(
             idm_accel(0.0, FREE_ROAD_RANGE, 0.0, following()),
-            following().accel_max
+            following().a_accel_max
         );
     }
 
@@ -468,7 +465,7 @@ mod tests {
     #[test]
     fn a_lead_pulling_away_never_buys_room_below_the_minimum() {
         // The closing allowance floors at zero, so no retreat, however
-        // fast, talks the law into wanting less than gap_min and a
+        // fast, talks the law into wanting less than s0_gap_min and a
         // headway. Two different retreats therefore answer alike.
         let fast = idm_accel(20.0, 32.0, -1000.0, following());
         let faster = idm_accel(20.0, 32.0, -5000.0, following());
@@ -499,7 +496,7 @@ mod tests {
                     let accel = idm_accel(speed, gap, approach_rate, params);
                     assert!(
                         accel.is_finite()
-                            && accel <= params.accel_max
+                            && accel <= params.a_accel_max
                             && accel >= -params.decel_max,
                         "{speed} {gap} {approach_rate} gave {accel}"
                     );
