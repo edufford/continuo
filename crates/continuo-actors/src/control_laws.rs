@@ -71,6 +71,40 @@ fn wrap_to_pi(angle: f64) -> f64 {
     angle.signum() * short_way
 }
 
+/// The range standing for nothing detected, in meters.
+///
+/// Far enough that a following law computes the free road from it
+/// without being told the road is free: the gap is so large that the
+/// room the law wants is nothing beside it. So an empty scan, a slot no
+/// sensor filled, and a lead a kilometer off are all one case, and there
+/// is no emptiness to test for anywhere downstream.
+pub const FREE_ROAD_RANGE: f64 = 1e9;
+
+/// The nearest detection in a scan, as `(range, range_rate)`, or the
+/// free road if the scan holds nothing nearer.
+///
+/// A sensor reports what it found in no particular order, because
+/// relevance is the consumer's idea rather than the sensor's. For
+/// following, the nearest thing ahead is the one that matters, so
+/// picking it out is this function's job and not the radar's.
+///
+/// The two slices are read in step and a shorter one ends the scan. Ties
+/// go to the earlier slot, so a scan answers the same way every time it
+/// is read, which is what the world hash needs of it. A slot at
+/// [`FREE_ROAD_RANGE`] loses to anything real, so a fixed-size array
+/// padded out to its length needs no separate count of what is in it.
+pub fn nearest_detection(ranges: &[f64], range_rates: &[f64]) -> (f64, f64) {
+    let mut nearest = (FREE_ROAD_RANGE, 0.0);
+    for (&range, &range_rate) in ranges.iter().zip(range_rates) {
+        if range < nearest.0 {
+            nearest = (range, range_rate);
+        }
+    }
+
+    // Return the nearest, which is the free road until something beats it.
+    nearest
+}
+
 #[cfg(test)]
 mod tests {
     use continuo_core::{Quat, Vec3};
@@ -199,5 +233,58 @@ mod tests {
         // a hard turn in the wrong direction.
         let yaw_rate = pure_pursuit_yaw_rate(&road(), pose_at(110.0, 0.5, 3.0), free_to_turn);
         assert!(yaw_rate > 0.0 && yaw_rate < 0.25, "{yaw_rate}");
+    }
+
+    #[test]
+    fn the_nearest_detection_wins_regardless_of_its_slot() {
+        assert_eq!(
+            nearest_detection(&[40.0, 12.0, 90.0], &[-1.0, -3.0, 5.0]),
+            (12.0, -3.0)
+        );
+
+        // The same three cars, reported in another order, are the same
+        // three cars, and the sensor promises no order at all.
+        assert_eq!(
+            nearest_detection(&[12.0, 90.0, 40.0], &[-3.0, 5.0, -1.0]),
+            (12.0, -3.0)
+        );
+    }
+
+    #[test]
+    fn an_empty_scan_selects_the_free_road() {
+        assert_eq!(nearest_detection(&[], &[]), (FREE_ROAD_RANGE, 0.0));
+    }
+
+    #[test]
+    fn padding_never_beats_a_car() {
+        // A fixed-size array holding one car and nothing else, which is
+        // the shape a scan arrives in once it has crossed into an FMU.
+        let mut ranges = [FREE_ROAD_RANGE; 8];
+        let mut range_rates = [0.0; 8];
+        ranges[5] = 30.0;
+        range_rates[5] = -2.0;
+        assert_eq!(nearest_detection(&ranges, &range_rates), (30.0, -2.0));
+
+        // And one holding nothing is the free road, padding and all.
+        assert_eq!(
+            nearest_detection(&[FREE_ROAD_RANGE; 8], &[0.0; 8]),
+            (FREE_ROAD_RANGE, 0.0)
+        );
+    }
+
+    #[test]
+    fn a_tie_goes_to_the_earlier_slot() {
+        // Two cars at exactly one range, one closing and one not. Which
+        // of them is followed matters less than that the answer is not
+        // left to the order the slots happen to arrive in.
+        assert_eq!(nearest_detection(&[25.0, 25.0], &[-4.0, 1.0]), (25.0, -4.0));
+    }
+
+    #[test]
+    fn a_scan_ends_where_the_shorter_of_its_two_slices_does() {
+        // Nothing publishes a mismatched pair. Reading past the end of
+        // one of them would be reading whichever detection last held
+        // that slot.
+        assert_eq!(nearest_detection(&[50.0, 5.0], &[-1.0]), (50.0, -1.0));
     }
 }
