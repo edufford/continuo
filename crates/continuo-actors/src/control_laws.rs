@@ -119,9 +119,8 @@ pub fn nearest_detection(scan: &[Detection]) -> Detection {
 /// How an IDM follower is tuned: how fast it wants to go, how much room
 /// it wants at that speed, and how hard it will work for either.
 ///
-/// Every parameter the published equation has carries its symbol, so
-/// the two can be read side by side. The one without a symbol is the one
-/// the equation does not have.
+/// These are the published equation's five and nothing else, each
+/// carrying its symbol so the two can be read side by side.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct IdmParams {
     /// Speed held on an open road, m/s.
@@ -132,12 +131,10 @@ pub struct IdmParams {
     pub s0_gap_min: f64,
     /// The most acceleration commanded, m/s^2.
     pub a_accel_max: f64,
-    /// The braking taken as comfortable, m/s^2 and positive.
+    /// The braking taken as comfortable, m/s^2 and positive. Also the
+    /// hardest [`idm_accel`] will ask for, which costs a car the
+    /// emergency stop it might otherwise make.
     pub b_decel_comfort: f64,
-    /// The most braking commanded, m/s^2 and positive. IDM bounds
-    /// braking nowhere, and a law free to ask for anything is a poor
-    /// thing to put in front of an actuator.
-    pub decel_max: f64,
 }
 
 impl IdmParams {
@@ -151,8 +148,7 @@ impl IdmParams {
     /// stop-and-go waves out of a crowded road, which is a different
     /// thing to show than a car following another car, so `a_accel_max`
     /// and `b_decel_comfort` are this project's, within what ordinary
-    /// driving uses. So is `decel_max`, at firm braking rather than
-    /// emergency braking.
+    /// driving uses.
     pub fn highway_car(v0_speed_tgt: f64) -> Self {
         IdmParams {
             v0_speed_tgt,
@@ -160,7 +156,6 @@ impl IdmParams {
             s0_gap_min: 2.0,
             a_accel_max: 1.5,
             b_decel_comfort: 2.0,
-            decel_max: 4.0,
         }
     }
 }
@@ -189,13 +184,29 @@ impl IdmParams {
 /// platforms agree to the last bit. The fourth power is two squarings
 /// rather than `powi`, whose expansion is the compiler's business rather
 /// than the standard's.
+///
+/// One thing here is not in the published equation, and the body says
+/// what it is for: the wanted gap does not go below zero. The command is
+/// held inside `[-b_decel_comfort, a_accel_max]`, which adds no
+/// parameter of its own, and buys a finite answer for a gap of nothing
+/// at the price of the emergency braking a real car would have.
 pub fn idm_accel(speed: f64, gap: f64, approach_rate: f64, params: IdmParams) -> f64 {
-    // A lead pulling away asks for no extra room at all, which is what
-    // the floor at zero says. Without it a fast enough retreat would
-    // talk the law into wanting less room than s0_gap_min.
+    // The paper's s* reads s0 + s1*sqrt(v/v0) + v*T + v*dv/(2*sqrt(ab)),
+    // and this is it with s1 = 0, as the common four-parameter form has
+    // it, under the one adaptation: a wanted gap is a distance, so it
+    // does not go below zero.
+    //
+    // Something has to say that, because a lead pulling away contributes
+    // a negative closing term, and the equation as published lets that
+    // take the whole expression negative, where it squares back into
+    // braking. Then a car brakes as the road ahead clears: at 20 m/s
+    // with 20 m of gap and a lead pulling away to 30, -1.28 m/s^2 where
+    // the answer wanted is +1.20. A limit on the output cannot fix that,
+    // since -1.28 is a perfectly ordinary number to command. What is
+    // wrong with it is its sign.
     let closing_room =
         speed * approach_rate / (2.0 * (params.a_accel_max * params.b_decel_comfort).sqrt());
-    let gap_wanted = params.s0_gap_min + (speed * params.t_headway + closing_room).max(0.0);
+    let gap_wanted = (params.s0_gap_min + speed * params.t_headway + closing_room).max(0.0);
 
     // How much of the open road is left to take, and how much of it the
     // lead has taken. The fourth power is what holds the first term near
@@ -211,9 +222,18 @@ pub fn idm_accel(speed: f64, gap: f64, approach_rate: f64, params: IdmParams) ->
     // the braking limit, which is the answer a collided pair deserves.
     let crowding = gap_wanted / gap.max(f64::MIN_POSITIVE);
 
-    // Return what the road leaves once the lead has had its share.
+    // Return the acceleration the equation gives, which is what is left
+    // of the open road once the lead's share is taken off it, held
+    // inside the two rates the parameters name.
+    //
+    // The lower bound is the one doing the work: as the gap goes to
+    // nothing the crowding term runs away, taking the command to
+    // negative infinity, which is a brake without any limit at all. The
+    // upper bound only guards, since the equation on its own never gives
+    // more than a_accel_max, that being what a standstill on an empty
+    // road gives.
     (params.a_accel_max * (free_road - crowding * crowding))
-        .clamp(-params.decel_max, params.a_accel_max)
+        .clamp(-params.b_decel_comfort, params.a_accel_max)
 }
 
 #[cfg(test)]
@@ -428,14 +448,18 @@ mod tests {
 
     #[test]
     fn the_published_equation_gives_the_value_worked_by_hand() {
-        // Doing 20 behind a lead 40 m off and closing at 5, worked from
+        // Doing 20 behind a lead 60 m off and closing at 5, worked from
         // the equation with the numbers highway_car sets:
         //   room wanted = 2 + 20*1.5 + 20*5 / (2*sqrt(1.5*2))
         //               = 60.86751345948129
-        //   accel       = 1.5 * (1 - (20/30)^4 - (60.86751345948129/40)^2)
-        //               = -2.2695971038651734
-        let accel = idm_accel(20.0, 40.0, 5.0, following());
-        assert!((accel + 2.269_597_103_865_173_4).abs() < 1e-12, "{accel}");
+        //   accel       = 1.5 * (1 - (20/30)^4 - (60.86751345948129/60)^2)
+        //               = -0.33998554410468607
+        //
+        // Sixty meters rather than forty so the answer lands inside the
+        // limits, since a clamped value would check the clamp instead of
+        // the equation.
+        let accel = idm_accel(20.0, 60.0, 5.0, following());
+        assert!((accel + 0.339_985_544_104_686_07).abs() < 1e-12, "{accel}");
     }
 
     #[test]
@@ -454,19 +478,26 @@ mod tests {
         // asks for hundreds, and the car commands what it has.
         assert_eq!(
             idm_accel(30.0, 5.0, 20.0, following()),
-            -following().decel_max
+            -following().b_decel_comfort
         );
     }
 
     #[test]
     fn a_lead_pulling_away_never_buys_room_below_the_minimum() {
-        // The closing allowance floors at zero, so no retreat, however
-        // fast, talks the law into wanting less than s0_gap_min and a
-        // headway. Two different retreats therefore answer alike.
+        // The wanted gap floors at zero, so however fast a lead pulls
+        // away, what is left is an open road rather than a negative
+        // distance squaring back into braking. Two different retreats
+        // therefore answer alike, and both accelerate.
         let fast = idm_accel(20.0, 32.0, -1000.0, following());
         let faster = idm_accel(20.0, 32.0, -5000.0, following());
         assert_eq!(fast, faster);
         assert!(fast > 0.0, "{fast}");
+
+        // The case that made the floor necessary, which is ordinary
+        // rather than extreme: a lead pulling away to 30 with 20 m of
+        // gap. Unfloored the equation commands -1.28 here.
+        let clearing = idm_accel(20.0, 20.0, -10.0, following());
+        assert!(clearing > 1.0, "{clearing}");
     }
 
     #[test]
@@ -475,11 +506,11 @@ mod tests {
         // with them is only to stay a number.
         assert_eq!(
             idm_accel(20.0, 0.0, 0.0, following()),
-            -following().decel_max
+            -following().b_decel_comfort
         );
         assert_eq!(
             idm_accel(20.0, -3.0, 0.0, following()),
-            -following().decel_max
+            -following().b_decel_comfort
         );
     }
 
@@ -493,7 +524,7 @@ mod tests {
                     assert!(
                         accel.is_finite()
                             && accel <= params.a_accel_max
-                            && accel >= -params.decel_max,
+                            && accel >= -params.b_decel_comfort,
                         "{speed} {gap} {approach_rate} gave {accel}"
                     );
                 }
