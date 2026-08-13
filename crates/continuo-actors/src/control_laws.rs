@@ -38,21 +38,37 @@ pub fn pure_pursuit_yaw_rate(road: &Waypoints, pose: Pose, params: PurePursuitPa
     let s = road.project(position.x, position.y);
     let target = road.point_at_offset(s + params.lookahead, params.lateral_tgt);
     let desired_heading = f64::atan2(target.y - position.y, target.x - position.x);
-    let heading_error = wrap_pi(desired_heading - pose.orientation.yaw());
+    let heading_error = wrap_to_pi(desired_heading - pose.orientation.yaw());
 
     // Return the turn toward the aim point, inside the clamp.
     (params.gain_yaw_rate * heading_error).clamp(-params.max_yaw_rate, params.max_yaw_rate)
 }
 
-fn wrap_pi(angle: f64) -> f64 {
-    let wrapped = angle.rem_euclid(std::f64::consts::TAU);
-
-    // Return the equivalent angle in (-pi, pi].
-    if wrapped > std::f64::consts::PI {
-        wrapped - std::f64::consts::TAU
+/// The same angle measured the short way round, in [-pi, pi].
+///
+/// Wrapping the magnitude and putting the sign back sends both signs
+/// through one calculation, so the answer is exactly odd:
+/// `wrap_to_pi(-a)` is `-wrap_to_pi(a)` to the bit. Folding a negative
+/// angle up into [0, TAU) and back down instead would round it twice
+/// where a positive angle is not rounded at all, and two followers the
+/// same distance either side of a lane would steer back at slightly
+/// different rates.
+///
+/// Nothing here rounds. A remainder is exact, and the subtraction only
+/// runs when more than half a turn is left, so its two sides are within
+/// a factor of two of each other and it is exact as well. Multiplying by
+/// 1 or -1 is exact. An angle of exactly half a turn keeps the sign it
+/// arrived with, both ways round being equally short.
+fn wrap_to_pi(angle: f64) -> f64 {
+    let part_turn = angle.abs() % std::f64::consts::TAU;
+    let short_way = if part_turn > std::f64::consts::PI {
+        part_turn - std::f64::consts::TAU
     } else {
-        wrapped
-    }
+        part_turn
+    };
+
+    // Return the short way round, pointing the way the angle did.
+    angle.signum() * short_way
 }
 
 #[cfg(test)]
@@ -94,15 +110,14 @@ mod tests {
     #[test]
     fn a_follower_off_its_lane_turns_back_toward_it() {
         // Left of the lane the aim point is to the right, so the command
-        // is clockwise, and one as far the other side turns the other
-        // way by as much. Only as much to within rounding, since the
-        // negative error comes back through the wrap and the positive one
-        // does not.
+        // is clockwise, and one as far the other side turns the other way
+        // by exactly as much. Exactly, with no tolerance, because a
+        // mirrored geometry that answered only to within rounding would
+        // mean the law had a preferred side.
         let from_the_left = pure_pursuit_yaw_rate(&road(), pose_at(20.0, 3.0, 0.0), tuning());
         let from_the_right = pure_pursuit_yaw_rate(&road(), pose_at(20.0, -3.0, 0.0), tuning());
         assert!(from_the_left < 0.0, "{from_the_left}");
-        let mirrored = from_the_left + from_the_right;
-        assert!(mirrored.abs() < 1e-12, "{from_the_left} {from_the_right}");
+        assert_eq!(from_the_left, -from_the_right);
     }
 
     #[test]
@@ -140,6 +155,35 @@ mod tests {
             pure_pursuit_yaw_rate(&road(), pose_at(20.0, 0.0, quarter_turn), hard_and_capped);
         assert_eq!(facing_right, 0.5);
         assert_eq!(facing_left, -0.5);
+    }
+
+    #[test]
+    fn wrapping_an_angle_answers_its_mirror_exactly() {
+        // Out to +/- 8 radians, a little past a full turn either side of
+        // zero, so the sweep covers angles that wrap and angles that do
+        // not.
+        const STEP: f64 = 0.04;
+        const STEPS: i32 = 200;
+
+        // Each angle is a product, so it has a full mantissa. Reaching
+        // them by summing instead, as -8.0 plus a multiple of the step,
+        // would leave the low bits clear, and an angle with room to
+        // spare there comes back from a fold up and down unchanged. The
+        // sweep would then pass whatever this function did.
+        for k in -STEPS..=STEPS {
+            let angle = f64::from(k) * STEP;
+            let wrapped = wrap_to_pi(angle);
+            assert!(wrapped.abs() <= std::f64::consts::PI, "{angle} {wrapped}");
+            assert_eq!(wrapped, -wrap_to_pi(-angle), "{angle}");
+        }
+    }
+
+    #[test]
+    fn half_a_turn_keeps_the_sign_it_came_with() {
+        // The one angle with two equally short ways round, and the only
+        // input where the answer is a choice rather than a value.
+        assert_eq!(wrap_to_pi(std::f64::consts::PI), std::f64::consts::PI);
+        assert_eq!(wrap_to_pi(-std::f64::consts::PI), -std::f64::consts::PI);
     }
 
     #[test]
