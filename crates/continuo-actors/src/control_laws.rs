@@ -149,7 +149,7 @@ impl IdmParams {
     /// thing to show than a car following another car, so `a_accel_max`
     /// and `b_decel_comfort` are this project's, within what ordinary
     /// driving uses.
-    pub fn highway_car(v0_speed_tgt: f64) -> Self {
+    pub const fn highway_car(v0_speed_tgt: f64) -> Self {
         IdmParams {
             v0_speed_tgt,
             t_headway: 1.5,

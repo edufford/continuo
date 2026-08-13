@@ -244,6 +244,21 @@ so nothing in M6 re-tests it per component.
     the 8, 16 and 32 bit integers, `bool`, `String`, `Binary` and
     `Clock`. It is an export-side gap only, since the importer binds all
     ten numeric types, and nothing here wants a 64 bit integer.
+  - **Only the first line of a doc comment becomes the FMI
+    description**, so a first line has to be a whole sentence and a
+    field wanting more says the rest on the lines below.
+  - **An output needs `initial = Calculated` spelled out.** Left off,
+    the derive lists no initial unknowns and the output keeps whatever
+    start value it declares, which FMI forbids of a calculated variable.
+    fmpy refuses to load the result, which is how this was found.
+  - **`variableNamingConvention` cannot be set** and comes out `flat`.
+    Dotted names are still legal and fmpy accepts them, so what is lost
+    is the model description saying out loud that `position.x` is
+    structured. Nothing here depends on it, since the mapping derives
+    its pointers by this project's own rule.
+  - **`canSerializeFMUstate` is false**, so the adapter runs this FMU in
+    output-hash mode. Nothing in `fmi-export` implements state
+    serialization.
 - Bundling: `cargo install cargo-fmi`, then `cargo fmi --package <pkg>
   bundle` (wrapped by `cargo xtask bundle-fmus`) builds the cdylib
   itself, extracts
