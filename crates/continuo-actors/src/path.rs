@@ -104,6 +104,26 @@ impl Waypoints {
         Self::build_closed(points)
     }
 
+    /// The points the path was built from, in order.
+    ///
+    /// These and [`is_closed`](Self::is_closed()) are the whole of a path,
+    /// since the arc-length table is derived from them. So the two are what
+    /// travels when a path has to reach somewhere a Rust value cannot, such
+    /// as a controller inside an FMU, which rebuilds its own copy through
+    /// the same builders.
+    pub fn points(&self) -> &[(f64, f64)] {
+        &self.points
+    }
+
+    /// Whether the last point connects back to the first.
+    ///
+    /// It travels beside [`points`](Self::points()) because one set of
+    /// points makes two different paths: a loop wraps at the end where a
+    /// road stops.
+    pub fn is_closed(&self) -> bool {
+        self.is_closed
+    }
+
     pub fn total_length(&self) -> f64 {
         self.total
     }
@@ -337,5 +357,68 @@ mod tests {
         // A point exactly on a corner projects to that corner.
         let s = p.project(0.0, 10.0);
         assert!((s - 30.0).abs() < 1e-12);
+    }
+
+    /// A point as the bits it is made of, so the comparisons below are
+    /// exact rather than close enough.
+    fn bits(v: Vec3) -> (u64, u64, u64) {
+        (v.x.to_bits(), v.y.to_bits(), v.z.to_bits())
+    }
+
+    #[test]
+    fn a_road_rebuilt_from_its_points_is_the_same_road() {
+        // A standard lane width, so the offset is one a real lane sits at.
+        const LANE_OFFSET: f64 = 3.5;
+
+        // A bend and a loop, so the copy is checked both where an open
+        // path clamps and where a closed one wraps.
+        let roads = [
+            Waypoints::build_open(vec![(0.0, 0.0), (30.0, 0.0), (55.0, 18.0), (80.0, 18.0)]),
+            square(),
+        ];
+
+        for road in roads {
+            let copy = if road.is_closed() {
+                Waypoints::build_closed(road.points().to_vec())
+            } else {
+                Waypoints::build_open(road.points().to_vec())
+            };
+            assert_eq!(copy.total_length().to_bits(), road.total_length().to_bits());
+
+            // Past both ends as well as along it, since that is where the
+            // two kinds of path answer differently.
+            for pct in -10..=110 {
+                let s = road.total_length() * pct as f64 / 100.0;
+                assert_eq!(bits(copy.point_at(s)), bits(road.point_at(s)), "s = {s}");
+                assert_eq!(
+                    copy.heading_at(s).to_bits(),
+                    road.heading_at(s).to_bits(),
+                    "s = {s}"
+                );
+                // The call a lane-following controller makes, and worth
+                // comparing in its own right: a left normal taken across a
+                // corner rather than along one segment would answer
+                // differently here while the centerline and the heading
+                // still agreed.
+                assert_eq!(
+                    bits(copy.point_at_offset(s, LANE_OFFSET)),
+                    bits(road.point_at_offset(s, LANE_OFFSET)),
+                    "s = {s}"
+                );
+            }
+
+            // Projection from all round the path, which is where a segment
+            // table built any other way would show.
+            for i in -2..=12 {
+                for j in -3..=3 {
+                    let (x, y) = (10.0 * i as f64, 5.0 * j as f64);
+                    assert_eq!(
+                        copy.project(x, y).to_bits(),
+                        road.project(x, y).to_bits(),
+                        "({x}, {y})"
+                    );
+                }
+            }
+        }
     }
 }
