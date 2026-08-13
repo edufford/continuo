@@ -1,8 +1,9 @@
 # Working on continuo
 
-continuo is a deterministic simulation orchestrator in Rust. The same world
-run twice produces the same bytes, on every platform, and most of what follows
-exists to keep that true.
+continuo is a deterministic simulation orchestrator in Rust. It is built for
+runs that can be reproduced and therefore trusted, for worlds where actors are
+many and come and go mid-run, and for a design that survives moving from one
+process to several hosts.
 
 [README.md](README.md) says what the crates are and how to run the demo.
 [PLAN.md](PLAN.md) describes the design as it stands, and
@@ -73,6 +74,9 @@ cargo run -p continuo-examples --example traffic
 The doc build is not optional. The crates cross-reference each other heavily,
 and a renamed item leaves a broken intra-doc link that still compiles.
 
+CI splits the test step in two, `--lib` then `--test '*'`, so neither reruns
+the other's tests. One `cargo test --workspace` covers both locally.
+
 Python changes also need `ruff check .`, `ruff format --check .` and `pytest`
 from `python/`.
 
@@ -102,7 +106,7 @@ until the day it does not.
 The same rules everywhere: code comments, doc comments, Markdown, commit
 messages, PR descriptions, console strings.
 
-- **American English.** "behavior", "initialize", "center", "semi truck".
+- **American English.** "behavior", "initialize", "center".
 - **No dash grammar.** Do not join clauses with an em dash, an en dash, or a
   spaced hyphen. Use a comma, a colon when what follows explains what came
   before, a semicolon between two independent clauses, or two sentences. A
@@ -193,8 +197,6 @@ and a worktree gets an empty one of its own. Set `autoMemoryDirectory` in the
 worktree's own `.claude/settings.local.json` to the root's memory directory.
 
 Never put one in a sibling directory such as `../continuo-<name>`. A session
-rooted at the repository root cannot reach it with file tools, which forces
-the session to move into the worktree, and transcripts and memory are keyed to
-the working directory. Everything learned there is then invisible from every
-other session and dies with the branch. Keep the editor and the session at the
-repository root, and work in the worktree by path.
+rooted at the repository root cannot reach it with file tools at all, and that
+is the difference that matters: a worktree inside the checkout is editable
+from either.
