@@ -7,7 +7,7 @@
 //! compiled into something else, rather than two that have to be kept in
 //! step by hand.
 
-use continuo_core::Pose;
+use continuo_core::{Detection, Pose};
 
 use crate::path::Waypoints;
 
@@ -73,31 +73,42 @@ fn wrap_to_pi(angle: f64) -> f64 {
 
 /// The range standing for nothing detected, in meters.
 ///
-/// Far enough that a following law computes the free road from it
-/// without being told the road is free: the gap is so large that the
-/// room the law wants is nothing beside it. So an empty scan, a slot no
-/// sensor filled, and a lead a kilometer off are all one case, and there
-/// is no emptiness to test for anywhere downstream.
+/// A million kilometers, which is less a distance than a number picked
+/// against two constraints. Far enough that a following law reads it as
+/// an open road: what IDM asks for at this range moves the answer by
+/// under 2e-12 m/s^2, for any speed and closing rate a road produces.
+/// Small enough to stay finite through whatever is done to it, since a
+/// scan travels as JSON, which has no infinity, and something
+/// downstream may yet take a car length off it or hand it to a 32-bit
+/// float.
 pub const FREE_ROAD_RANGE: f64 = 1e9;
 
-/// The nearest detection in a scan, as `(range, range_rate)`, or the
-/// free road if the scan holds nothing nearer.
+/// Nothing there: [`FREE_ROAD_RANGE`] away and not moving.
+///
+/// What an unfilled slot holds in a fixed-length scan, which is how a
+/// scan crosses into an FMU.
+pub const FREE_ROAD: Detection = Detection {
+    range: FREE_ROAD_RANGE,
+    range_rate: 0.0,
+};
+
+/// The nearest detection in a scan, or [`FREE_ROAD`] if the scan holds
+/// nothing nearer.
 ///
 /// A sensor reports what it found in no particular order, because
 /// relevance is the consumer's idea rather than the sensor's. For
 /// following, the nearest thing ahead is the one that matters, so
 /// picking it out is this function's job and not the radar's.
 ///
-/// The two slices are read in step and a shorter one ends the scan. Ties
-/// go to the earlier slot, so a scan answers the same way every time it
-/// is read, which is what the world hash needs of it. A slot at
-/// [`FREE_ROAD_RANGE`] loses to anything real, so a fixed-size array
-/// padded out to its length needs no separate count of what is in it.
-pub fn nearest_detection(ranges: &[f64], range_rates: &[f64]) -> (f64, f64) {
-    let mut nearest = (FREE_ROAD_RANGE, 0.0);
-    for (&range, &range_rate) in ranges.iter().zip(range_rates) {
-        if range < nearest.0 {
-            nearest = (range, range_rate);
+/// Ties go to the earlier slot, so a scan answers the same way every
+/// time it is read, which is what the world hash needs of it. Free-road
+/// slots lose to anything real, so a fixed-length scan padded out with
+/// them needs no count of what is in it.
+pub fn nearest_detection(scan: &[Detection]) -> Detection {
+    let mut nearest = FREE_ROAD;
+    for &detection in scan {
+        if detection.range < nearest.range {
+            nearest = detection;
         }
     }
 
@@ -168,10 +179,15 @@ impl IdmParams {
 
 /// Acceleration the Intelligent Driver Model commands, m/s^2.
 ///
-/// `gap` is the room ahead in meters and `approach_rate` is how fast
-/// that room is closing, positive when closing. Both are relative, which
-/// is what a radar measures and all this wants: the lead's own speed
-/// appears nowhere in the law.
+/// `gap` is the room ahead in meters. `approach_rate` is how fast that
+/// room is closing, in m/s and positive while it closes, which is the
+/// paper's own convention: it defines the approaching rate as the
+/// follower's speed minus the lead's. A [`Detection`] measures the same
+/// quantity the other way up, so a caller holding one passes
+/// `-range_rate`.
+///
+/// Both are relative, which is what a radar measures and all the law
+/// wants: the lead's own speed appears nowhere in it.
 ///
 /// The room it asks for is `gap_min`, plus `time_headway` seconds of
 /// travel, plus enough to shed the approach rate against a brake between
@@ -339,39 +355,44 @@ mod tests {
 
     #[test]
     fn the_nearest_detection_wins_regardless_of_its_slot() {
-        assert_eq!(
-            nearest_detection(&[40.0, 12.0, 90.0], &[-1.0, -3.0, 5.0]),
-            (12.0, -3.0)
-        );
+        let far = Detection {
+            range: 40.0,
+            range_rate: -1.0,
+        };
+        let near = Detection {
+            range: 12.0,
+            range_rate: -3.0,
+        };
+        let farthest = Detection {
+            range: 90.0,
+            range_rate: 5.0,
+        };
+        assert_eq!(nearest_detection(&[far, near, farthest]), near);
 
         // The same three cars, reported in another order, are the same
         // three cars, and the sensor promises no order at all.
-        assert_eq!(
-            nearest_detection(&[12.0, 90.0, 40.0], &[-3.0, 5.0, -1.0]),
-            (12.0, -3.0)
-        );
+        assert_eq!(nearest_detection(&[near, farthest, far]), near);
     }
 
     #[test]
     fn an_empty_scan_selects_the_free_road() {
-        assert_eq!(nearest_detection(&[], &[]), (FREE_ROAD_RANGE, 0.0));
+        assert_eq!(nearest_detection(&[]), FREE_ROAD);
     }
 
     #[test]
     fn padding_never_beats_a_car() {
-        // A fixed-size array holding one car and nothing else, which is
-        // the shape a scan arrives in once it has crossed into an FMU.
-        let mut ranges = [FREE_ROAD_RANGE; 8];
-        let mut range_rates = [0.0; 8];
-        ranges[5] = 30.0;
-        range_rates[5] = -2.0;
-        assert_eq!(nearest_detection(&ranges, &range_rates), (30.0, -2.0));
+        // A fixed-size scan holding one car and nothing else, which is
+        // the shape it arrives in once it has crossed into an FMU.
+        let car = Detection {
+            range: 30.0,
+            range_rate: -2.0,
+        };
+        let mut scan = [FREE_ROAD; 8];
+        scan[5] = car;
+        assert_eq!(nearest_detection(&scan), car);
 
         // And one holding nothing is the free road, padding and all.
-        assert_eq!(
-            nearest_detection(&[FREE_ROAD_RANGE; 8], &[0.0; 8]),
-            (FREE_ROAD_RANGE, 0.0)
-        );
+        assert_eq!(nearest_detection(&[FREE_ROAD; 8]), FREE_ROAD);
     }
 
     #[test]
@@ -379,7 +400,15 @@ mod tests {
         // Two cars at exactly one range, one closing and one not. Which
         // of them is followed matters less than that the answer is not
         // left to the order the slots happen to arrive in.
-        assert_eq!(nearest_detection(&[25.0, 25.0], &[-4.0, 1.0]), (25.0, -4.0));
+        let closing = Detection {
+            range: 25.0,
+            range_rate: -4.0,
+        };
+        let opening = Detection {
+            range: 25.0,
+            range_rate: 1.0,
+        };
+        assert_eq!(nearest_detection(&[closing, opening]), closing);
     }
 
     /// A car wanting 30 m/s, tuned the way the demo tunes every car.
@@ -477,13 +506,5 @@ mod tests {
                 }
             }
         }
-    }
-
-    #[test]
-    fn a_scan_ends_where_the_shorter_of_its_two_slices_does() {
-        // Nothing publishes a mismatched pair. Reading past the end of
-        // one of them would be reading whichever detection last held
-        // that slot.
-        assert_eq!(nearest_detection(&[50.0, 5.0], &[-1.0]), (50.0, -1.0));
     }
 }
