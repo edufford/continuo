@@ -125,7 +125,8 @@ so nothing in M6 re-tests it per component.
      ceiling a genuinely unbounded road will eventually hit. The
      fallback, if the derive cannot, is `road_x[MAX_WAYPOINTS]` with an
      integer `road_point_count` beside it; PR B checks this alongside
-     the fixed-dimension question.
+     the fixed-dimension question. **It cannot**, and the PR B entry
+     below records what was tried.
    - The detection arrays stay fixed at `MAX_DETECTIONS` either way.
      There is no count variable to eliminate, since unused slots take
      the free-road defaults, so a structural parameter would only add a
@@ -225,9 +226,24 @@ so nothing in M6 re-tests it per component.
   `#[model(co_simulation = true)]` must be set explicitly. `UserModel`
   methods all have defaults; a stateless map implements only
   `calculate_values` (outputs recompute lazily when read after `do_step`
-  marks them dirty). Implementation-time check: whether fmi-export itself
-  pulls fmi-sys/bindgen (hoped not; it implements the API rather than
-  binding to it).
+  marks them dirty).
+  - **It does pull fmi-sys and so bindgen**, through a plain `fmi`
+    dependency, so authoring an FMU costs libclang exactly as importing
+    one does. Only the `fmi3` feature is enabled, so the workspace's
+    feature trimming survives.
+  - **The exporting crate needs `fmi` as a direct dependency of its
+    own**, because the generated code writes `::fmi::...` paths. Without
+    it the derive fails with "cannot find `fmi` in the crate root" and a
+    cascade of missing-trait errors behind it.
+  - **A field carrying no `#[variable]` is ignored**, which is what lets
+    the FMU hold ordinary Rust state beside its interface.
+  - **A dotted `name` override passes through verbatim**, so
+    `name = "position.x"` declares the structured name the pose inputs
+    want and no JSON Pointer has to be written for them.
+  - **Int64 and UInt64 cannot be declared.** The builder covers f32, f64,
+    the 8, 16 and 32 bit integers, `bool`, `String`, `Binary` and
+    `Clock`. It is an export-side gap only, since the importer binds all
+    ten numeric types, and nothing here wants a 64 bit integer.
 - Bundling: `cargo install cargo-fmi`, then `cargo fmi --package <pkg>
   bundle` (wrapped by `cargo xtask bundle-fmus`) builds the cdylib
   itself, extracts
@@ -879,13 +895,21 @@ PLAN.md's "native arrays, float64 value references" that survives.
     `[f64; MAX_DETECTIONS]`, with `const _: () = assert!(..)` against
     the actors constant so a cap raised without rebuilding the FMU
     cannot go unnoticed.
-  - **Check first whether the derive can declare a structural parameter
-    and a `Vec`-backed dimension.** If it can, the road takes that form
-    and no count variable exists; if not, it is `[f64; MAX_WAYPOINTS]`
-    with `road_point_count` beside it and the same compile-time assert.
-    This is the larger of PR B's two dimension questions, since a
-    structurally sized array needs runtime sizing rather than a
-    fixed-length field, and it may simply not exist in a crate at 0.3.0.
+  - **The derive cannot size an array by a structural parameter**, so
+    the road takes the fallback form: `[f64; MAX_WAYPOINTS]` with
+    `road_point_count` beside it and the same compile-time assert. The
+    count is an ordinary `Parameter`, since a `StructuralParameter` that
+    sizes nothing would claim a role it does not have and would send the
+    importer into configuration mode for no reason.
+    - `causality = StructuralParameter` is accepted and declared, but
+      nothing connects one to a dimension. A `[T; N]` field declares
+      `Dimension::Fixed(N)`, and `#[variable(...)]` has no key naming a
+      sizing variable.
+    - `Vec<T>` is the only path to a variable dimension, and it is
+      unusable twice over: it hardcodes value reference 0, which is the
+      derive's own `time` variable, and it implements neither of the get
+      and set traits, so the variable could not be read or written even
+      if the dimension named the right thing.
   - A non-`#[variable]` `Option<Waypoints>` field, invisible to FMI and
     ordinary Rust state that drops at `fmi3FreeInstance`. `impl
     UserModel` builds the road **once, on first use**:
