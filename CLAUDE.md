@@ -13,6 +13,13 @@ closes, so nothing there is a permanent record.
 
 ## Determinism comes first
 
+Simulations are tools for driving engineering decisions, so a run has to be
+trustworthy, and repeatability is what earns that trust. A result nobody can
+reproduce is a result nobody can check, so two runs of one world disagreeing
+is something to explain rather than wave through. Where a component genuinely
+cannot be made repeatable, the exception gets named and scoped rather than
+left to be discovered.
+
 - The demo's world hash is pinned as `DEMO_WORLD_HASH` in
   `crates/continuo-examples/tests/highway.rs`, and README quotes it in its
   sample output. A change that moves it moves both in the same commit, and the
