@@ -1,5 +1,5 @@
-//! The control laws themselves: pure functions from what a car knows to
-//! what it commands.
+//! The control laws themselves: pure functions from what an actor knows
+//! to what it commands.
 //!
 //! Nothing here takes a component, an inbox or a clock, so a law needs
 //! only its arguments and answers every caller alike. That is what lets
@@ -25,14 +25,14 @@ pub struct PurePursuitParams {
     pub max_yaw_rate: f64,
 }
 
-/// Yaw rate that steers a car at `pose` onto the lane `lateral` meters
-/// left of `road`, positive counter-clockwise.
+/// Yaw rate that steers a follower at `pose` onto the lane `lateral`
+/// meters left of `road`, positive counter-clockwise.
 ///
 /// Projects the pose onto the road, aims at the point `lookahead` further
 /// along it, and turns toward that point in proportion to how far off the
-/// heading is, no harder than the car is allowed to turn. Holding a lane
-/// needs no geometry of its own, because the aim point is offset from the
-/// one road every car on it shares.
+/// heading is, no harder than the follower is allowed to turn. Holding a
+/// lane needs no geometry of its own, because the aim point is offset
+/// from the one road everything on it shares.
 pub fn pure_pursuit_yaw_rate(road: &Waypoints, pose: Pose, params: PurePursuitParams) -> f64 {
     let position = pose.position;
     let s = road.project(position.x, position.y);
@@ -84,7 +84,7 @@ mod tests {
     }
 
     #[test]
-    fn a_car_on_its_lane_and_pointing_along_it_commands_no_turn() {
+    fn a_follower_on_its_lane_and_pointing_along_it_commands_no_turn() {
         assert_eq!(
             pure_pursuit_yaw_rate(&road(), pose_at(20.0, 0.0, 0.0), tuning()),
             0.0
@@ -92,9 +92,9 @@ mod tests {
     }
 
     #[test]
-    fn a_car_off_its_lane_turns_back_toward_it() {
+    fn a_follower_off_its_lane_turns_back_toward_it() {
         // Left of the lane the aim point is to the right, so the command
-        // is clockwise, and a car as far the other side turns the other
+        // is clockwise, and one as far the other side turns the other
         // way by as much. Only as much to within rounding, since the
         // negative error comes back through the wrap and the positive one
         // does not.
@@ -132,7 +132,7 @@ mod tests {
         };
 
         // Pointing across the road, where a quarter turn of error times a
-        // gain of ten asks for far more than the car may command.
+        // gain of ten asks for far more than the follower may command.
         let quarter_turn = std::f64::consts::FRAC_PI_2;
         let facing_right =
             pure_pursuit_yaw_rate(&road(), pose_at(20.0, 0.0, -quarter_turn), hard_and_capped);
