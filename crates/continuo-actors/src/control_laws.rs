@@ -17,12 +17,29 @@ use crate::path::Waypoints;
 pub struct PurePursuitParams {
     /// Meters left of the road's centerline to hold, the Frenet `d`.
     pub lateral_tgt: f64,
-    /// How far along the road the aim point sits, in meters.
+    /// How far along the road the aim point sits, in meters. Positive:
+    /// an aim point at or behind the follower has no direction to give.
     pub lookahead: f64,
     /// Yaw rate commanded per radian of heading error, in 1/s.
     pub gain_yaw_rate: f64,
     /// The most yaw rate to command in either direction, rad/s.
     pub max_yaw_rate: f64,
+}
+
+impl PurePursuitParams {
+    /// The set this project steers cars with, taking the lane to hold.
+    ///
+    /// The three beyond the lane are scenario tuning rather than anything
+    /// published: an aim point a car length or so ahead, turning toward
+    /// it briskly, inside a rate a car could be asked for.
+    pub const fn highway_car(lateral_tgt: f64) -> Self {
+        PurePursuitParams {
+            lateral_tgt,
+            lookahead: 6.0,
+            gain_yaw_rate: 1.5,
+            max_yaw_rate: 1.2,
+        }
+    }
 }
 
 /// Yaw rate that steers a follower at `pose` onto the lane
@@ -121,18 +138,25 @@ pub fn nearest_detection(scan: &[Detection]) -> Detection {
 ///
 /// These are the published equation's five and nothing else, each
 /// carrying its symbol so the two can be read side by side.
+///
+/// Three of them are divisors, so `v0_speed_tgt`, `a_accel_max` and
+/// `b_decel_comfort` have to be greater than zero. A zero among them
+/// reaches [`idm_accel`] as a NaN rather than as a wrong number, and a
+/// NaN spreads into every command the car goes on to make. Whoever takes
+/// these from outside checks them there, where the value came in and
+/// where there is something to report to.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct IdmParams {
-    /// Speed held on an open road, m/s.
+    /// Speed held on an open road, m/s, greater than zero.
     pub v0_speed_tgt: f64,
     /// Seconds of gap wanted at whatever speed is being held.
     pub t_headway: f64,
     /// Meters of gap wanted at a standstill.
     pub s0_gap_min: f64,
-    /// The most acceleration commanded, m/s^2.
+    /// The most acceleration commanded, m/s^2, greater than zero.
     pub a_accel_max: f64,
-    /// The braking taken as comfortable, m/s^2 and positive. Also the
-    /// hardest [`idm_accel`] will ask for, which costs a car the
+    /// The braking taken as comfortable, m/s^2 and greater than zero.
+    /// Also the hardest [`idm_accel`] will ask for, which costs a car the
     /// emergency stop it might otherwise make.
     pub b_decel_comfort: f64,
 }

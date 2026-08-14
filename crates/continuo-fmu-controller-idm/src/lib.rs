@@ -48,23 +48,19 @@ pub const FMU_FILE_NAME: &str = "continuo_fmu_controller_idm.fmu";
 /// question first shows.
 pub const MAX_WAYPOINTS: usize = 64;
 
-/// What the following parameters hold until a host sets them.
+/// The speed a car holds until a host says otherwise, m/s.
 ///
-/// A host always does: the scenario knows how fast a car means to go, and
-/// which lane it holds, where this crate cannot. Three of these must be
-/// nonzero whatever happens, since the equation divides by the target
-/// speed and by the root of the two rates, so they are named here rather
-/// than left at zero.
-const DEFAULT_IDM: IdmParams = IdmParams::highway_car(30.0);
+/// The only tuning number this crate picks. Everything else it starts
+/// from is a tuning set [`continuo_actors::control_laws`] already names,
+/// so the FMU and the native controller start from the same places.
+const DEFAULT_TARGET_SPEED: f64 = 30.0;
 
-/// What the steering parameters hold until a host sets them: the road's
-/// own centerline, aimed a few car lengths ahead.
-const DEFAULT_PURSUIT: PurePursuitParams = PurePursuitParams {
-    lateral_tgt: 0.0,
-    lookahead: 6.0,
-    gain_yaw_rate: 1.5,
-    max_yaw_rate: 1.2,
-};
+/// What the following law's parameters hold until a host sets them.
+const DEFAULT_IDM: IdmParams = IdmParams::highway_car(DEFAULT_TARGET_SPEED);
+
+/// What the steering law's parameters hold until a host sets them,
+/// holding the road's own centerline.
+const DEFAULT_PURSUIT: PurePursuitParams = PurePursuitParams::highway_car(0.0);
 
 /// A car controller: IDM for how fast to go, pure pursuit for where to
 /// point, from one pose and one radar scan.
