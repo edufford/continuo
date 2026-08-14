@@ -70,38 +70,38 @@ fn require_positive(name: &'static str, given: f64) -> Result<f64, BadInput> {
 #[model(co_simulation = true, model_exchange = false, user_model = false)]
 pub struct FmuController {
     /// Where the car is, meters east.
-    #[variable(causality = Input, name = "position.x", start = 0.0)]
+    #[variable(causality = Input, name = "position.x", start = Self::default().position_x)]
     position_x: f64,
     /// Where the car is, meters north.
-    #[variable(causality = Input, name = "position.y", start = 0.0)]
+    #[variable(causality = Input, name = "position.y", start = Self::default().position_y)]
     position_y: f64,
     /// Which way the car points: the quaternion's scalar part.
-    #[variable(causality = Input, name = "orientation.w", start = 1.0)]
+    #[variable(causality = Input, name = "orientation.w", start = Self::default().orientation_w)]
     orientation_w: f64,
     /// Which way the car points: the quaternion's x part.
-    #[variable(causality = Input, name = "orientation.x", start = 0.0)]
+    #[variable(causality = Input, name = "orientation.x", start = Self::default().orientation_x)]
     orientation_x: f64,
     /// Which way the car points: the quaternion's y part.
-    #[variable(causality = Input, name = "orientation.y", start = 0.0)]
+    #[variable(causality = Input, name = "orientation.y", start = Self::default().orientation_y)]
     orientation_y: f64,
     /// Which way the car points: the quaternion's z part.
-    #[variable(causality = Input, name = "orientation.z", start = 0.0)]
+    #[variable(causality = Input, name = "orientation.z", start = Self::default().orientation_z)]
     orientation_z: f64,
     /// How fast the car is going, m/s, as the car itself reports it.
     ///
     /// A radar measures nothing about the car carrying it, so this
     /// arrives from the pose, standing in for a wheel speed sensor.
-    #[variable(causality = Input, start = 0.0)]
+    #[variable(causality = Input, start = Self::default().speed)]
     speed: f64,
 
     /// Meters to each thing the radar found ahead, free road past those.
     ///
     /// A slot the radar did not fill holds [`FREE_ROAD`], which loses to
     /// anything real, so nothing has to say how many are worth reading.
-    #[variable(causality = Input, start = [FREE_ROAD.range; MAX_DETECTIONS])]
+    #[variable(causality = Input, start = Self::default().range)]
     range: [f64; MAX_DETECTIONS],
     /// How fast each range is changing, m/s, negative while closing.
-    #[variable(causality = Input, start = [FREE_ROAD.range_rate; MAX_DETECTIONS])]
+    #[variable(causality = Input, start = Self::default().range_rate)]
     range_rate: [f64; MAX_DETECTIONS],
 
     // The road is fixed where the law parameters below are tunable, and
@@ -110,19 +110,19 @@ pub struct FmuController {
     // initialization would be accepted and then ignored. Declaring it
     // fixed is what tells a host that before it tries.
     /// The road's points, meters east, the first road_point_count real.
-    #[variable(causality = Parameter, variability = Fixed, start = [0.0; MAX_WAYPOINTS])]
+    #[variable(causality = Parameter, variability = Fixed, start = Self::default().road_x)]
     road_x: [f64; MAX_WAYPOINTS],
     /// The road's points, meters north, the first road_point_count real.
-    #[variable(causality = Parameter, variability = Fixed, start = [0.0; MAX_WAYPOINTS])]
+    #[variable(causality = Parameter, variability = Fixed, start = Self::default().road_y)]
     road_y: [f64; MAX_WAYPOINTS],
     /// How many of those points are the road, the rest being padding.
-    #[variable(causality = Parameter, variability = Fixed, start = 2u32)]
+    #[variable(causality = Parameter, variability = Fixed, start = Self::default().road_point_count)]
     road_point_count: u32,
     /// Whether the road wraps at its end rather than stopping there.
     ///
     /// True when the last point joins back to the first. Two roads with
     /// the same points and different answers here are different roads.
-    #[variable(causality = Parameter, variability = Fixed, start = false)]
+    #[variable(causality = Parameter, variability = Fixed, start = Self::default().road_closed)]
     road_closed: bool,
 
     // Tunable, so a host may change any of these between steps: a car
@@ -130,32 +130,32 @@ pub struct FmuController {
     // is why a step reads them rather than keeping a copy taken at
     // initialization, and why the check on them runs there too.
     /// Meters left of the centerline to hold, which is what makes a lane.
-    #[variable(causality = Parameter, variability = Tunable, start = DEFAULT_PURSUIT.lateral_tgt)]
+    #[variable(causality = Parameter, variability = Tunable, start = Self::default().lateral_tgt)]
     lateral_tgt: f64,
     /// How far along the road to aim, in meters.
-    #[variable(causality = Parameter, variability = Tunable, start = DEFAULT_PURSUIT.lookahead)]
+    #[variable(causality = Parameter, variability = Tunable, start = Self::default().lookahead)]
     lookahead: f64,
     /// Yaw rate per radian of heading error, in 1/s.
-    #[variable(causality = Parameter, variability = Tunable, start = DEFAULT_PURSUIT.gain_yaw_rate)]
+    #[variable(causality = Parameter, variability = Tunable, start = Self::default().gain_yaw_rate)]
     gain_yaw_rate: f64,
     /// The most yaw rate to command either way, rad/s.
-    #[variable(causality = Parameter, variability = Tunable, start = DEFAULT_PURSUIT.max_yaw_rate)]
+    #[variable(causality = Parameter, variability = Tunable, start = Self::default().max_yaw_rate)]
     max_yaw_rate: f64,
 
     /// Speed held on an open road, m/s.
-    #[variable(causality = Parameter, variability = Tunable, start = DEFAULT_IDM.v0_speed_tgt)]
+    #[variable(causality = Parameter, variability = Tunable, start = Self::default().v0_speed_tgt)]
     v0_speed_tgt: f64,
     /// Seconds of gap wanted at whatever speed is held.
-    #[variable(causality = Parameter, variability = Tunable, start = DEFAULT_IDM.t_headway)]
+    #[variable(causality = Parameter, variability = Tunable, start = Self::default().t_headway)]
     t_headway: f64,
     /// Meters of gap wanted at a standstill.
-    #[variable(causality = Parameter, variability = Tunable, start = DEFAULT_IDM.s0_gap_min)]
+    #[variable(causality = Parameter, variability = Tunable, start = Self::default().s0_gap_min)]
     s0_gap_min: f64,
     /// The most acceleration commanded, m/s^2.
-    #[variable(causality = Parameter, variability = Tunable, start = DEFAULT_IDM.a_accel_max)]
+    #[variable(causality = Parameter, variability = Tunable, start = Self::default().a_accel_max)]
     a_accel_max: f64,
     /// Comfortable braking, m/s^2 and positive, the hardest commanded.
-    #[variable(causality = Parameter, variability = Tunable, start = DEFAULT_IDM.b_decel_comfort)]
+    #[variable(causality = Parameter, variability = Tunable, start = Self::default().b_decel_comfort)]
     b_decel_comfort: f64,
 
     /// Acceleration to hold, m/s^2.
@@ -180,12 +180,13 @@ pub struct FmuController {
 }
 
 impl Default for FmuController {
-    /// The same values the variables declare as their starts.
+    /// Every start value this FMU has, written once.
     ///
-    /// Both are needed and neither is the other's copy: the declared
-    /// starts are what a host reads out of the model description, and
-    /// these are what the struct holds before anything sets it. Naming
-    /// the constants twice is what keeps them one set of numbers.
+    /// The declarations above read their `start` from here, so what a
+    /// host finds in the model description and what an instance holds
+    /// before anything sets it cannot come apart. That costs building one
+    /// of these per variable while the metadata is assembled, which
+    /// happens at packaging and at instantiation and never in a step.
     fn default() -> Self {
         FmuController {
             position_x: 0.0,
