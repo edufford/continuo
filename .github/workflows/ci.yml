@@ -164,6 +164,20 @@ jobs:
             python -m fmpy validate "$fmu"
           done
 
+      # Each agent packages an FMU carrying its own platform's binary, so the
+      # four together hold every platform this project builds for. Kept so
+      # they can be combined into a single FMU that loads anywhere, which
+      # works because everything in modelDescription.xml except its timestamp
+      # is identical between them: the instantiation token is a UUID derived
+      # from the model's name rather than from the build.
+      - name: "FMU: upload"
+        uses: actions/upload-artifact@v7
+        with:
+          name: fmu-${{ runner.os }}-${{ runner.arch }}
+          path: target/fmu/*.fmu
+          # A step that collected nothing would otherwise pass.
+          if-no-files-found: error
+
       # Smoke steps run the shipped examples end to end, covering what the
       # test suites cannot: that the examples themselves build and run, and
       # that the artefacts one produces are what the next consumes. They are
