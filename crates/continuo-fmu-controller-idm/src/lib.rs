@@ -211,12 +211,23 @@ impl Default for IdmController {
     }
 }
 
-/// A `road_point_count` no road could have: what arrived, and the fewest
-/// that would have worked.
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct BadPointCount {
-    given: usize,
-    least: usize,
+/// Something the FMU was handed that no controller could run on.
+///
+/// Each carries the value that arrived, because a host setting a
+/// parameter from another tool has no other way to see what it sent. The
+/// text is the whole of what crosses back: FMI carries a status and a log
+/// line, not a structured error.
+#[derive(Debug, Clone, Copy, PartialEq, thiserror::Error)]
+enum BadInput {
+    #[error("road_point_count is {given}, and {kind} roads need {least} to {MAX_WAYPOINTS}")]
+    PointCount {
+        given: usize,
+        least: usize,
+        kind: &'static str,
+    },
+
+    #[error("the first {count} road points are all the same place, which is a road of no length")]
+    RoadOfNoLength { count: usize },
 }
 
 impl IdmController {
@@ -227,42 +238,55 @@ impl IdmController {
     /// through the C interface would take the host process with it. The
     /// same information travels as a refusal instead, which the standard
     /// can carry.
-    fn road_from_parameters(&self) -> Result<Waypoints, BadPointCount> {
+    ///
+    /// A road of no length is refused for a plainer reason. The point
+    /// arrays start full of zeros, so a host that sets the count and
+    /// forgets the points sends a road whose every point is the origin.
+    /// Nothing in `Waypoints` objects to that, and a car steering along
+    /// it holds still at a single spot. Better to say so.
+    fn road_from_parameters(&self) -> Result<Waypoints, BadInput> {
         let given = self.road_point_count as usize;
-        let least = if self.road_closed { 3 } else { 2 };
+        let (least, kind) = if self.road_closed {
+            (3, "closed")
+        } else {
+            (2, "open")
+        };
         if given < least || given > MAX_WAYPOINTS {
-            return Err(BadPointCount { given, least });
+            return Err(BadInput::PointCount { given, least, kind });
         }
         let points: Vec<(f64, f64)> = (0..given)
             .map(|i| (self.road_x[i], self.road_y[i]))
             .collect();
+        let road = if self.road_closed {
+            Waypoints::build_closed(points)
+        } else {
+            Waypoints::build_open(points)
+        };
+        if road.total_length() <= 0.0 {
+            return Err(BadInput::RoadOfNoLength { count: given });
+        }
 
         // Return the road, built by the code that built the native
         // controller's road, so the two are one geometry rather than two
         // readings of the same numbers.
-        Ok(if self.road_closed {
-            Waypoints::build_closed(points)
-        } else {
-            Waypoints::build_open(points)
-        })
+        Ok(road)
     }
 
     /// The road, reported to the host if there is none to build.
     fn build_road(&self, context: &dyn Context<Self>) -> Result<Waypoints, Fmi3Error> {
-        self.road_from_parameters().map_err(|bad| {
-            context.log(
-                Fmi3Error::Error.into(),
-                DefaultLoggingCategory::default(),
-                format_args!(
-                    "road_point_count is {}, and a {} road needs {} to {MAX_WAYPOINTS}",
-                    bad.given,
-                    if self.road_closed { "closed" } else { "open" },
-                    bad.least,
-                ),
-            );
+        self.road_from_parameters()
+            .map_err(|bad| self.refuse(context, bad))
+    }
 
-            Fmi3Error::Error
-        })
+    /// Reports to the host what it handed over that cannot be run on.
+    fn refuse(&self, context: &dyn Context<Self>, bad: BadInput) -> Fmi3Error {
+        context.log(
+            Fmi3Error::Error.into(),
+            DefaultLoggingCategory::default(),
+            format_args!("{bad}"),
+        );
+
+        Fmi3Error::Error
     }
 
     /// What the laws command, given the road they command along.
@@ -477,7 +501,11 @@ mod tests {
         too_few.road_point_count = 1;
         assert_eq!(
             too_few.road_from_parameters().unwrap_err(),
-            BadPointCount { given: 1, least: 2 }
+            BadInput::PointCount {
+                given: 1,
+                least: 2,
+                kind: "open",
+            }
         );
 
         // Two points close into nothing, so a loop needs three.
@@ -485,7 +513,11 @@ mod tests {
         not_a_loop.road_closed = true;
         assert_eq!(
             not_a_loop.road_from_parameters().unwrap_err(),
-            BadPointCount { given: 2, least: 3 }
+            BadInput::PointCount {
+                given: 2,
+                least: 3,
+                kind: "closed",
+            }
         );
 
         // More points than arrived would read past what the host sent.
@@ -493,10 +525,34 @@ mod tests {
         too_many.road_point_count = MAX_WAYPOINTS as u32 + 1;
         assert_eq!(
             too_many.road_from_parameters().unwrap_err(),
-            BadPointCount {
+            BadInput::PointCount {
                 given: MAX_WAYPOINTS + 1,
                 least: 2,
+                kind: "open",
             }
+        );
+    }
+
+    #[test]
+    fn a_count_set_over_points_nobody_sent_is_refused() {
+        // What a host gets by setting the count and forgetting the
+        // points: the arrays start at zero, so every point of the road
+        // is the origin. It builds without complaint, and a car given it
+        // would sit still at one spot.
+        let mut forgot_the_road = IdmController {
+            road_point_count: 4,
+            ..IdmController::default()
+        };
+        assert_eq!(
+            forgot_the_road.road_from_parameters().unwrap_err(),
+            BadInput::RoadOfNoLength { count: 4 }
+        );
+
+        // A closed road of repeated points goes the same way.
+        forgot_the_road.road_closed = true;
+        assert_eq!(
+            forgot_the_road.road_from_parameters().unwrap_err(),
+            BadInput::RoadOfNoLength { count: 4 }
         );
     }
 
