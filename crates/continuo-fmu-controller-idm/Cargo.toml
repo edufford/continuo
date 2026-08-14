@@ -1,6 +1,8 @@
 [package]
 name = "continuo-fmu-controller-idm"
-description = "The demo's car controller, exported as an FMI 3.0 Co-Simulation FMU"
+# This is the FMU's own description, not just the crate's: the packager
+# writes it into modelDescription.xml, so it is what a host reads.
+description = "A controller for traffic cars, following with IDM and turning with pure pursuit"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
