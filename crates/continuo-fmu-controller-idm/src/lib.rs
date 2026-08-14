@@ -24,7 +24,7 @@ use std::path::PathBuf;
 use continuo_actors::control_laws::{
     FREE_ROAD, IdmParams, PurePursuitParams, idm_accel, nearest_detection, pure_pursuit_yaw_rate,
 };
-use continuo_actors::{MAX_DETECTIONS, MAX_WAYPOINTS, Waypoints};
+use continuo_actors::{MAX_DETECTIONS, Waypoints};
 use continuo_core::{Detection, Pose, Quat, Vec3};
 use fmi::fmi3::{Fmi3Error, Fmi3Res};
 use fmi_export::fmi3::{Context, DefaultLoggingCategory, UserModel};
@@ -33,6 +33,20 @@ use fmi_export::{FmuModel, export_fmu};
 /// The file `cargo xtask bundle-fmus` writes, named after the cdylib
 /// because FMI takes its model identifier from the shared library.
 pub const FMU_FILE_NAME: &str = "continuo_fmu_controller_idm.fmu";
+
+/// How many points of road this FMU can be handed.
+///
+/// It lives here because it is a fact about this interface rather than
+/// about roads: `fmi-export` 0.3.0 cannot size an array by a parameter,
+/// so the array is fixed and `road_point_count` says how much of it is
+/// real. Padding the tail by repeating the last point instead would hand
+/// [`Waypoints::project`] a segment of no length, so the padding has to
+/// be ignored rather than read.
+///
+/// It covers the demo's two points with room for a polyline drawn by
+/// hand. A road built from a map will want more, and this is where that
+/// question first shows.
+pub const MAX_WAYPOINTS: usize = 64;
 
 /// What the following parameters hold until a host sets them.
 ///

@@ -42,30 +42,16 @@ pub use traffic_spawner::{
     traffic_despawn_key, traffic_spawn_key,
 };
 
-/// How many detections a scan carries at most, and how long the arrays
-/// are that carry one into an FMU.
+/// How many detections a scan carries at most.
 ///
-/// A bound rather than a working number. A scan reaches about 120 m down
-/// one lane, which holds 26 cars nose to tail at four and a half meters
-/// each, and moving traffic leaves gaps, so no world this project runs
-/// gets near it. Nothing pays for the headroom on the wire, since a scan
-/// carries only what was found and the padding out to a fixed length
-/// happens inside the FMU, where a slot past the end holds the free road.
+/// A placeholder for demo development, picked well above anything the
+/// scenarios here produce so truncation is not a question yet. It settles
+/// once a sensor has a range and a scenario has a traffic density, and
+/// until then the arguments for any particular number are guesswork.
+///
+/// A consumer wanting the scan as a fixed-length array reads it from
+/// here, so the cap and the array are one number.
 pub const MAX_DETECTIONS: usize = 64;
-
-/// How many points a road may have to cross into an FMU, which declares
-/// arrays this long and a count of how many it filled.
-///
-/// The count exists because the array cannot be trimmed: `fmi-export`
-/// 0.3.0 has no way to size one by a parameter. Repeating the last point
-/// through the tail instead would hand [`Waypoints::project`] a segment
-/// of zero length, so the padding has to be ignored rather than
-/// interpreted, and something has to say where it starts.
-///
-/// It covers the demo's two points with room for a polyline drawn by
-/// hand. A road built from a map will want more, and this is where that
-/// question first shows.
-pub const MAX_WAYPOINTS: usize = 64;
 
 /// Key for an actor's pose in `world`.
 pub fn pose_key(world_name: &str, actor_name: &str) -> KeyExpr {
