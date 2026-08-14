@@ -149,12 +149,13 @@ jobs:
 
       # An FMU our own importer accepts is not the same as a valid one, so a
       # second implementation is what says whether what we package is well
-      # formed.
+      # formed. The glob is guarded because one matching nothing expands to
+      # itself, checks nothing and passes, which is the failure this step
+      # exists to catch.
       - name: "FMU: validate"
         shell: bash
         run: |
-          # A glob matching nothing would expand to itself, check nothing and
-          # pass, which is the shape of failure this step exists to catch.
+          # Check every packaged FMU against a second implementation.
           packaged=(target/fmu/*.fmu)
           if [ ! -e "${packaged[0]}" ]; then
             echo "ERROR: no .fmu in target/fmu; this check would be vacuous"
@@ -203,13 +204,15 @@ jobs:
       #
       # Neither `if` below can become `! cmd`. Bash exempts an inverted
       # command from `set -e`, so the short form would never fail the step.
+      #
+      # The awk corrupts one pose x-coordinate mid-run, at the first match on
+      # or after line 6000 (roughly sim time 14 s of 30), keeping the JSON
+      # valid, so verification checks a long clean prefix before diverging
+      # and stops there rather than running to completion.
       - name: "Smoke: verification detects a modified log"
         shell: bash
         run: |
-          # Corrupt one pose x-coordinate mid-run, at the first match on or
-          # after line 6000 (roughly sim time 14 s of 30), keeping the JSON
-          # valid, so verification checks a long clean prefix before
-          # diverging (and stops there rather than running to completion).
+          # Corrupt one pose mid-run, then check verification rejects the log.
           awk 'NR>=6000 && !done && /"x":/ { sub(/"x":[-0-9.eE]*/, "\"x\":99.9"); done=1 } { print }' \
             ci-run.jsonl > ci-tampered.jsonl
           if cmp -s ci-run.jsonl ci-tampered.jsonl; then
