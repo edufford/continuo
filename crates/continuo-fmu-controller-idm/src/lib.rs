@@ -19,7 +19,8 @@
 //! leaves this copy behind, and `cargo xtask bundle-fmus` is what puts it
 //! back.
 
-use std::path::PathBuf;
+mod bundle;
+mod error;
 
 use continuo_actors::control_laws::{
     FREE_ROAD, IdmParams, PurePursuitParams, idm_accel, nearest_detection, pure_pursuit_yaw_rate,
@@ -30,9 +31,10 @@ use fmi::fmi3::{Fmi3Error, Fmi3Res};
 use fmi_export::fmi3::{Context, DefaultLoggingCategory, UserModel};
 use fmi_export::{FmuModel, export_fmu};
 
-/// The file `cargo xtask bundle-fmus` writes, named after the cdylib
-/// because FMI takes its model identifier from the shared library.
-pub const FMU_FILE_NAME: &str = "continuo_fmu_controller_idm.fmu";
+use error::BadInput;
+
+pub use bundle::{FMU_FILE_NAME, bundled_fmu_path};
+pub use error::BundleError;
 
 /// How many points of road this FMU can be handed.
 ///
@@ -220,28 +222,6 @@ impl Default for IdmController {
     }
 }
 
-/// Something the FMU was handed that no controller could run on.
-///
-/// Each carries the value that arrived, because a host setting a
-/// parameter from another tool has no other way to see what it sent. The
-/// text is the whole of what crosses back: FMI carries a status and a log
-/// line, not a structured error.
-#[derive(Debug, Clone, Copy, PartialEq, thiserror::Error)]
-enum BadInput {
-    #[error("road_point_count is {given}, and {kind} roads need {least} to {MAX_WAYPOINTS}")]
-    PointCount {
-        given: usize,
-        least: usize,
-        kind: &'static str,
-    },
-
-    #[error("the first {count} road points are all the same place, which is a road of no length")]
-    RoadOfNoLength { count: usize },
-
-    #[error("{name} is {given}, and it has to be a positive number")]
-    NotPositive { name: &'static str, given: f64 },
-}
-
 /// A parameter the laws divide by, checked before they see it.
 ///
 /// Rejects a zero, a negative, an infinity and a NaN alike, since what
@@ -425,39 +405,6 @@ impl UserModel for IdmController {
 }
 
 export_fmu!(IdmController);
-
-/// Why the bundled FMU could not be found.
-#[derive(Debug, thiserror::Error)]
-pub enum BundleError {
-    #[error("cannot find this test's own executable: {0}")]
-    CurrentExe(#[source] std::io::Error),
-
-    #[error(
-        "no fmu/{FMU_FILE_NAME} above {}: run `cargo install cargo-fmi` once, \
-         then `cargo xtask bundle-fmus`",
-        searched_from.display()
-    )]
-    NotBundled { searched_from: PathBuf },
-}
-
-/// Where `cargo xtask bundle-fmus` left the packaged FMU.
-///
-/// Found by walking up from the running executable rather than from a
-/// build-time path, so it works the same from a test binary, an example
-/// and a tool, whichever profile built them.
-pub fn bundled_fmu_path() -> Result<PathBuf, BundleError> {
-    let exe = std::env::current_exe().map_err(BundleError::CurrentExe)?;
-    for directory in exe.ancestors() {
-        let candidate = directory.join("fmu").join(FMU_FILE_NAME);
-        if candidate.is_file() {
-            return Ok(candidate);
-        }
-    }
-
-    // Return the failure carrying the command that fixes it, since a
-    // missing bundle is a step not run rather than anything broken.
-    Err(BundleError::NotBundled { searched_from: exe })
-}
 
 #[cfg(test)]
 mod tests {
