@@ -399,9 +399,9 @@ impl UserModel for FmuController {
 mod tests {
     use super::*;
 
-    /// A controller carrying `road` as its parameters, the way a host
+    /// A controller holding `road` in its parameters, the way a host
     /// hands one across.
-    fn carrying(road: &Waypoints) -> FmuController {
+    fn controller_given(road: &Waypoints) -> FmuController {
         let mut controller = FmuController {
             road_point_count: road.points().len() as u32,
             road_closed: road.is_closed(),
@@ -417,8 +417,9 @@ mod tests {
         controller
     }
 
-    /// Every answer a road gives, as the bits it gives them in.
-    fn answers(road: &Waypoints) -> Vec<(u64, u64, u64)> {
+    /// Where a road puts a car and which way it points it, sampled
+    /// along and past both ends, as the bits of the answers.
+    fn sampled_along(road: &Waypoints) -> Vec<(u64, u64, u64)> {
         (-10..=110)
             .map(|pct| {
                 let s = road.total_length() * pct as f64 / 100.0;
@@ -440,18 +441,18 @@ mod tests {
             Waypoints::build_open(vec![(0.0, 0.0), (30.0, 0.0), (55.0, 18.0), (80.0, 18.0)]),
             Waypoints::build_closed(vec![(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)]),
         ] {
-            let arrived = carrying(&sent)
+            let rebuilt = controller_given(&sent)
                 .road_from_parameters()
                 .expect("the count is the road's own");
-            assert_eq!(arrived.is_closed(), sent.is_closed());
-            assert_eq!(answers(&arrived), answers(&sent));
+            assert_eq!(rebuilt.is_closed(), sent.is_closed());
+            assert_eq!(sampled_along(&rebuilt), sampled_along(&sent));
         }
     }
 
     #[test]
     fn the_padding_past_the_count_is_never_read() {
         let road = Waypoints::build_straight((0.0, 0.0), (100.0, 0.0));
-        let mut controller = carrying(&road);
+        let mut controller = controller_given(&road);
         // Somewhere no road would go, in every slot the road did not
         // fill. A reader that trusted the array over the count would
         // come back with a road hundreds of meters long.
@@ -460,11 +461,11 @@ mod tests {
             controller.road_y[i] = -500.0;
         }
 
-        let arrived = controller
+        let rebuilt = controller
             .road_from_parameters()
             .expect("two points are enough for an open road");
-        assert_eq!(arrived.total_length(), road.total_length());
-        assert_eq!(answers(&arrived), answers(&road));
+        assert_eq!(rebuilt.total_length(), road.total_length());
+        assert_eq!(sampled_along(&rebuilt), sampled_along(&road));
     }
 
     #[test]
@@ -472,7 +473,7 @@ mod tests {
         let straight = Waypoints::build_straight((0.0, 0.0), (100.0, 0.0));
 
         // One point is not a road, and `Waypoints` would assert on it.
-        let mut too_few = carrying(&straight);
+        let mut too_few = controller_given(&straight);
         too_few.road_point_count = 1;
         assert_eq!(
             too_few.road_from_parameters().unwrap_err(),
@@ -484,7 +485,7 @@ mod tests {
         );
 
         // Two points close into nothing, so a loop needs three.
-        let mut not_a_loop = carrying(&straight);
+        let mut not_a_loop = controller_given(&straight);
         not_a_loop.road_closed = true;
         assert_eq!(
             not_a_loop.road_from_parameters().unwrap_err(),
@@ -496,7 +497,7 @@ mod tests {
         );
 
         // More points than arrived would read past what the host sent.
-        let mut too_many = carrying(&straight);
+        let mut too_many = controller_given(&straight);
         too_many.road_point_count = MAX_WAYPOINTS as u32 + 1;
         assert_eq!(
             too_many.road_from_parameters().unwrap_err(),
@@ -555,19 +556,19 @@ mod tests {
         // description cannot warn it off, since `fmi-export` 0.3.0
         // declares no bounds for a variable.
         for given in [0.0, -1.0, f64::NAN, f64::INFINITY] {
-            let mut target_speed = carrying(&road);
+            let mut target_speed = controller_given(&road);
             target_speed.v0_speed_tgt = given;
             check_refusal(&target_speed, &road, "v0_speed_tgt", given);
 
-            let mut acceleration = carrying(&road);
+            let mut acceleration = controller_given(&road);
             acceleration.a_accel_max = given;
             check_refusal(&acceleration, &road, "a_accel_max", given);
 
-            let mut braking = carrying(&road);
+            let mut braking = controller_given(&road);
             braking.b_decel_comfort = given;
             check_refusal(&braking, &road, "b_decel_comfort", given);
 
-            let mut aim_point = carrying(&road);
+            let mut aim_point = controller_given(&road);
             aim_point.lookahead = given;
             check_refusal(&aim_point, &road, "lookahead", given);
         }
@@ -578,20 +579,25 @@ mod tests {
         // What tunable buys, and what a step reading its parameters
         // afresh is for: a car told to want a different speed wants it
         // from the next command, without being rebuilt.
+        const SPEED: f64 = 20.0;
+
         let road = Waypoints::build_straight((0.0, 0.0), (1000.0, 0.0));
-        let mut controller = carrying(&road);
-        controller.speed = 20.0;
+        let mut controller = controller_given(&road);
+        controller.speed = SPEED;
 
-        let (holding_20, _) = controller.calculate_commands(&road).expect("a sound set");
-        controller.v0_speed_tgt = 20.0;
-        let (wanting_20, _) = controller.calculate_commands(&road).expect("a sound set");
-        controller.v0_speed_tgt = 40.0;
-        let (wanting_40, _) = controller.calculate_commands(&road).expect("a sound set");
+        let (wanting_default, _) = controller.calculate_commands(&road).expect("a sound set");
+        controller.v0_speed_tgt = SPEED;
+        let (wanting_this_speed, _) = controller.calculate_commands(&road).expect("a sound set");
+        controller.v0_speed_tgt = SPEED * 2.0;
+        let (wanting_twice_it, _) = controller.calculate_commands(&road).expect("a sound set");
 
-        // Wanting exactly the speed it holds asks for nothing; wanting
-        // more asks for more than the default target did.
-        assert!(wanting_20.abs() < 1e-12, "at its target: {wanting_20}");
-        assert!(wanting_40 > holding_20);
+        // Wanting exactly the speed it holds asks for nothing, and
+        // wanting twice that asks for more than the default target did.
+        assert!(
+            wanting_this_speed.abs() < 1e-12,
+            "at its target: {wanting_this_speed}"
+        );
+        assert!(wanting_twice_it > wanting_default);
     }
 
     #[test]
@@ -599,7 +605,7 @@ mod tests {
         // The commands come out finite for the defaults, so the check
         // above is refusing what is wrong rather than everything.
         let road = Waypoints::build_straight((0.0, 0.0), (100.0, 0.0));
-        let (accel_cmd, yaw_rate_cmd) = carrying(&road)
+        let (accel_cmd, yaw_rate_cmd) = controller_given(&road)
             .calculate_commands(&road)
             .expect("the defaults are a set the laws can run on");
         assert!(accel_cmd.is_finite() && yaw_rate_cmd.is_finite());
@@ -607,59 +613,69 @@ mod tests {
 
     #[test]
     fn the_commands_are_what_the_laws_answer_to_the_bit() {
+        // A car off its lane behind a closing lead, so both laws have
+        // something to say. The slot is nowhere near the front, so
+        // picking the lead out of the scan is part of what is checked.
+        const POSITION: (f64, f64) = (25.0, 1.5);
+        const ORIENTATION: (f64, f64) = (0.9, 0.1);
+        const SPEED: f64 = 22.0;
+        const LANE: f64 = 3.5;
+        const SLOT: usize = 37;
+        const GAP: f64 = 40.0;
+        const CLOSING_AT: f64 = 4.0;
+
         let road = Waypoints::build_open(vec![(0.0, 0.0), (60.0, 0.0), (110.0, 40.0)]);
-        let mut controller = carrying(&road);
-        controller.position_x = 25.0;
-        controller.position_y = 1.5;
-        controller.orientation_z = 0.1;
-        controller.orientation_w = 0.9;
-        controller.speed = 22.0;
-        controller.lateral_tgt = 3.5;
-        // A lead 40 m off and closing, in a slot nowhere near the front,
-        // so picking it out is part of what is being checked.
-        controller.range[37] = 40.0;
-        controller.range_rate[37] = -4.0;
+        let mut controller = controller_given(&road);
+        controller.position_x = POSITION.0;
+        controller.position_y = POSITION.1;
+        controller.orientation_w = ORIENTATION.0;
+        controller.orientation_z = ORIENTATION.1;
+        controller.speed = SPEED;
+        controller.lateral_tgt = LANE;
+        controller.range[SLOT] = GAP;
+        controller.range_rate[SLOT] = -CLOSING_AT;
 
         let (accel_cmd, yaw_rate_cmd) = controller
             .calculate_commands(&road)
             .expect("the defaults are a set the laws can run on");
 
         let pose = Pose {
-            position: Vec3::new(25.0, 1.5, 0.0),
+            position: Vec3::new(POSITION.0, POSITION.1, 0.0),
             orientation: Quat {
-                w: 0.9,
+                w: ORIENTATION.0,
                 x: 0.0,
                 y: 0.0,
-                z: 0.1,
+                z: ORIENTATION.1,
             },
         };
         let expected_yaw_rate = pure_pursuit_yaw_rate(
             &road,
             pose,
             PurePursuitParams {
-                lateral_tgt: 3.5,
-                lookahead: DEFAULT_PURSUIT.lookahead,
-                gain_yaw_rate: DEFAULT_PURSUIT.gain_yaw_rate,
-                max_yaw_rate: DEFAULT_PURSUIT.max_yaw_rate,
+                lateral_tgt: LANE,
+                ..DEFAULT_PURSUIT
             },
         );
-        let expected_accel = idm_accel(22.0, 40.0, 4.0, DEFAULT_IDM);
+        let expected_accel = idm_accel(SPEED, GAP, CLOSING_AT, DEFAULT_IDM);
 
         assert_eq!(yaw_rate_cmd.to_bits(), expected_yaw_rate.to_bits());
         assert_eq!(accel_cmd.to_bits(), expected_accel.to_bits());
         // The approach rate is the range rate's negative, so a lead
-        // closing at 4 m/s must not read as one pulling away.
+        // closing must not read as one pulling away.
         assert!(
-            accel_cmd < idm_accel(22.0, 40.0, -4.0, DEFAULT_IDM),
+            accel_cmd < idm_accel(SPEED, GAP, -CLOSING_AT, DEFAULT_IDM),
             "a closing lead should be braked for harder than a receding one"
         );
     }
 
     #[test]
     fn an_empty_scan_drives_the_open_road() {
+        // Under the speed it wants, whatever that has been set to, so
+        // the assertion below holds for any target rather than for 30.
+        let speed = DEFAULT_IDM.v0_speed_tgt / 3.0;
         let road = Waypoints::build_straight((0.0, 0.0), (500.0, 0.0));
-        let mut controller = carrying(&road);
-        controller.speed = 10.0;
+        let mut controller = controller_given(&road);
+        controller.speed = speed;
 
         let (accel_cmd, _) = controller
             .calculate_commands(&road)
@@ -669,8 +685,8 @@ mod tests {
         // the answer is the one an open road gives at this speed.
         assert_eq!(
             accel_cmd.to_bits(),
-            idm_accel(10.0, FREE_ROAD.range, 0.0, DEFAULT_IDM).to_bits()
+            idm_accel(speed, FREE_ROAD.range, 0.0, DEFAULT_IDM).to_bits()
         );
-        assert!(accel_cmd > 0.0, "an open road below v0 should accelerate");
+        assert!(accel_cmd > 0.0, "below its target it should accelerate");
     }
 }
