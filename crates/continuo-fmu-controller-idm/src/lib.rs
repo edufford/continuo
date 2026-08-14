@@ -322,29 +322,36 @@ impl IdmController {
 impl UserModel for IdmController {
     type LoggingCategory = DefaultLoggingCategory;
 
-    /// Builds the road, at the point where the parameters are final.
+    /// Builds the road and commands from it, once the parameters are
+    /// final.
     ///
-    /// This runs as initialization ends, so what it reads is what the
-    /// host meant. It replaces whatever `calculate_values` may have built
-    /// already, which is what makes a road built from half-set parameters
-    /// harmless rather than something to avoid.
+    /// `fmi3ExitInitializationMode` calls this last, which is the first
+    /// moment the parameters mean what the host meant and the last
+    /// before an output is read for real. It is also the only place the
+    /// road is ever built, so nothing downstream has to wonder which
+    /// parameters it was built from.
     fn configurate(&mut self, context: &dyn Context<Self>) -> Result<(), Fmi3Error> {
         self.road = Some(self.build_road(context)?);
+        // The outputs answer for the road just built, which is what a
+        // host reading them straight afterward expects.
+        self.calculate_values(context)?;
 
         Ok(())
     }
 
-    /// Both commands, from one pose and one scan.
+    /// Keeps the two output variables answering for the inputs.
     ///
-    /// It builds the road if it has none, because this can run before
-    /// `configurate` does: leaving initialization recomputes whatever was
-    /// dirtied first, and a host reading an output before that gets here
-    /// earlier still.
-    fn calculate_values(&mut self, context: &dyn Context<Self>) -> Result<Fmi3Res, Fmi3Error> {
-        if self.road.is_none() {
-            self.road = Some(self.build_road(context)?);
-        }
-        let road = self.road.as_ref().expect("the road was just built");
+    /// There is no road until `configurate` builds one, and this runs
+    /// before it does. Both happen inside `fmi3ExitInitializationMode`,
+    /// which recomputes whatever was dirtied and only then configures,
+    /// and a host reading an output during initialization arrives
+    /// earlier still. With no road to steer along there is nothing to
+    /// command, so the outputs keep the values they were made with until
+    /// there is one.
+    fn calculate_values(&mut self, _context: &dyn Context<Self>) -> Result<Fmi3Res, Fmi3Error> {
+        let Some(road) = self.road.as_ref() else {
+            return Ok(Fmi3Res::OK);
+        };
         let (accel_cmd, yaw_rate_cmd) = self.commands(road);
 
         self.accel_cmd = accel_cmd;
