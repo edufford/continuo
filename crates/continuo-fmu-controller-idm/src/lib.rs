@@ -1,4 +1,5 @@
-//! The demo's car controller, exported as an FMI 3.0 Co-Simulation FMU.
+//! A controller for traffic cars, following with IDM and turning with
+//! pure pursuit, exported as an FMI 3.0 Co-Simulation FMU.
 //!
 //! Nothing here decides anything. [`FmuController`] declares what crosses
 //! the boundary, and every answer comes from

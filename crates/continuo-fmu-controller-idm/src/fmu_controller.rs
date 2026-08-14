@@ -59,13 +59,16 @@ fn require_positive(name: &'static str, given: f64) -> Result<f64, BadInput> {
     }
 }
 
-/// A car controller: IDM for how fast to go, pure pursuit for where to
-/// point, from one pose and one radar scan.
+/// A controller for traffic cars, following with IDM and turning with
+/// pure pursuit, from one pose and one radar scan.
 ///
 /// Each variable's **first doc line is its FMI description**, and the
 /// packager takes that line alone. So a first line has to be a whole
 /// sentence, and anything longer goes on the lines below it, which stay
 /// here for whoever reads the code.
+// `user_model = false` because the `impl UserModel` below is written by
+// hand. Left true, the derive writes one whose `calculate_values` does
+// nothing, and this FMU would export cleanly and command zero forever.
 #[derive(FmuModel, Debug)]
 #[model(co_simulation = true, model_exchange = false, user_model = false)]
 pub struct FmuController {
@@ -129,41 +132,42 @@ pub struct FmuController {
     // wanting a different speed, or a different lane, says so here. That
     // is why a step reads them rather than keeping a copy taken at
     // initialization, and why the check on them runs there too.
-    /// Meters left of the centerline to hold, which is what makes a lane.
+    /// Pure pursuit: meters left of the centerline to hold, making a lane.
     #[variable(causality = Parameter, variability = Tunable, start = Self::default().lateral_tgt)]
     lateral_tgt: f64,
-    /// How far along the road to aim, in meters.
+    /// Pure pursuit: how far along the road to aim, in meters.
     #[variable(causality = Parameter, variability = Tunable, start = Self::default().lookahead)]
     lookahead: f64,
-    /// Yaw rate per radian of heading error, in 1/s.
+    /// Pure pursuit: yaw rate per radian of heading error, in 1/s.
     #[variable(causality = Parameter, variability = Tunable, start = Self::default().gain_yaw_rate)]
     gain_yaw_rate: f64,
-    /// The most yaw rate to command either way, rad/s.
+    /// Pure pursuit: the most yaw rate to command either way, rad/s.
     #[variable(causality = Parameter, variability = Tunable, start = Self::default().max_yaw_rate)]
     max_yaw_rate: f64,
 
-    /// Speed held on an open road, m/s.
+    /// IDM: speed held on an open road, m/s.
     #[variable(causality = Parameter, variability = Tunable, start = Self::default().v0_speed_tgt)]
     v0_speed_tgt: f64,
-    /// Seconds of gap wanted at whatever speed is held.
+    /// IDM: seconds of gap wanted at whatever speed is held.
     #[variable(causality = Parameter, variability = Tunable, start = Self::default().t_headway)]
     t_headway: f64,
-    /// Meters of gap wanted at a standstill.
+    /// IDM: meters of gap wanted at a standstill.
     #[variable(causality = Parameter, variability = Tunable, start = Self::default().s0_gap_min)]
     s0_gap_min: f64,
-    /// The most acceleration commanded, m/s^2.
+    /// IDM: the most acceleration commanded, m/s^2.
     #[variable(causality = Parameter, variability = Tunable, start = Self::default().a_accel_max)]
     a_accel_max: f64,
-    /// Comfortable braking, m/s^2 and positive, the hardest commanded.
+    /// IDM: comfortable braking, m/s^2 and positive, the hardest asked for.
     #[variable(causality = Parameter, variability = Tunable, start = Self::default().b_decel_comfort)]
     b_decel_comfort: f64,
 
     /// Acceleration to hold, m/s^2.
     ///
-    /// Calculated rather than started, since it is worked out from the
-    /// inputs. Saying so is what lists it among the initial unknowns, and
-    /// a start value beside it would be a second answer to the same
-    /// question, which a checking importer refuses to load.
+    /// `initial = Calculated`, since it is worked out from the inputs
+    /// rather than begun at anything. Saying so is what lists it under
+    /// `InitialUnknowns`, and a `start` attribute beside it would be a
+    /// second answer to the same question, which FMI forbids and a
+    /// checking importer refuses to load.
     #[variable(causality = Output, initial = Calculated)]
     accel_cmd: f64,
     /// Yaw rate to hold, rad/s, positive counter-clockwise.
@@ -270,7 +274,7 @@ impl FmuController {
     fn refuse(&self, context: &dyn Context<Self>, bad: BadInput) -> Fmi3Error {
         context.log(
             Fmi3Error::Error.into(),
-            DefaultLoggingCategory::default(),
+            DefaultLoggingCategory::LogAll,
             format_args!("{bad}"),
         );
 
@@ -344,6 +348,10 @@ impl FmuController {
 }
 
 impl UserModel for FmuController {
+    /// The categories a host can switch on: `logAll` and `trace`, which
+    /// is what `fmi-export` offers unless a model defines an enum of its
+    /// own. One message is raised here and it belongs under `logAll`,
+    /// since a refusal is not tracing.
     type LoggingCategory = DefaultLoggingCategory;
 
     /// Builds the road and commands from it, once the parameters are
