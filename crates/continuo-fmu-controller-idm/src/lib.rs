@@ -107,6 +107,11 @@ pub struct IdmController {
     #[variable(causality = Input, start = [FREE_ROAD.range_rate; MAX_DETECTIONS])]
     range_rate: [f64; MAX_DETECTIONS],
 
+    // The road is fixed where the law parameters below are tunable, and
+    // the difference is real rather than cautious. Each instance builds
+    // its `Waypoints` once and keeps it, so a road changed after
+    // initialization would be accepted and then ignored. Declaring it
+    // fixed is what tells a host that before it tries.
     /// The road's points, meters east, the first road_point_count real.
     #[variable(causality = Parameter, variability = Fixed, start = [0.0; MAX_WAYPOINTS])]
     road_x: [f64; MAX_WAYPOINTS],
@@ -123,33 +128,37 @@ pub struct IdmController {
     #[variable(causality = Parameter, variability = Fixed, start = false)]
     road_closed: bool,
 
+    // Tunable, so a host may change any of these between steps: a car
+    // wanting a different speed, or a different lane, says so here. That
+    // is why a step reads them rather than keeping a copy taken at
+    // initialization, and why the check on them runs there too.
     /// Meters left of the centerline to hold, which is what makes a lane.
-    #[variable(causality = Parameter, variability = Fixed, start = DEFAULT_PURSUIT.lateral_tgt)]
+    #[variable(causality = Parameter, variability = Tunable, start = DEFAULT_PURSUIT.lateral_tgt)]
     lateral_tgt: f64,
     /// How far along the road to aim, in meters.
-    #[variable(causality = Parameter, variability = Fixed, start = DEFAULT_PURSUIT.lookahead)]
+    #[variable(causality = Parameter, variability = Tunable, start = DEFAULT_PURSUIT.lookahead)]
     lookahead: f64,
     /// Yaw rate per radian of heading error, in 1/s.
-    #[variable(causality = Parameter, variability = Fixed, start = DEFAULT_PURSUIT.gain_yaw_rate)]
+    #[variable(causality = Parameter, variability = Tunable, start = DEFAULT_PURSUIT.gain_yaw_rate)]
     gain_yaw_rate: f64,
     /// The most yaw rate to command either way, rad/s.
-    #[variable(causality = Parameter, variability = Fixed, start = DEFAULT_PURSUIT.max_yaw_rate)]
+    #[variable(causality = Parameter, variability = Tunable, start = DEFAULT_PURSUIT.max_yaw_rate)]
     max_yaw_rate: f64,
 
     /// Speed held on an open road, m/s.
-    #[variable(causality = Parameter, variability = Fixed, start = DEFAULT_IDM.v0_speed_tgt)]
+    #[variable(causality = Parameter, variability = Tunable, start = DEFAULT_IDM.v0_speed_tgt)]
     v0_speed_tgt: f64,
     /// Seconds of gap wanted at whatever speed is held.
-    #[variable(causality = Parameter, variability = Fixed, start = DEFAULT_IDM.t_headway)]
+    #[variable(causality = Parameter, variability = Tunable, start = DEFAULT_IDM.t_headway)]
     t_headway: f64,
     /// Meters of gap wanted at a standstill.
-    #[variable(causality = Parameter, variability = Fixed, start = DEFAULT_IDM.s0_gap_min)]
+    #[variable(causality = Parameter, variability = Tunable, start = DEFAULT_IDM.s0_gap_min)]
     s0_gap_min: f64,
     /// The most acceleration commanded, m/s^2.
-    #[variable(causality = Parameter, variability = Fixed, start = DEFAULT_IDM.a_accel_max)]
+    #[variable(causality = Parameter, variability = Tunable, start = DEFAULT_IDM.a_accel_max)]
     a_accel_max: f64,
     /// Comfortable braking, m/s^2 and positive, the hardest commanded.
-    #[variable(causality = Parameter, variability = Fixed, start = DEFAULT_IDM.b_decel_comfort)]
+    #[variable(causality = Parameter, variability = Tunable, start = DEFAULT_IDM.b_decel_comfort)]
     b_decel_comfort: f64,
 
     /// Acceleration to hold, m/s^2.
@@ -306,6 +315,11 @@ impl IdmController {
     }
 
     /// The steering law's parameters, checked.
+    ///
+    /// Read afresh per step rather than kept, because these are tunable
+    /// and a host may have changed one since the last. Keeping a copy
+    /// would take the change and act on the old value, and checking once
+    /// would let a new zero through.
     fn pursuit_params(&self) -> Result<PurePursuitParams, BadInput> {
         // Return the set, once the aim point is somewhere ahead. An aim
         // point on top of the follower gives no direction to steer
@@ -318,7 +332,8 @@ impl IdmController {
         })
     }
 
-    /// The following law's parameters, checked.
+    /// The following law's parameters, checked, and read per step for
+    /// the same reason [`Self::pursuit_params`] is.
     fn idm_params(&self) -> Result<IdmParams, BadInput> {
         // Return the set, once the three the equation divides by are
         // numbers it can divide by.
@@ -620,6 +635,27 @@ mod tests {
             aim_point.lookahead = given;
             check_refusal(&aim_point, &road, "lookahead", given);
         }
+    }
+
+    #[test]
+    fn a_parameter_changed_between_steps_changes_the_command() {
+        // What tunable buys, and what a step reading its parameters
+        // afresh is for: a car told to want a different speed wants it
+        // from the next command, without being rebuilt.
+        let road = Waypoints::build_straight((0.0, 0.0), (1000.0, 0.0));
+        let mut controller = carrying(&road);
+        controller.speed = 20.0;
+
+        let (holding_20, _) = controller.calculate_commands(&road).expect("a sound set");
+        controller.v0_speed_tgt = 20.0;
+        let (wanting_20, _) = controller.calculate_commands(&road).expect("a sound set");
+        controller.v0_speed_tgt = 40.0;
+        let (wanting_40, _) = controller.calculate_commands(&road).expect("a sound set");
+
+        // Wanting exactly the speed it holds asks for nothing; wanting
+        // more asks for more than the default target did.
+        assert!(wanting_20.abs() < 1e-12, "at its target: {wanting_20}");
+        assert!(wanting_40 > holding_20);
     }
 
     #[test]
