@@ -133,14 +133,30 @@ jobs:
         run: cargo build --release --workspace --examples
 
       # The world hash is pinned by a test that runs debug, and everything
-      # after this point runs release, so this is what says the pin covers
-      # both. rustc does not reassociate float arithmetic at any optimization
-      # level, which is why the two agree; this is what would notice if that
-      # ever stopped being true, on whichever of the four agents it stopped.
+      # after this point runs release, so this is what carries the pin across
+      # to the other profile. rustc does not reassociate float arithmetic at
+      # any optimization level, which is why the two agree; this is what would
+      # notice if that stopped being true, on whichever agent it stopped on.
       - name: "Test: the world hash holds in release too"
-        run: >
-          cargo test --release -p continuo-examples --test highway
-          the_demo_world_hashes_to_the_same_value_on_every_platform
+        shell: bash
+        run: |
+          # Run the demo under both profiles and compare the hash it prints.
+          debug_hash=$(cargo run -q -p continuo-examples --example traffic \
+            | sed -n 's/.*world hash \([0-9a-f]*\).*/\1/p')
+          release_hash=$(cargo run -q --release -p continuo-examples --example traffic \
+            | sed -n 's/.*world hash \([0-9a-f]*\).*/\1/p')
+          echo "debug $debug_hash, release $release_hash"
+
+          # Two empty captures would otherwise match, so a demo that stopped
+          # printing its hash would pass this rather than fail it.
+          if [ -z "$debug_hash" ]; then
+            echo "ERROR: no world hash in the demo's output; this check would be vacuous"
+            exit 1
+          fi
+          if [ "$debug_hash" != "$release_hash" ]; then
+            echo "ERROR: the world hash differs between profiles"
+            exit 1
+          fi
 
       # Names no package: the task finds every `continuo-fmu-*` crate itself,
       # so a second FMU crate needs no edit here.
