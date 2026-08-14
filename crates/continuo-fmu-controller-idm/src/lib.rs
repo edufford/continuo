@@ -15,12 +15,12 @@
 //! the packaging lives here.
 //!
 //! The `.fmu` carries a compiled snapshot of `continuo-actors`, since the
-//! cdylib links it statically. Editing a law without rebundling therefore
-//! leaves this copy behind, and `cargo xtask bundle-fmus` is what puts it
-//! back.
+//! cdylib links it statically. Editing a law without packaging it again
+//! therefore leaves this copy behind, and `cargo xtask package-fmus` is
+//! what puts it back.
 
-mod bundle;
 mod error;
+mod package_fmu;
 
 use continuo_actors::control_laws::{
     FREE_ROAD, IdmParams, PurePursuitParams, idm_accel, nearest_detection, pure_pursuit_yaw_rate,
@@ -33,8 +33,8 @@ use fmi_export::{FmuModel, export_fmu};
 
 use error::BadInput;
 
-pub use bundle::{FMU_FILE_NAME, bundled_fmu_path};
-pub use error::BundleError;
+pub use error::PackageError;
+pub use package_fmu::{FMU_FILE_NAME, packaged_fmu_path};
 
 /// How many points of road this FMU can be handed.
 ///
@@ -68,7 +68,7 @@ const DEFAULT_PURSUIT: PurePursuitParams = PurePursuitParams::highway_car(0.0);
 /// point, from one pose and one radar scan.
 ///
 /// Each variable's **first doc line is its FMI description**, and the
-/// bundler takes that line alone. So a first line has to be a whole
+/// packager takes that line alone. So a first line has to be a whole
 /// sentence, and anything longer goes on the lines below it, which stay
 /// here for whoever reads the code.
 #[derive(FmuModel, Debug)]

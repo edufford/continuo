@@ -104,7 +104,7 @@ so nothing in M6 re-tests it per component.
    the same functions and bit-identity is true by construction. The shell
    crate holds only the FMI interface declaration (`#[derive(FmuModel)]`
    struct), `impl UserModel` delegating to the actors functions,
-   `export_fmu!`, and `bundled_fmu_path()`. A separate crate because FMI
+   `export_fmu!`, and `packaged_fmu_path()`. A separate crate because FMI
    allows one model per dylib, the modelIdentifier follows the cdylib name
    (`continuo_fmu_controller_idm.fmu`), crate-type cannot be feature-gated,
    and `cargo fmi bundle` builds with default features. `continuo-fmi`
@@ -259,8 +259,8 @@ so nothing in M6 re-tests it per component.
   - **`canSerializeFMUstate` is false**, so the adapter runs this FMU in
     output-hash mode. Nothing in `fmi-export` implements state
     serialization.
-- Bundling: `cargo install cargo-fmi`, then `cargo fmi --package <pkg>
-  bundle` (wrapped by `cargo xtask bundle-fmus`) builds the cdylib
+- Packaging: `cargo install cargo-fmi`, then `cargo fmi --package <pkg>
+  bundle` (wrapped by `cargo xtask package-fmus`) builds the cdylib
   itself, extracts
   variable metadata from the built dylib, generates modelDescription.xml,
   and writes `target/fmu/continuo_fmu_controller_idm.fmu`. cargo-fmi as a
@@ -942,21 +942,21 @@ PLAN.md's "native arrays, float64 value references" that survives.
     `nearest_detection`, which returns the free-road default when
     nothing is detected so there is no empty case to write, and
     delegates to `pure_pursuit_yaw_rate` and `idm_accel`.
-  - `export_fmu!`, and `pub fn bundled_fmu_path() -> Result<PathBuf,
+  - `export_fmu!`, and `pub fn packaged_fmu_path() -> Result<PathBuf,
     ...>` walking `current_exe()` ancestors for
     `fmu/continuo_fmu_controller_idm.fmu`, its error Display carrying
     the fix (`cargo install cargo-fmi`, then `cargo xtask
-    bundle-fmus`). Tests fail with that message rather than skip.
+    package-fmus`). Tests fail with that message rather than skip.
 - **The `.fmu` embeds a snapshot of `continuo-actors`**, since the cdylib
   links it statically: the control laws and the whole `Waypoints`
   implementation are compiled into the shared library the zip ships, and
   nothing calls back into the host. Editing `path.rs` or `control_laws`
   without
-  re-bundling therefore leaves the native code and the FMU's copy
-  disagreeing. CI cannot hit this, because bundling runs before the tests
+  packaging it again therefore leaves the native code and the FMU's copy
+  disagreeing. CI cannot hit this, because packaging runs before the tests
   on every job; locally the golden bit-identity tests are the detector
   and fail loudly, which is the right outcome. What they cannot do is
-  say *why*, since a stale bundle presents as the IDM math disagreeing
+  say *why*, since a stale package presents as the IDM math disagreeing
   with itself. So their failure messages name it: the laws may have
   changed since the FMU was built, and here is the command to rebuild
   it. That is the whole guard, deliberately. Anything cleverer, a
@@ -964,25 +964,25 @@ PLAN.md's "native arrays, float64 value references" that survives.
   accuracy this does not need.
 - **`xtask`**, a workspace member binary plus `.cargo/config.toml` with
   `[alias] xtask = "run --package xtask --"`, so `cargo xtask
-  bundle-fmus` packages every FMU in the repo. It discovers them by the
+  package-fmus` packages every FMU in the repo. It discovers them by the
   `continuo-fmu-*` crate-name prefix, so `continuo-fmu-controller-ai`
-  is picked up later with no change anywhere, and CI's bundle step
+  is picked up later with no change anywhere, and CI's packaging step
   never has to learn about a second FMU. It shells out to `cargo fmi`
   and fails with the install command when that is missing, in the same
-  style as `bundled_fmu_path`. Cargo has no user-defined targets and
+  style as `packaged_fmu_path`. Cargo has no user-defined targets and
   its aliases cannot chain commands, so this is the idiomatic form; it
   is also a real entry point rather than a hidden side effect of
   `cargo build`, which is why it beats a `build.rs`. First `xtask` and
   first `.cargo/config.toml` in the workspace, which is new structure
   in a repo that has deliberately little, and worth it because CI is
   the immediate beneficiary.
-- README: dev-setup note pointing at `cargo xtask bundle-fmus` (install
-  `cargo-fmi` once, bundle before `cargo test`, and again after editing
+- README: dev-setup note pointing at `cargo xtask package-fmus` (install
+  `cargo-fmi` once, package before `cargo test`, and again after editing
   the shared laws), plus bindgen needing libclang (stock on CI images;
   `winget install LLVM` locally). Crates table row.
 
-Tests: `the_bundled_fmu_reproduces_the_native_idm_bit_for_bit` and
-`the_bundled_fmu_steers_bit_identically_to_the_native_pursuit` (dev-dep
+Tests: `the_packaged_fmu_reproduces_the_native_idm_bit_for_bit` and
+`the_packaged_fmu_steers_bit_identically_to_the_native_pursuit` (dev-dep
 continuo-fmi; sweep input grids and parameter sets through the imported
 FMU against the actors functions; `f64::to_bits` equality; also proves
 the lazy calculate_values path fires; the fallback if it does not is to
@@ -1006,16 +1006,16 @@ highway-env, noting it uses the unclamped variant).
 CI (before the test steps, after "Lint: docs"): cache
 `~/.cargo/bin/cargo-fmi*` keyed on version + os + arch; `cargo install
 cargo-fmi --version <current> --locked` on miss; then `cargo xtask
-bundle-fmus`, which names no package and so needs no edit when the
+package-fmus`, which names no package and so needs no edit when the
 second FMU arrives.
 
 DECISIONS titles: The demo FMU is a complete car controller and a drop-in
 replacement for the native one (why a planner-plus-relay lost; the laws
 live in actors, the FMU packaging is a shell crate, and the `.fmu`
 therefore carries a compiled snapshot of those laws, which is what makes
-re-bundling part of the edit-test loop, the golden tests its detector,
+packaging part of the edit-test loop, the golden tests its detector,
 and their failure text the only guard worth having). `cargo xtask
-bundle-fmus` packages every `continuo-fmu-*` crate (why an xtask rather
+package-fmus` packages every `continuo-fmu-*` crate (why an xtask rather
 than a `build.rs` or an alias, and why CI calls it instead of naming a
 package). The road crosses as waypoint arrays, a count and a closed
 flag, and is rebuilt inside the FMU (three pieces of state, only two of
@@ -1156,7 +1156,7 @@ all).
   same-instant at every control instant); `RADAR_MAX_RANGE 120.0` and the
   sensor capped at `continuo_actors::MAX_DETECTIONS` (64), the same
   constant the FMU's arrays are built from; `controller_fmu_path()`
-  OnceLock over `bundled_fmu_path()`.
+  OnceLock over `packaged_fmu_path()`.
 - `controller_mapping(world, actor, v0, &UnicycleState)` builds one
   car's `FmuMapping`, the sheet saying which messages feed which FMU
   variables and where its outputs go. Four parts, and they are different
@@ -1475,7 +1475,7 @@ fixed each; the final numbers).
 
 `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D
 warnings`; `RUSTDOCFLAGS=-D warnings cargo doc --workspace --no-deps`;
-`cargo xtask bundle-fmus` (from PR B on);
+`cargo xtask package-fmus` (from PR B on);
 `cargo test --workspace`; demo smoke `cargo run -p continuo-examples
 --example traffic`. Hash discipline: PRs A, B, D, F, H leave
 `DEMO_WORLD_HASH` untouched (asserted by the existing test); PRs C, E, G

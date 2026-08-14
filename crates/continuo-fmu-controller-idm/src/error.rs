@@ -1,8 +1,8 @@
 //! What this crate refuses, on both sides of the boundary.
 //!
 //! [`BadInput`] is what the FMU tells a host at run time, in the one
-//! channel FMI gives it: a status and a line of text. [`BundleError`] is
-//! what a Rust caller gets when the bundled `.fmu` has not been built.
+//! channel FMI gives it: a status and a line of text. [`PackageError`] is
+//! what a Rust caller gets when the packaged `.fmu` has not been built.
 //! They share nothing but being refusals, and they sit together for the
 //! same reason every crate here keeps its errors in one place: it is
 //! where a reader looks for what can go wrong.
@@ -10,7 +10,7 @@
 use std::path::PathBuf;
 
 use crate::MAX_WAYPOINTS;
-use crate::bundle::{FMU_DIRECTORY, FMU_FILE_NAME};
+use crate::package_fmu::{FMU_DIRECTORY, FMU_FILE_NAME};
 
 /// Something the FMU was handed that no controller could run on.
 ///
@@ -34,16 +34,16 @@ pub(crate) enum BadInput {
     NotPositive { name: &'static str, given: f64 },
 }
 
-/// Why the bundled FMU could not be found.
+/// Why the packaged FMU could not be found.
 #[derive(Debug, thiserror::Error)]
-pub enum BundleError {
+pub enum PackageError {
     #[error("cannot find the running executable to search from: {0}")]
     ExeNotFound(#[source] std::io::Error),
 
     #[error(
         "no {FMU_DIRECTORY}/{FMU_FILE_NAME} in {} or any directory above it: \
-         run `cargo install cargo-fmi` once, then `cargo xtask bundle-fmus`",
+         run `cargo install cargo-fmi` once, then `cargo xtask package-fmus`",
         searched_from.display()
     )]
-    NotBundled { searched_from: PathBuf },
+    NotPackaged { searched_from: PathBuf },
 }

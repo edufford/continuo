@@ -1,23 +1,23 @@
-//! Finding the bundled `.fmu` that this crate is built into.
+//! Finding the packaged `.fmu` that this crate is built into.
 //!
 //! Nothing in the FMU itself uses any of this. It is for the Rust side of
-//! the boundary: the golden tests that run the bundled FMU against the
+//! the boundary: the golden tests that run the packaged FMU against the
 //! laws it was built from, and the demo scenario that hands its path to
 //! an `FmuComponent`. Both need the same answer to the same question, so
 //! they ask it here rather than each spelling out a path.
 
 use std::path::PathBuf;
 
-use crate::error::BundleError;
+use crate::error::PackageError;
 
-/// The file `cargo xtask bundle-fmus` writes, named after the cdylib
+/// The file `cargo xtask package-fmus` writes, named after the cdylib
 /// because FMI takes its model identifier from the shared library.
 pub const FMU_FILE_NAME: &str = "continuo_fmu_controller_idm.fmu";
 
-/// The directory the bundled FMU is written to, under `target`.
+/// The directory the packaged FMU is written to, under `target`.
 pub(crate) const FMU_DIRECTORY: &str = "fmu";
 
-/// Where `cargo xtask bundle-fmus` left the bundled FMU.
+/// Where `cargo xtask package-fmus` left the packaged FMU.
 ///
 /// The search starts at the running executable and walks up its
 /// directories, so it lands on `target/fmu` from a test binary buried in
@@ -25,10 +25,10 @@ pub(crate) const FMU_DIRECTORY: &str = "fmu";
 /// built either. Taking a path fixed at build time instead would tie the
 /// answer to how the caller was compiled.
 ///
-/// Failing carries the command that fixes it, because a missing bundle
+/// Failing carries the command that fixes it, because a missing package
 /// means a step was not run rather than anything being broken.
-pub fn bundled_fmu_path() -> Result<PathBuf, BundleError> {
-    let exe = std::env::current_exe().map_err(BundleError::ExeNotFound)?;
+pub fn packaged_fmu_path() -> Result<PathBuf, PackageError> {
+    let exe = std::env::current_exe().map_err(PackageError::ExeNotFound)?;
     for directory in exe.ancestors() {
         let candidate = directory.join(FMU_DIRECTORY).join(FMU_FILE_NAME);
         if candidate.is_file() {
@@ -38,5 +38,5 @@ pub fn bundled_fmu_path() -> Result<PathBuf, BundleError> {
 
     // Return the failure naming where the search began, which is the
     // only part of it a caller cannot work out.
-    Err(BundleError::NotBundled { searched_from: exe })
+    Err(PackageError::NotPackaged { searched_from: exe })
 }
