@@ -228,6 +228,22 @@ enum BadInput {
 
     #[error("the first {count} road points are all the same place, which is a road of no length")]
     RoadOfNoLength { count: usize },
+
+    #[error("{name} is {given}, and it has to be a positive number")]
+    NotPositive { name: &'static str, given: f64 },
+}
+
+/// A parameter the laws divide by, checked before they see it.
+///
+/// Rejects a zero, a negative, an infinity and a NaN alike, since what
+/// they have in common is that no answer computed from them means
+/// anything.
+fn require_positive(name: &'static str, given: f64) -> Result<f64, BadInput> {
+    if given.is_finite() && given > 0.0 {
+        Ok(given)
+    } else {
+        Err(BadInput::NotPositive { name, given })
+    }
 }
 
 impl IdmController {
@@ -289,12 +305,38 @@ impl IdmController {
         Fmi3Error::Error
     }
 
+    /// The steering law's parameters, checked.
+    fn pursuit_params(&self) -> Result<PurePursuitParams, BadInput> {
+        // Return the set, once the aim point is somewhere ahead. An aim
+        // point on top of the follower gives no direction to steer
+        // toward, and one behind it gives the wrong one.
+        Ok(PurePursuitParams {
+            lateral_tgt: self.lateral_tgt,
+            lookahead: require_positive("lookahead", self.lookahead)?,
+            gain_yaw_rate: self.gain_yaw_rate,
+            max_yaw_rate: self.max_yaw_rate,
+        })
+    }
+
+    /// The following law's parameters, checked.
+    fn idm_params(&self) -> Result<IdmParams, BadInput> {
+        // Return the set, once the three the equation divides by are
+        // numbers it can divide by.
+        Ok(IdmParams {
+            v0_speed_tgt: require_positive("v0_speed_tgt", self.v0_speed_tgt)?,
+            t_headway: self.t_headway,
+            s0_gap_min: self.s0_gap_min,
+            a_accel_max: require_positive("a_accel_max", self.a_accel_max)?,
+            b_decel_comfort: require_positive("b_decel_comfort", self.b_decel_comfort)?,
+        })
+    }
+
     /// What the laws command, given the road they command along.
     ///
     /// Every number here comes from [`continuo_actors::control_laws`].
     /// What this adds is the translation either side of it: a pose out of
     /// seven scalars, and a scan out of two arrays.
-    fn commands(&self, road: &Waypoints) -> (f64, f64) {
+    fn calculate_commands(&self, road: &Waypoints) -> Result<(f64, f64), BadInput> {
         let pose = Pose {
             position: Vec3::new(self.position_x, self.position_y, 0.0),
             orientation: Quat {
@@ -304,16 +346,7 @@ impl IdmController {
                 z: self.orientation_z,
             },
         };
-        let yaw_rate_cmd = pure_pursuit_yaw_rate(
-            road,
-            pose,
-            PurePursuitParams {
-                lateral_tgt: self.lateral_tgt,
-                lookahead: self.lookahead,
-                gain_yaw_rate: self.gain_yaw_rate,
-                max_yaw_rate: self.max_yaw_rate,
-            },
-        );
+        let yaw_rate_cmd = pure_pursuit_yaw_rate(road, pose, self.pursuit_params()?);
 
         // The two arrays back into the detections they were taken from,
         // which is the shape the law reads. Padding loses to anything
@@ -325,21 +358,10 @@ impl IdmController {
         let lead = nearest_detection(&scan);
         // A range closes as it falls and an approach rate rises as it
         // closes, so each is the other's negative.
-        let accel_cmd = idm_accel(
-            self.speed,
-            lead.range,
-            -lead.range_rate,
-            IdmParams {
-                v0_speed_tgt: self.v0_speed_tgt,
-                t_headway: self.t_headway,
-                s0_gap_min: self.s0_gap_min,
-                a_accel_max: self.a_accel_max,
-                b_decel_comfort: self.b_decel_comfort,
-            },
-        );
+        let accel_cmd = idm_accel(self.speed, lead.range, -lead.range_rate, self.idm_params()?);
 
         // Return what to hold: how hard to push, and how fast to turn.
-        (accel_cmd, yaw_rate_cmd)
+        Ok((accel_cmd, yaw_rate_cmd))
     }
 }
 
@@ -372,11 +394,13 @@ impl UserModel for IdmController {
     /// earlier still. With no road to steer along there is nothing to
     /// command, so the outputs keep the values they were made with until
     /// there is one.
-    fn calculate_values(&mut self, _context: &dyn Context<Self>) -> Result<Fmi3Res, Fmi3Error> {
+    fn calculate_values(&mut self, context: &dyn Context<Self>) -> Result<Fmi3Res, Fmi3Error> {
         let Some(road) = self.road.as_ref() else {
             return Ok(Fmi3Res::OK);
         };
-        let (accel_cmd, yaw_rate_cmd) = self.commands(road);
+        let (accel_cmd, yaw_rate_cmd) = self
+            .calculate_commands(road)
+            .map_err(|bad| self.refuse(context, bad))?;
 
         self.accel_cmd = accel_cmd;
         self.yaw_rate_cmd = yaw_rate_cmd;
@@ -556,6 +580,59 @@ mod tests {
         );
     }
 
+    /// Asserts a controller commands nothing, naming the parameter it
+    /// refused and quoting the value back.
+    fn check_refusal(controller: &IdmController, road: &Waypoints, name: &str, given: f64) {
+        match controller.calculate_commands(road) {
+            Err(BadInput::NotPositive {
+                name: refused,
+                given: quoted,
+            }) => {
+                assert_eq!(refused, name);
+                // Bits, because a NaN is not equal to itself.
+                assert_eq!(quoted.to_bits(), given.to_bits());
+            }
+            other => panic!("{name} = {given} gave {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_parameter_the_laws_divide_by_is_refused_unless_it_is_positive() {
+        let road = Waypoints::build_straight((0.0, 0.0), (100.0, 0.0));
+
+        // A host in another tool can send any of these, and the model
+        // description cannot warn it off, since `fmi-export` 0.3.0
+        // declares no bounds for a variable.
+        for given in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            let mut target_speed = carrying(&road);
+            target_speed.v0_speed_tgt = given;
+            check_refusal(&target_speed, &road, "v0_speed_tgt", given);
+
+            let mut acceleration = carrying(&road);
+            acceleration.a_accel_max = given;
+            check_refusal(&acceleration, &road, "a_accel_max", given);
+
+            let mut braking = carrying(&road);
+            braking.b_decel_comfort = given;
+            check_refusal(&braking, &road, "b_decel_comfort", given);
+
+            let mut aim_point = carrying(&road);
+            aim_point.lookahead = given;
+            check_refusal(&aim_point, &road, "lookahead", given);
+        }
+    }
+
+    #[test]
+    fn every_parameter_the_laws_divide_by_is_checked() {
+        // The commands come out finite for the defaults, so the check
+        // above is refusing what is wrong rather than everything.
+        let road = Waypoints::build_straight((0.0, 0.0), (100.0, 0.0));
+        let (accel_cmd, yaw_rate_cmd) = carrying(&road)
+            .calculate_commands(&road)
+            .expect("the defaults are a set the laws can run on");
+        assert!(accel_cmd.is_finite() && yaw_rate_cmd.is_finite());
+    }
+
     #[test]
     fn the_commands_are_what_the_laws_answer_to_the_bit() {
         let road = Waypoints::build_open(vec![(0.0, 0.0), (60.0, 0.0), (110.0, 40.0)]);
@@ -571,7 +648,9 @@ mod tests {
         controller.range[37] = 40.0;
         controller.range_rate[37] = -4.0;
 
-        let (accel_cmd, yaw_rate_cmd) = controller.commands(&road);
+        let (accel_cmd, yaw_rate_cmd) = controller
+            .calculate_commands(&road)
+            .expect("the defaults are a set the laws can run on");
 
         let pose = Pose {
             position: Vec3::new(25.0, 1.5, 0.0),
@@ -610,7 +689,9 @@ mod tests {
         let mut controller = carrying(&road);
         controller.speed = 10.0;
 
-        let (accel_cmd, _) = controller.commands(&road);
+        let (accel_cmd, _) = controller
+            .calculate_commands(&road)
+            .expect("the defaults are a set the laws can run on");
 
         // Nothing was detected, so every slot holds the free road, and
         // the answer is the one an open road gives at this speed.
