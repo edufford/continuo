@@ -9,9 +9,9 @@
 use std::io;
 use std::process::{Command, ExitCode};
 
-/// The crate-name prefix an FMU exporter carries.
+/// The crate-name prefix an FMU crate carries.
 ///
-/// Discovery goes by name rather than by a list, so a second exporter,
+/// Discovery goes by name rather than by a list, so a second FMU crate,
 /// such as one carrying a learned model, is packaged by this and by CI
 /// with no edit anywhere.
 const FMU_CRATE_PREFIX: &str = "continuo-fmu-";
@@ -40,14 +40,14 @@ fn main() -> ExitCode {
     }
 }
 
-/// Packages every FMU exporter in the workspace.
+/// Packages every FMU crate in the workspace.
 fn package_fmus() -> Result<(), String> {
-    let exporters = fmu_crates()?;
-    if exporters.is_empty() {
+    let fmu_crates = fmu_crates()?;
+    if fmu_crates.is_empty() {
         return Err(format!("no {FMU_CRATE_PREFIX}* crate in this workspace"));
     }
     require_cargo_fmi()?;
-    for name in &exporters {
+    for name in &fmu_crates {
         println!("packaging {name}");
         package(name)?;
     }
@@ -58,7 +58,7 @@ fn package_fmus() -> Result<(), String> {
     Ok(())
 }
 
-/// The FMU exporters this workspace holds, in name order.
+/// The FMU crates this workspace holds, in name order.
 ///
 /// `--no-deps` keeps the answer to workspace members, so a dependency
 /// that happened to match the prefix could not join the list. Sorting is
@@ -90,7 +90,7 @@ fn fmu_crates() -> Result<Vec<String>, String> {
         .collect();
     names.sort();
 
-    // Return the exporters, in the order they will be packaged.
+    // Return the FMU crates, in the order they will be packaged.
     Ok(names)
 }
 
@@ -117,7 +117,7 @@ fn require_cargo_fmi() -> Result<(), String> {
     }
 }
 
-/// Packages one exporter into `target/fmu`.
+/// Packages one FMU crate into `target/fmu`.
 ///
 /// `--release` because the default is the dev profile, and a packaged
 /// controller runs its step for every actor at every control instant,
