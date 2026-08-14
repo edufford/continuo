@@ -260,7 +260,8 @@ so nothing in M6 re-tests it per component.
     output-hash mode. Nothing in `fmi-export` implements state
     serialization.
 - Packaging: `cargo install cargo-fmi`, then `cargo fmi --package <pkg>
-  bundle` (wrapped by `cargo xtask package-fmus`) builds the cdylib
+  bundle --release` (wrapped by `cargo xtask package-fmus`, and
+  `--release` because the default is the dev profile) builds the cdylib
   itself, extracts
   variable metadata from the built dylib, generates modelDescription.xml,
   and writes `target/fmu/continuo_fmu_controller_idm.fmu`. cargo-fmi as a
@@ -969,7 +970,21 @@ PLAN.md's "native arrays, float64 value references" that survives.
   is picked up later with no change anywhere, and CI's packaging step
   never has to learn about a second FMU. It shells out to `cargo fmi`
   and fails with the install command when that is missing, in the same
-  style as `packaged_fmu_path`. Cargo has no user-defined targets and
+  style as `packaged_fmu_path`.
+  - **It passes `--release`.** `cargo fmi bundle` builds the dev profile
+    otherwise, which would ship an unoptimized `.fmu` running
+    `calculate_values` for every car at every control instant once PR E
+    puts one in each. Instantiation cost is irrelevant beside that: it
+    is once per car, and measures 3.8 us in dev against 23 ns in
+    release.
+  - The two profiles answer bit for bit alike, checked through fmpy
+    rather than assumed, over a following command, an open-road
+    command, and a steering command that goes through `atan2`, plus a
+    near-cancellation landing at -1.5e-15. So a release `.fmu` compared
+    against debug-built native laws is a fair comparison, which is what
+    the golden tests need it to be. rustc does not reassociate float
+    arithmetic at any optimization level, which is why this holds, and
+    the golden tests are what would notice if it ever stopped. Cargo has no user-defined targets and
   its aliases cannot chain commands, so this is the idiomatic form; it
   is also a real entry point rather than a hidden side effect of
   `cargo build`, which is why it beats a `build.rs`. First `xtask` and
