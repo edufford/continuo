@@ -28,5 +28,10 @@ thiserror = { workspace = true }
 # inside a macro is checked against the crate it lands in rather than the one
 # it came from. Naming it here says it is expected, which silences three dozen
 # warnings without turning the lint off.
+#
+# `check-cfg` in a lint table is Cargo 1.80 and later. An editor calling it
+# invalid is validating against a schema older than the feature; a build
+# script emitting `cargo::rustc-check-cfg` would say the same thing, and is
+# machinery bought to satisfy a schema rather than the compiler.
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage_nightly)'] }
