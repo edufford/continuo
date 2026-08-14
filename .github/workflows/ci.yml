@@ -41,38 +41,53 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install Rust (stable)
+      # Everything a step later needs is installed first, so a missing tool is
+      # reported before any of the work rather than partway through it. All
+      # three are cached; only the second ever compiles anything.
+      - name: "Install: Rust (stable)"
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
 
       - uses: Swatinem/rust-cache@v2
 
-      # Ordered cheapest first, so an unformatted file is reported in seconds
-      # rather than after the workspace has been compiled. Steps only run when
-      # every earlier one succeeded.
-      - name: "Lint: format"
-        run: cargo fmt --all --check
+      # Pinned by version, since a packager that changed under us would
+      # rewrite modelDescription.xml on a commit that touched nothing. The
+      # cache key carries the runner because the binary is native, and a miss
+      # costs a release build of cargo-fmi, which is why it is cached at all.
+      - name: "Install: cargo-fmi (cached)"
+        uses: actions/cache@v6
+        id: cargo-fmi-cache
+        with:
+          path: |
+            ~/.cargo/bin/cargo-fmi
+            ~/.cargo/bin/cargo-fmi.exe
+          key: cargo-fmi-0.3.0-${{ runner.os }}-${{ runner.arch }}
+
+      - name: "Install: cargo-fmi (on a cache miss)"
+        if: steps.cargo-fmi-cache.outputs.cache-hit != 'true'
+        run: cargo install cargo-fmi --version 0.3.0 --locked
 
       # The viewer installs with plain `pip`, not `uv`. `uv.lock` is committed
       # as a convenience and nothing requires it, so installing the ordinary
-      # way is what keeps that true.
-      - name: Install Python
+      # way is what keeps that true. `fmpy` joins it for the FMU validation
+      # below, which is a second implementation's opinion of what we package.
+      - name: "Install: Python (cached)"
         uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: python/pyproject.toml
 
-      - name: "Install: viewer"
+      - name: "Install: viewer and fmpy"
         working-directory: python
-        run: python -m pip install -e . pytest ruff
+        run: python -m pip install -e . pytest ruff fmpy
 
-      - name: "Lint: ruff"
-        working-directory: python
-        run: |
-          ruff check .
-          ruff format --check .
+      # Lints run before anything is built for real, cheapest first, so an
+      # unformatted file is reported in seconds rather than after a compile.
+      # Steps only run when every earlier one succeeded.
+      - name: "Lint: format"
+        run: cargo fmt --all --check
 
       - name: "Lint: clippy"
         run: cargo clippy --workspace --all-targets -- -D warnings
@@ -85,52 +100,16 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
 
-      # Packaging comes before the tests because the golden tests load the
-      # `.fmu` this writes and compare it against the laws it was built from.
-      # Nothing else produces it, so a job that skipped this would fail there
-      # with the laws apparently disagreeing with themselves.
-      #
-      # Pinned and cached by version, since a packager that changed under us
-      # would rewrite modelDescription.xml on an unrelated commit. The cache
-      # key carries the runner, because the binary is native.
-      - name: "Install: cargo-fmi"
-        uses: actions/cache@v4
-        id: cargo-fmi-cache
-        with:
-          path: |
-            ~/.cargo/bin/cargo-fmi
-            ~/.cargo/bin/cargo-fmi.exe
-          key: cargo-fmi-0.3.0-${{ runner.os }}-${{ runner.arch }}
-
-      - name: "Install: cargo-fmi (on a cache miss)"
-        if: steps.cargo-fmi-cache.outputs.cache-hit != 'true'
-        run: cargo install cargo-fmi --version 0.3.0 --locked
-
-      # Names no package: the task finds every `continuo-fmu-*` crate itself,
-      # so a second exporter needs no edit here.
-      - name: "Package: FMUs"
-        run: cargo xtask package-fmus
-
-      # An FMU our own importer accepts is not the same as a valid one, and
-      # the difference is what this catches. The first FMU this crate ever
-      # produced declared start values on calculated outputs and listed no
-      # initial unknowns; `continuo-fmi` read it happily and fmpy refused it.
-      # A second implementation is the only thing that would have said so.
-      - name: "Validate: FMUs against a second implementation"
-        shell: bash
+      - name: "Lint: ruff"
+        working-directory: python
         run: |
-          python -m pip install fmpy
+          ruff check .
+          ruff format --check .
 
-          # Otherwise a glob matching nothing would run no checks and pass,
-          # which is the shape of failure this step exists to prevent.
-          packaged=(target/fmu/*.fmu)
-          if [ ! -e "${packaged[0]}" ]; then
-            echo "ERROR: no .fmu in target/fmu; this check would be vacuous"
-            exit 1
-          fi
-          for fmu in "${packaged[@]}"; do
-            python -m fmpy validate "$fmu"
-          done
+      # A build of its own, so a compile error is reported as one rather than
+      # as whichever test step reached it first.
+      - name: "Build: debug"
+        run: cargo build --workspace --all-targets
 
       # `--lib` and `--test '*'` partition the suite: the first runs the unit
       # tests inside each lib, the second the integration targets in tests/.
@@ -146,6 +125,45 @@ jobs:
         working-directory: python
         run: pytest -v
 
+      # Release from here on. The packaging step below builds each FMU
+      # release, since a host loads the binary it finds and cannot rebuild it,
+      # and the smokes then run against the profile that FMU will be loaded
+      # beside.
+      - name: "Build: release"
+        run: cargo build --release --workspace --examples
+
+      # The world hash is pinned by a test that runs debug, and everything
+      # after this point runs release, so this is what says the pin covers
+      # both. rustc does not reassociate float arithmetic at any optimization
+      # level, which is why the two agree; this is what would notice if that
+      # ever stopped being true, on whichever of the four agents it stopped.
+      - name: "Test: the world hash holds in release too"
+        run: >
+          cargo test --release -p continuo-examples --test highway
+          the_demo_world_hashes_to_the_same_value_on_every_platform
+
+      # Names no package: the task finds every `continuo-fmu-*` crate itself,
+      # so a second FMU crate needs no edit here.
+      - name: "FMU: package"
+        run: cargo xtask package-fmus
+
+      # An FMU our own importer accepts is not the same as a valid one, so a
+      # second implementation is what says whether what we package is well
+      # formed.
+      - name: "FMU: validate"
+        shell: bash
+        run: |
+          # A glob matching nothing would expand to itself, check nothing and
+          # pass, which is the shape of failure this step exists to catch.
+          packaged=(target/fmu/*.fmu)
+          if [ ! -e "${packaged[0]}" ]; then
+            echo "ERROR: no .fmu in target/fmu; this check would be vacuous"
+            exit 1
+          fi
+          for fmu in "${packaged[@]}"; do
+            python -m fmpy validate "$fmu"
+          done
+
       # Smoke steps run the shipped examples end to end, covering what the
       # test suites cannot: that the examples themselves build and run, and
       # that the artefacts one produces are what the next consumes. They are
@@ -155,13 +173,13 @@ jobs:
       #
       # New end-to-end checks belong here, with the same "Smoke:" prefix.
       - name: "Smoke: traffic demo"
-        run: cargo run -p continuo-examples --example traffic
+        run: cargo run --release -p continuo-examples --example traffic
 
       - name: "Smoke: record a run and verify the unmodified log"
         shell: bash
         run: |
-          cargo run -q -p continuo-examples --example traffic_record -- ci-run.jsonl
-          cargo run -q -p continuo-examples --example traffic_verify -- ci-run.jsonl
+          cargo run -q --release -p continuo-examples --example traffic_record -- ci-run.jsonl
+          cargo run -q --release -p continuo-examples --example traffic_verify -- ci-run.jsonl
 
       # `verification_stops_at_the_first_divergence` in the highway tests
       # already checks that a tampered log is rejected, where it can be run
@@ -184,14 +202,14 @@ jobs:
             echo "ERROR: awk matched nothing, log was NOT modified; this check would be vacuous"
             exit 1
           fi
-          if cargo run -q -p continuo-examples --example traffic_verify -- ci-tampered.jsonl; then
+          if cargo run -q --release -p continuo-examples --example traffic_verify -- ci-tampered.jsonl; then
             echo "ERROR: verification PASSED on the modified log; divergence was NOT detected"
             exit 1
           fi
 
       - name: "Smoke: open-loop resimulation from the recorded log"
         shell: bash
-        run: cargo run -q -p continuo-examples --example traffic_resim -- ci-run.jsonl
+        run: cargo run -q --release -p continuo-examples --example traffic_resim -- ci-run.jsonl
 
       # The viewer's own tests build their logs from synthetic events. This is
       # the only check that it reads what the conductor actually writes, which
@@ -235,12 +253,5 @@ jobs:
       # A smoke, not a benchmark: a shared runner cannot hold a rate steady
       # enough to assert one, so this checks that a large world still runs and
       # leaves the numbers for a human reading the log.
-      #
-      # Release, because the numbers it prints mean nothing from a debug build,
-      # and `--no-default-features` so that costs a release build of 60 crates
-      # rather than the 911 the viz feature brings in. This example needs none
-      # of them.
       - name: "Smoke: a scaled world"
-        run: >
-          cargo run --release -p continuo-examples
-          --no-default-features --example traffic_scale
+        run: cargo run --release -p continuo-examples --example traffic_scale
