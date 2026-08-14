@@ -273,8 +273,13 @@ class Renderer:
 
         self._pygame = pygame
         self._onscreen = onscreen
-        pygame.init()
+        # Only the parts that draw. `pygame.init()` starts every subsystem it
+        # has, including the mixer, which goes looking for a sound card and
+        # says so at length on a machine without one. Nothing here makes a
+        # sound, and a recording run has no display either.
+        pygame.font.init()
         if onscreen:
+            pygame.display.init()
             self.surface = pygame.display.set_mode((width, height))
             pygame.display.set_caption(title)
         else:
