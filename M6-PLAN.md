@@ -259,6 +259,18 @@ so nothing in M6 re-tests it per component.
   - **`canSerializeFMUstate` is false**, so the adapter runs this FMU in
     output-hash mode. Nothing in `fmi-export` implements state
     serialization.
+  - **It builds on a crate that will stop compiling.** `fmi-export-derive`
+    depends on `proc-macro-error2`, which re-exports a private `extern
+    crate proc_macro`. That is a future hard error, rust-lang/rust#127909,
+    and every build touching the FMU crate prints the warning. Nothing
+    here can fix it: the crate is three levels down, 2.0.1 is the newest
+    release, and the fix sits in an unmerged pull request beside an open
+    question about whether the crate is maintained at all, with no commit
+    since September 2024. Watching rather than patching, since pinning a
+    fork of a transitive proc-macro dependency is a worse position than
+    the warning. What breaks when rustc turns it into an error is the FMU
+    crate's build, so the answer then is a `[patch]`, an `fmi-export`
+    release that drops the dependency, or hand-writing the exports.
 - Packaging: `cargo install cargo-fmi`, then `cargo fmi --package <pkg>
   bundle --release` (wrapped by `cargo xtask package-fmus`, and
   `--release` because the default is the dev profile) builds the cdylib
