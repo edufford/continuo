@@ -119,11 +119,11 @@ fn require_cargo_fmi() -> Result<(), String> {
 
 /// Packages one FMU crate into `target/fmu`.
 ///
-/// `--release` because the default is the dev profile, and a packaged
-/// controller runs its step for every actor at every control instant,
-/// where the host runs it once per call. The two profiles answer bit for
-/// bit alike, which is what lets the golden tests compare a release FMU
-/// against natively built laws.
+/// `--release` because the default is the debug profile, and how a
+/// packaged FMU is optimized is settled when it is packaged: a host
+/// loads the binary it finds and cannot rebuild it. The two profiles
+/// answer bit for bit alike, which is what lets the golden tests compare
+/// a release FMU against natively built laws.
 fn package(name: &str) -> Result<(), String> {
     let status = cargo()
         .args(["fmi", "--package", name, "bundle", "--release"])
