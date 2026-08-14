@@ -1,0 +1,6 @@
+# `cargo xtask <task>` runs the workspace's own tool. Cargo has no
+# user-defined targets and its aliases cannot chain commands, so a task
+# that is more than one invocation lives in a binary, and this is what
+# makes it something a person types.
+[alias]
+xtask = "run --package xtask --"
