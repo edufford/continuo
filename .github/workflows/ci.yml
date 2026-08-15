@@ -116,24 +116,56 @@ jobs:
       - name: "Build: debug"
         run: cargo build --workspace --all-targets --all-features
 
+      # Before the tests, because one of them loads the `.fmu` this writes.
+      # Packaging after them would need a second cargo run for that one
+      # test, and asking for a single target resolves fewer packages, which
+      # changes their dependencies' features and rebuilds much of the graph.
+      #
+      # Names no package: the task finds every `continuo-fmu-*` crate
+      # itself, so a second FMU crate needs no edit here.
+      - name: "FMU: package"
+        run: cargo xtask package-fmus
+
+      # Validate with fmpy to get an independent check on the correctness of
+      # the packaged FMUs. The glob is guarded because one matching nothing
+      # expands to itself, and naming the empty directory beats fmpy failing
+      # to open a path with a star in it.
+      - name: "FMU: validate"
+        shell: bash
+        run: |
+          # Validate every packaged FMU with fmpy.
+          packaged=(target/fmu/*.fmu)
+          if [ ! -e "${packaged[0]}" ]; then
+            echo "ERROR: no .fmu in target/fmu; the packaging step produced none"
+            exit 1
+          fi
+          for fmu in "${packaged[@]}"; do
+            python -m fmpy validate "$fmu"
+          done
+
       # `--lib` and `--test '*'` partition the suite: the first runs the unit
       # tests inside each lib, the second the integration targets in tests/.
       # Note `--tests` would *not* work as the second half, because it
       # includes lib unit tests too, so the two steps would re-run them.
+      #
+      # `--all-features` matches the build above, so neither step compiles
+      # anything: a changed feature list alone makes cargo rebuild a crate.
+      # It is also what runs the packaged-FMU comparison, one of the
+      # integration targets.
       - name: "Test: unit"
-        run: cargo test --workspace --lib
+        run: cargo test --workspace --all-features --lib
 
       - name: "Test: integration"
-        run: cargo test --workspace --test '*'
+        run: cargo test --workspace --all-features --test '*'
 
       - name: "Test: viewer"
         working-directory: python
         run: pytest -v
 
-      # Release from here on. The packaging step below builds each FMU
-      # release, since a host loads the binary it finds and cannot rebuild it,
-      # and the smokes then run against the profile that FMU will be loaded
-      # beside.
+      # Release from here on, so the smokes run against the profile the
+      # packaged FMU was built at and will be loaded beside. Packaging above
+      # asks for `--release` itself, since a host loads the binary it finds
+      # and cannot rebuild it.
       - name: "Build: release"
         run: cargo build --release --workspace --examples
 
@@ -162,55 +194,6 @@ jobs:
             echo "ERROR: the world hash differs between profiles"
             exit 1
           fi
-
-      # Names no package: the task finds every `continuo-fmu-*` crate itself,
-      # so a second FMU crate needs no edit here.
-      - name: "FMU: package"
-        run: cargo xtask package-fmus
-
-      # An FMU our own importer accepts is not the same as a valid one, so a
-      # second implementation is what says whether what we package is well
-      # formed. The glob is guarded because one matching nothing expands to
-      # itself, checks nothing and passes, which is the failure this step
-      # exists to catch.
-      - name: "FMU: validate"
-        shell: bash
-        run: |
-          # Validate every packaged FMU with fmpy.
-          packaged=(target/fmu/*.fmu)
-          if [ ! -e "${packaged[0]}" ]; then
-            echo "ERROR: no .fmu in target/fmu; this check would be vacuous"
-            exit 1
-          fi
-          for fmu in "${packaged[@]}"; do
-            python -m fmpy validate "$fmu"
-          done
-
-      # Checks the `.fmu` just packaged against the laws compiled into it,
-      # reached through FMI rather than called directly, which is what
-      # catches a package older than the laws.
-      #
-      # Names no package. Every FMU crate spells this the same way, a
-      # `tests/packaged_fmu.rs` behind a `packaged-fmu` feature, so asking
-      # for both names runs all of them.
-      #
-      # Ahead of the upload, so a run whose FMU disagrees with the laws it
-      # was built from publishes nothing.
-      - name: "FMU: test against the laws it was built from"
-        run: cargo test --workspace --features packaged-fmu --test packaged_fmu
-
-      # Every FMU the workspace packages, each carrying this platform's
-      # binary alone. One artifact per platform rather than per FMU, because
-      # an upload step produces one artifact and a workflow cannot loop over
-      # steps, so a name per FMU would mean a step per FMU to keep updated.
-      # The merge workflow groups them by file name instead.
-      - name: "FMU: upload"
-        uses: actions/upload-artifact@v7
-        with:
-          name: fmus-${{ runner.os }}-${{ runner.arch }}
-          path: target/fmu/*.fmu
-          # A step that collected nothing would otherwise pass.
-          if-no-files-found: error
 
       # Smoke steps run the shipped examples end to end, covering what the
       # test suites cannot: that the examples themselves build and run, and
@@ -305,3 +288,20 @@ jobs:
       # leaves the numbers for a human reading the log.
       - name: "Smoke: a scaled world"
         run: cargo run --release -p continuo-examples --example traffic_scale
+
+      # Last, because publishing is the one thing here that leaves the job.
+      # A step only runs when every earlier one succeeded, so an FMU reaches
+      # the merge workflow only from a run that passed all of it.
+      #
+      # Every FMU the workspace packages, each carrying this platform's
+      # binary alone. One artifact per platform rather than per FMU, because
+      # an upload step produces one artifact and a workflow cannot loop over
+      # steps, so a name per FMU would mean a step per FMU to keep updated.
+      # The merge workflow groups them by file name instead.
+      - name: "FMU: upload"
+        uses: actions/upload-artifact@v7
+        with:
+          name: fmus-${{ runner.os }}-${{ runner.arch }}
+          path: target/fmu/*.fmu
+          # A step that collected nothing would otherwise pass.
+          if-no-files-found: error
