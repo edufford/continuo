@@ -259,18 +259,26 @@ so nothing in M6 re-tests it per component.
   - **`canSerializeFMUstate` is false**, so the adapter runs this FMU in
     output-hash mode. Nothing in `fmi-export` implements state
     serialization.
-  - **It builds on a crate that will stop compiling.** `fmi-export-derive`
-    depends on `proc-macro-error2`, which re-exports a private `extern
-    crate proc_macro`. That is a future hard error, rust-lang/rust#127909,
-    and every build touching the FMU crate prints the warning. Nothing
-    here can fix it: the crate is three levels down, 2.0.1 is the newest
-    release, and the fix sits in an unmerged pull request beside an open
-    question about whether the crate is maintained at all, with no commit
-    since September 2024. Watching rather than patching, since pinning a
-    fork of a transitive proc-macro dependency is a worse position than
-    the warning. What breaks when rustc turns it into an error is the FMU
-    crate's build, so the answer then is a `[patch]`, an `fmi-export`
-    release that drops the dependency, or hand-writing the exports.
+  - **It builds on a crate that would otherwise stop compiling.**
+    `fmi-export-derive` depends on `proc-macro-error2`, which re-exports a
+    private `extern crate proc_macro`. That is a future hard error,
+    rust-lang/rust#127909, and it warned on every build touching the FMU
+    crate. The crate's repository is archived, last pushed September 2024
+    with a dozen issues frozen, so 2.0.1 is the last release there will be
+    and waiting for a fix was never an option.
+    - The workspace patches it to the two-line change rustc's own help
+      suggests, taken from the pull request that was open when the
+      repository was archived, pinned by revision. Suppressing the notice
+      instead was tried and dropped: `frequency = "never"` is workspace
+      wide, so it would have hidden every other dependency's warnings too,
+      and it would have left the hard error still coming. Patching removes
+      the cause, so the day rustc makes it an error nothing here breaks.
+    - The cost is a build that depends on a personal fork staying
+      reachable. Vendoring the crate would remove that and carry somebody
+      else's source instead. What ends it properly is `fmi-export`
+      dropping the dependency, which is also the thing to check for when
+      it next releases.
+
 - Packaging: `cargo install cargo-fmi`, then `cargo fmi --package <pkg>
   bundle --release` (wrapped by `cargo xtask package-fmus`, and
   `--release` because the default is the dev profile) builds the cdylib
