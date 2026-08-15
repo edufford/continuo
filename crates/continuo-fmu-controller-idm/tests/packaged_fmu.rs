@@ -16,13 +16,16 @@
 //! numbers it was built from all have somewhere to go wrong that no
 //! compiler checks.
 //!
-//! Behind the `packaged-fmu` feature, because everything here reads a file
-//! `cargo xtask package-fmus` writes and no other suite in the workspace
-//! does. See that feature in `Cargo.toml` for what gating it costs.
-//!
 //! Driven through [`Component::step`] rather than through a conductor, as
 //! `continuo-fmi`'s own suite is, since what is under test is one
 //! component's answers rather than how a world schedules it.
+
+// Everything here reads a file `cargo xtask package-fmus` writes, so this
+// file compiles away to nothing unless the `packaged-fmu` feature is enabled.
+// What that costs is the run where it matters most: a law edited without
+// packaging again goes unnoticed by `cargo test --workspace`, and it takes
+// both of those commands to see it.
+#![cfg(feature = "packaged-fmu")]
 
 use std::path::PathBuf;
 

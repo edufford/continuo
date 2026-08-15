@@ -18,17 +18,14 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [features]
-# Whether a packaged `.fmu` is there to test against. Off by default, so
-# `cargo test --workspace` skips the target below rather than failing on a
-# missing package: nothing else in the workspace needs anything packaged, and
-# a Rust change that never reaches this crate should not have to build a
-# cdylib to run the suite.
+# Turns on the tests in `tests/packaged_fmu.rs`, which read what
+# `cargo xtask package-fmus` writes and so need it run first. Off by default,
+# which is what makes them opt in rather than a step every test run pays for.
+# CI turns it on after packaging.
 #
-# What that costs is the run where it matters most. Editing a control law and
-# running the workspace suite says nothing about whether the packaged FMU
-# still agrees, because the `.fmu` carries its own compiled copy. CI turns
-# this on in the step after packaging, so nothing merges unchecked, and
-# CLAUDE.md says when to turn it on locally.
+# The gate is a `#![cfg]` in that file rather than `required-features` here
+# because CI runs `--test '*'`, and a glob names every target it matches, so
+# cargo refuses the step over a named target whose features are off.
 packaged-fmu = []
 
 [dependencies]
@@ -45,12 +42,6 @@ thiserror = { workspace = true }
 [dev-dependencies]
 continuo-fmi = { workspace = true }
 serde_json = { workspace = true }
-
-# Declared so `required-features` can be, which is what gates it. Everything
-# else about the target is cargo's default for a file in tests/.
-[[test]]
-name = "packaged_fmu"
-required-features = ["packaged-fmu"]
 
 # `export_fmu!` expands to functions marked for a coverage build, and a cfg
 # inside a macro is checked against the crate it lands in rather than the one
