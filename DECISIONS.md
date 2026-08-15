@@ -908,6 +908,17 @@ it got there, including the roads not taken.
     comfortable braking there are picked to bring stop-and-go waves out of a
     crowded road, which is a different thing to demonstrate, so those two
     are this project's, and the plan overstated all of them as calibrated.
+  - Cross-checked once against highway-env's `IDMVehicle`, which implements
+    the unclamped form: `desired_gap` has no floor and `acceleration`
+    applies no limit of its own. Fed our parameters, it agrees with this
+    implementation to the last bit or two at every sampled point where the
+    wanted gap stays positive, and parts from it exactly where the two
+    adaptations say it should. At 20 m/s with 20 m of gap it wants -25.735 m
+    of room from a lead pulling away to 30 and commands -1.280 m/s^2 where
+    this commands +1.204, and -54.603 m and -9.977 m/s^2 from one reaching
+    35. Its own numbers differ from ours and are not the point: it wants
+    10 m at a standstill against 2, since it folds a car length in, and
+    brakes to 5.
 
 - **2026-08-15**: **The road crosses into the FMU as fixed arrays with a
   count, not as a structurally sized one.** The plan preferred a structural
