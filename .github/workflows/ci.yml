@@ -191,13 +191,13 @@ jobs:
       # catches a package older than the laws.
       #
       # Names no package. Every FMU crate spells this the same way, a
-      # `tests/packaged_fmu.rs` behind a `packaged-fmu` feature, so
-      # selecting by target name runs all of them.
+      # `tests/packaged_fmu.rs` behind a `packaged-fmu` feature, so asking
+      # for both names runs all of them.
       #
       # Ahead of the upload, so a run whose FMU disagrees with the laws it
       # was built from publishes nothing.
       - name: "FMU: test against the laws it was built from"
-        run: cargo test --workspace --all-features --test packaged_fmu
+        run: cargo test --workspace --features packaged-fmu --test packaged_fmu
 
       # Every FMU the workspace packages, each carrying this platform's
       # binary alone. One artifact per platform rather than per FMU, because
