@@ -769,3 +769,13 @@ than churning the fingerprint twice.
 
 - **External (non-deterministic) ego participation**: a relaxed admission mode
   for a live AV stack under test, after milestone 7.
+
+- **The viewer's `--check` counts components and calls them joins.** Its
+  summary prints `joins / leaves` directly above `actors seen`, and the two
+  count different things: membership is published per component, so a car
+  joining raises two events, one for its controller and one for its physics.
+  A demo run reports 32 joins and 16 leaves against 15 actors, which reads as
+  a discrepancy and is not one: 15 cars at two components each, plus the
+  logger and the spawner at one, and eight cars retiring. Saying "component
+  joins / leaves" would settle it. The CI smoke asserts those exact labels, so
+  the two move together.
