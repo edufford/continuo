@@ -262,13 +262,16 @@ so nothing in M6 re-tests it per component.
   - **It builds on a crate that would otherwise stop compiling.**
     `fmi-export-derive` depends on `proc-macro-error2`, which re-exports a
     private `extern crate proc_macro`. That is a future hard error,
-    rust-lang/rust#127909, and it warned on every build touching the FMU
-    crate. The crate's repository is archived, last pushed September 2024
-    with a dozen issues frozen, so 2.0.1 is the last release there will be
-    and waiting for a fix was never an option.
+    [rust-lang/rust#127909](https://github.com/rust-lang/rust/issues/127909),
+    and it warned on every build touching the FMU crate. The crate is
+    archived and will not be updated again, last pushed September 2024
+    with a dozen issues frozen, so 2.0.1 is the last release there will
+    ever be and waiting for a fix was never an option.
     - The workspace patches it to the two-line change rustc's own help
-      suggests, taken from the pull request that was open when the
-      repository was archived, pinned by revision. Suppressing the notice
+      suggests, from the pull request that was still open when the
+      repository was archived,
+      [#14](https://github.com/GnomedDev/proc-macro-error-2/pull/14),
+      pinned by revision. Suppressing the notice
       instead was tried and dropped: `frequency = "never"` is workspace
       wide, so it would have hidden every other dependency's warnings too,
       and it would have left the hard error still coming. Patching removes
