@@ -1,0 +1,76 @@
+name: Merge FMUs
+
+# CI packages every FMU crate on each of its four agents, and each archive
+# carries only the binary for the platform it ran on. This combines each FMU's
+# four builds into the one archive FMI 3.0 expects, so a user downloads a
+# single file per FMU that loads wherever they are rather than picking the
+# right one of four.
+#
+# Triggered by CI finishing rather than by a clock: the event names the run
+# whose artifacts to take, so there is no searching for the latest green build
+# and no asking whether this commit was merged already. One merged FMU per
+# commit that reaches main, by construction.
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+# Reading another run's artifacts needs `actions: read`, which a `workflow_run`
+# job does not get by default. Naming the two it uses also drops the rest.
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  merge_fmus:
+    # A failed CI run still uploads whatever agents got that far, and merging
+    # those would publish an FMU from a commit that did not pass.
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: "Install: Python"
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: "Install: fmpy"
+        run: python -m pip install fmpy
+
+      # One directory per platform, named as CI named them.
+      - name: "Download: every platform's FMUs"
+        uses: actions/download-artifact@v8
+        with:
+          pattern: fmus-*
+          path: artifacts
+          run-id: ${{ github.event.workflow_run.id || github.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Given the download directory rather than each artifact inside it, so
+      # no shell has to expand a glob, and the script fails by itself when
+      # nothing was downloaded.
+      - name: "Merge: each FMU's builds into one"
+        working-directory: python
+        run: python scripts/merge_fmus.py ../artifacts --out-dir ../merged
+
+      # The same second opinion CI asks of each platform's FMU, asked again of
+      # the ones assembled from them, since merging rewrites the archive.
+      - name: "Validate: the merged FMUs"
+        shell: bash
+        run: |
+          # Validate every merged FMU with fmpy.
+          for fmu in merged/*.fmu; do
+            python -m fmpy validate "$fmu"
+          done
+
+      - name: "Upload: the merged FMUs"
+        uses: actions/upload-artifact@v7
+        with:
+          name: fmus-all-platforms
+          path: merged/*.fmu
+          if-no-files-found: error

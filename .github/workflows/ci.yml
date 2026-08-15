@@ -171,7 +171,7 @@ jobs:
       - name: "FMU: validate"
         shell: bash
         run: |
-          # Check every packaged FMU against a second implementation.
+          # Validate every packaged FMU with fmpy.
           packaged=(target/fmu/*.fmu)
           if [ ! -e "${packaged[0]}" ]; then
             echo "ERROR: no .fmu in target/fmu; this check would be vacuous"
@@ -181,16 +181,15 @@ jobs:
             python -m fmpy validate "$fmu"
           done
 
-      # Each agent packages an FMU carrying its own platform's binary, so the
-      # four together hold every platform this project builds for. Kept so
-      # they can be combined into a single FMU that loads anywhere, which
-      # works because everything in modelDescription.xml except its timestamp
-      # is identical between them: the instantiation token is a UUID derived
-      # from the model's name rather than from the build.
+      # Every FMU the workspace packages, each carrying this platform's
+      # binary alone. One artifact per platform rather than per FMU, because
+      # an upload step produces one artifact and a workflow cannot loop over
+      # steps, so a name per FMU would mean a step per FMU to keep updated.
+      # The merge workflow groups them by file name instead.
       - name: "FMU: upload"
         uses: actions/upload-artifact@v7
         with:
-          name: fmu-${{ runner.os }}-${{ runner.arch }}
+          name: fmus-${{ runner.os }}-${{ runner.arch }}
           path: target/fmu/*.fmu
           # A step that collected nothing would otherwise pass.
           if-no-files-found: error
