@@ -83,7 +83,7 @@ links and the suite above compares nothing against it:
 
 ```sh
 cargo xtask package-fmus
-cargo test -p continuo-fmu-controller-idm --features packaged-fmu
+cargo test --workspace --all-features --test packaged_fmu
 ```
 
 `continuo-actors` is the one to watch, since editing a control law there

@@ -186,19 +186,18 @@ jobs:
             python -m fmpy validate "$fmu"
           done
 
-      # The comparison packaging exists to make possible: the `.fmu` just
-      # built against the laws compiled into it, over the boundary rather
-      # than beside it. It sits behind a feature so the workspace suite
-      # above needs nothing packaged, and it names its package because it is
-      # one crate's own suite rather than a workspace-wide step. A second
-      # FMU crate compares different laws, so it brings its own line here.
+      # Checks the `.fmu` just packaged against the laws compiled into it,
+      # reached through FMI rather than called directly, which is what
+      # catches a package older than the laws.
+      #
+      # Names no package. Every FMU crate spells this the same way, a
+      # `tests/packaged_fmu.rs` behind a `packaged-fmu` feature, so
+      # selecting by target name runs all of them.
       #
       # Ahead of the upload, so a run whose FMU disagrees with the laws it
       # was built from publishes nothing.
       - name: "FMU: test against the laws it was built from"
-        run: >
-          cargo test -p continuo-fmu-controller-idm
-          --features packaged-fmu --test packaged_fmu
+        run: cargo test --workspace --all-features --test packaged_fmu
 
       # Every FMU the workspace packages, each carrying this platform's
       # binary alone. One artifact per platform rather than per FMU, because
