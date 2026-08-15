@@ -110,15 +110,11 @@ jobs:
           ruff format --check .
 
       # A build of its own, so a compile error is reported as one rather than
-      # as whichever test step reached it first.
-      #
-      # No `--all-features`, unlike clippy above. A target behind a feature
-      # would be built here and then thrown away, since the test steps below
-      # run without the feature and a changed feature list is what makes
-      # cargo rebuild. Clippy already compiles that target's front end, and
-      # earlier, so nothing goes unchecked by leaving it out.
+      # as whichever test step reached it first. `--all-features` for the same
+      # reason clippy takes it: a target behind a feature compiles here rather
+      # than in whichever later step first needs it.
       - name: "Build: debug"
-        run: cargo build --workspace --all-targets
+        run: cargo build --workspace --all-targets --all-features
 
       # `--lib` and `--test '*'` partition the suite: the first runs the unit
       # tests inside each lib, the second the integration targets in tests/.
