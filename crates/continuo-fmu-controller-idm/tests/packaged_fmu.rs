@@ -320,7 +320,7 @@ fn assert_both_laws_had_something_to_say(commands: &[(f64, f64)]) {
 }
 
 /// Every situation worth putting a car in on `road`: along it, either side
-/// of its lane, pointing off it, at four speeds, seeing four different
+/// of its lane, pointing off it, at four speeds, seeing seven different
 /// things ahead.
 ///
 /// One cross product rather than a sweep per law, because a controller
@@ -346,12 +346,25 @@ fn situations_on(road: &Waypoints) -> Vec<Situation> {
         Vec::new(),
         // One lead, in a slot nowhere near the front, so picking the
         // nearest out of the array is part of what is being compared.
-        one_detection(37, 40.0, -4.0),
+        scan_of(&[(37, 40.0, -4.0)]),
         // Close and closing hard, which is the braking end of the law.
-        one_detection(0, 6.0, -12.0),
+        scan_of(&[(0, 6.0, -12.0)]),
         // Pulling away, which is the sign the wanted gap has to be floored
         // at zero for.
-        one_detection(63, 25.0, 9.0),
+        scan_of(&[(63, 25.0, 9.0)]),
+        // Three at once, the nearest neither first nor last, so a reader
+        // that took the first real slot or the last would answer from the
+        // wrong car. A single detection cannot tell those apart from
+        // picking correctly, since there is only one to pick.
+        scan_of(&[(2, 55.0, -1.0), (19, 18.0, -6.0), (44, 31.0, 2.0)]),
+        // Two at the same range, closing at different rates, so which one
+        // wins is observable in the command rather than a detail. Ties go
+        // to the earlier slot, and either side deciding otherwise is a
+        // disagreement this catches.
+        scan_of(&[(5, 22.0, -3.0), (40, 22.0, 7.0)]),
+        // Every slot real, so nothing is padding and the whole array is
+        // set from the message rather than from the mapping's default.
+        full_scan(),
     ];
 
     let mut situations = Vec::new();
@@ -372,25 +385,52 @@ fn situations_on(road: &Waypoints) -> Vec<Situation> {
         }
     }
 
-    // Return the lot: 36 poses, at each of 4 speeds, seeing each of 4
+    // Return the lot: 36 poses, at each of 4 speeds, seeing each of 7
     // things ahead.
     situations
 }
 
-/// A scan holding one detection, in `slot`, padded out to there with
-/// nothing.
+/// A scan holding a detection in each `(slot, range, range_rate)` given,
+/// free road in the slots between them.
 ///
-/// The padding is the free road rather than an absence, which is how a
+/// The free road is padding rather than an absence, which is how a
 /// fixed-length array carries a scan that is mostly empty: a free-road
 /// slot loses to anything real, so nothing has to say how many are worth
 /// reading.
-fn one_detection(slot: usize, range: f64, range_rate: f64) -> Vec<Detection> {
-    let mut scan = vec![FREE_ROAD; slot + 1];
-    scan[slot] = Detection { range, range_rate };
+fn scan_of(detections: &[(usize, f64, f64)]) -> Vec<Detection> {
+    let last = detections
+        .iter()
+        .map(|&(slot, _, _)| slot)
+        .max()
+        .expect("a scan of nothing is written as an empty vector");
+    let mut scan = vec![FREE_ROAD; last + 1];
+    for &(slot, range, range_rate) in detections {
+        scan[slot] = Detection { range, range_rate };
+    }
 
-    // Return the scan, which is shorter than the FMU's arrays wherever the
-    // slot is, so the mapping's own default fills the rest.
+    // Return the scan, which stops after the last slot named, so the
+    // mapping's own default fills the rest of the FMU's arrays.
     scan
+}
+
+/// A scan filling every slot the FMU declares, so nothing about it is
+/// padding.
+///
+/// Ranges fall toward slot 29 and rise again, putting the nearest where
+/// neither end of the array is, and the rates differ with them so which
+/// one wins reaches the command.
+fn full_scan() -> Vec<Detection> {
+    // Return one detection per slot, arranged around a nearest that has to
+    // be searched for.
+    (0..MAX_DETECTIONS)
+        .map(|slot| {
+            let from_nearest = (slot as f64 - 29.0).abs();
+            Detection {
+                range: 12.0 + from_nearest * 3.0,
+                range_rate: -6.0 + from_nearest * 0.25,
+            }
+        })
+        .collect()
 }
 
 #[test]
@@ -621,6 +661,62 @@ fn a_tuning_parameter_changed_between_steps_changes_the_command() {
         "at its target: {at_this_speed}"
     );
     assert!(at_twice_it > at_the_default);
+}
+
+#[test]
+fn the_nearest_of_several_detections_is_the_one_followed() {
+    // The sweeps run `nearest_detection` on both sides of the boundary, so
+    // they would agree on the wrong car as readily as on the right one.
+    // Here the answer is named rather than searched for: the command has to
+    // be the one the nearest detection alone would have given.
+    const SPEED: f64 = 20.0;
+
+    let road = Waypoints::build_straight((0.0, 0.0), (600.0, 0.0));
+    let mut fmu = FmuComponent::new(
+        "controller",
+        packaged(),
+        controller_mapping(&road, PURSUIT, IDM),
+    )
+    .expect("the FMU builds");
+    let situation = |scan: Vec<Detection>| Situation {
+        pose: car_at(&road, 100.0, PURSUIT.lateral_tgt, 0.0),
+        speed: SPEED,
+        scan,
+    };
+
+    // Three ahead, the nearest in neither the first slot nor the last, so
+    // taking either end would be a different command rather than the same
+    // one by luck.
+    let scan = scan_of(&[(2, 55.0, -1.0), (19, 18.0, -6.0), (44, 31.0, 2.0)]);
+    let (accel_cmd, _) = fmu_commands(&mut fmu, 0, &situation(scan));
+    assert_eq!(
+        accel_cmd.to_bits(),
+        idm_accel(SPEED, 18.0, 6.0, IDM).to_bits(),
+        "followed something other than the nearest\n{MAYBE_STALE}"
+    );
+    for (range, approach_rate) in [(55.0, 1.0), (31.0, -2.0)] {
+        assert_ne!(
+            accel_cmd.to_bits(),
+            idm_accel(SPEED, range, approach_rate, IDM).to_bits(),
+            "the assertion above cannot tell {range} m apart from the nearest"
+        );
+    }
+
+    // A tie goes to the earlier slot, which is what makes a scan answer the
+    // same way every time it is read. Both carry the same range and
+    // different rates, so which one won reaches the command.
+    let tied = scan_of(&[(5, 22.0, -3.0), (40, 22.0, 7.0)]);
+    let (accel_cmd, _) = fmu_commands(&mut fmu, 1, &situation(tied));
+    assert_eq!(
+        accel_cmd.to_bits(),
+        idm_accel(SPEED, 22.0, 3.0, IDM).to_bits(),
+        "a tie went to the later slot\n{MAYBE_STALE}"
+    );
+    assert_ne!(
+        accel_cmd.to_bits(),
+        idm_accel(SPEED, 22.0, -7.0, IDM).to_bits(),
+        "the assertion above cannot tell the two tied slots apart"
+    );
 }
 
 #[test]
