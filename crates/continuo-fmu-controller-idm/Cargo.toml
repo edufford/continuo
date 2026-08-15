@@ -37,8 +37,9 @@ fmi = { workspace = true }
 fmi-export = { workspace = true }
 thiserror = { workspace = true }
 
-# The comparison below imports the packaged FMU and drives it as a component,
-# which is the only way to reach it across the boundary rather than beside it.
+# What `tests/packaged_fmu.rs` takes to import the packaged FMU and drive it as
+# a component, which is the only way to reach it across the boundary rather
+# than beside it.
 [dev-dependencies]
 continuo-fmi = { workspace = true }
 serde_json = { workspace = true }
