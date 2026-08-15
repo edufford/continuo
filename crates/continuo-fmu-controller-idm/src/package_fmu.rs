@@ -1,10 +1,10 @@
 //! Finding the packaged `.fmu` that this crate is built into.
 //!
 //! Nothing in the FMU itself uses any of this. It is for the Rust side of
-//! the boundary: the golden tests that run the packaged FMU against the
-//! laws it was built from, and the demo scenario that hands its path to
-//! an `FmuComponent`. Both need the same answer to the same question, so
-//! they ask it here rather than each spelling out a path.
+//! the boundary: the tests that run the packaged FMU against the laws it
+//! was built from, and the demo scenario that hands its path to an
+//! `FmuComponent`. Both need the same answer to the same question, so they
+//! ask it here rather than each spelling out a path.
 
 use std::path::PathBuf;
 

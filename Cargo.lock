@@ -481,8 +481,10 @@ version = "0.1.0"
 dependencies = [
  "continuo-actors",
  "continuo-core",
+ "continuo-fmi",
  "fmi",
  "fmi-export",
+ "serde_json",
  "thiserror 2.0.18",
 ]
 

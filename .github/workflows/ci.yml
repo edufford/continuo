@@ -89,8 +89,11 @@ jobs:
       - name: "Lint: format"
         run: cargo fmt --all --check
 
+      # `--all-features` so a target held behind one is still linted. The
+      # packaged-FMU comparison is such a target, and it would otherwise be
+      # the one file in the workspace nothing here reads.
       - name: "Lint: clippy"
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
       # Catches broken intra-doc links, which nothing else does: the crates
       # cross-reference each other heavily, and a renamed item leaves a link
@@ -107,9 +110,11 @@ jobs:
           ruff format --check .
 
       # A build of its own, so a compile error is reported as one rather than
-      # as whichever test step reached it first.
+      # as whichever test step reached it first. `--all-features` for the same
+      # reason clippy takes it: a target behind a feature compiles here rather
+      # than in whichever later step first needs it.
       - name: "Build: debug"
-        run: cargo build --workspace --all-targets
+        run: cargo build --workspace --all-targets --all-features
 
       # `--lib` and `--test '*'` partition the suite: the first runs the unit
       # tests inside each lib, the second the integration targets in tests/.
@@ -180,6 +185,20 @@ jobs:
           for fmu in "${packaged[@]}"; do
             python -m fmpy validate "$fmu"
           done
+
+      # The comparison packaging exists to make possible: the `.fmu` just
+      # built against the laws compiled into it, over the boundary rather
+      # than beside it. It sits behind a feature so the workspace suite
+      # above needs nothing packaged, and it names its package because it is
+      # one crate's own suite rather than a workspace-wide step. A second
+      # FMU crate compares different laws, so it brings its own line here.
+      #
+      # Ahead of the upload, so a run whose FMU disagrees with the laws it
+      # was built from publishes nothing.
+      - name: "FMU: test against the laws it was built from"
+        run: >
+          cargo test -p continuo-fmu-controller-idm
+          --features packaged-fmu --test packaged_fmu
 
       # Every FMU the workspace packages, each carrying this platform's
       # binary alone. One artifact per platform rather than per FMU, because

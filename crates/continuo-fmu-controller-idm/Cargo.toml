@@ -11,11 +11,25 @@ rust-version.workspace = true
 # matters is the packaged .fmu rather than the crate.
 publish = false
 
-# cdylib is what FMI loads; rlib is what `packaged_fmu_path` and the golden
-# tests link against. Neither can be feature-gated, since `cargo fmi bundle`,
-# which packages the FMU, builds with default features.
+# cdylib is what FMI loads; rlib is what `packaged_fmu_path` and the comparison
+# in tests/ link against. Neither can be feature-gated, since `cargo fmi
+# bundle`, which packages the FMU, builds with default features.
 [lib]
 crate-type = ["cdylib", "rlib"]
+
+[features]
+# Whether a packaged `.fmu` is there to test against. Off by default, so
+# `cargo test --workspace` skips the target below rather than failing on a
+# missing package: nothing else in the workspace needs anything packaged, and
+# a Rust change that never reaches this crate should not have to build a
+# cdylib to run the suite.
+#
+# What that costs is the run where it matters most. Editing a control law and
+# running the workspace suite says nothing about whether the packaged FMU
+# still agrees, because the `.fmu` carries its own compiled copy. CI turns
+# this on in the step after packaging, so nothing merges unchecked, and
+# CLAUDE.md says when to turn it on locally.
+packaged-fmu = []
 
 [dependencies]
 continuo-actors = { workspace = true }
@@ -25,6 +39,18 @@ continuo-core = { workspace = true }
 fmi = { workspace = true }
 fmi-export = { workspace = true }
 thiserror = { workspace = true }
+
+# The comparison below imports the packaged FMU and drives it as a component,
+# which is the only way to reach it across the boundary rather than beside it.
+[dev-dependencies]
+continuo-fmi = { workspace = true }
+serde_json = { workspace = true }
+
+# Declared so `required-features` can be, which is what gates it. Everything
+# else about the target is cargo's default for a file in tests/.
+[[test]]
+name = "packaged_fmu"
+required-features = ["packaged-fmu"]
 
 # `export_fmu!` expands to functions marked for a coverage build, and a cfg
 # inside a macro is checked against the crate it lands in rather than the one

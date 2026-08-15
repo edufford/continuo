@@ -122,8 +122,8 @@ fn require_cargo_fmi() -> Result<(), String> {
 /// `--release` because the default is the debug profile, and how a
 /// packaged FMU is optimized is settled when it is packaged: a host
 /// loads the binary it finds and cannot rebuild it. The two profiles
-/// answer bit for bit alike, which is what lets the golden tests compare
-/// a release FMU against natively built laws.
+/// answer bit for bit alike, which is what lets a release FMU be compared
+/// against natively built laws.
 fn package(name: &str) -> Result<(), String> {
     let status = cargo()
         .args(["fmi", "--package", name, "bundle", "--release"])
