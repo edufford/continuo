@@ -779,3 +779,21 @@ than churning the fingerprint twice.
   logger and the spawner at one, and eight cars retiring. Saying "component
   joins / leaves" would settle it. The CI smoke asserts those exact labels, so
   the two move together.
+
+- **`cargo xtask verify`, running what has to pass before a commit.**
+  CLAUDE.md lists five commands in CI's order, cheapest first so a formatting
+  slip is reported in seconds rather than after the workspace has compiled,
+  and they are typed by hand every time. One task would run them in that
+  order and stop at the first failure, which is what the order is for.
+  - Two questions it has to answer rather than assume. Whether it runs the
+    Python half, `ruff` and `pytest` from `python/`, which needs an
+    interpreter and an install that a Rust-only change has no reason to have:
+    running it when it is there and saying it was skipped when it is not
+    beats either failing or silently covering less than the name claims.
+    And whether it packages the FMUs first, since the golden tests compare
+    against what `cargo xtask package-fmus` last wrote, so a verify that
+    skipped it would pass against a stale artifact.
+  - What it must not become is a second definition of what CI runs. CI is
+    the authority, so this follows that file rather than the other way
+    round, and anything it grows that CI does not have is a divergence to
+    fix rather than a feature.
