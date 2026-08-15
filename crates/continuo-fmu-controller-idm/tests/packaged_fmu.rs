@@ -34,8 +34,8 @@ use continuo_actors::control_laws::{
 };
 use continuo_actors::{MAX_DETECTIONS, Waypoints};
 use continuo_core::{
-    Component, ComponentPath, CoreError, Detection, KeyExpr, Message, Pose, Quat, SimDuration,
-    SimTime, StepCtx,
+    Component, ComponentPath, CoreError, Detection, KeyExpr, Message, Pose, Quat, RandomSplitMix64,
+    SimDuration, SimTime, StepCtx,
 };
 use continuo_fmi::{FmuComponent, FmuMapping, InputBinding, OutputBinding};
 use continuo_fmu_controller_idm::{MAX_WAYPOINTS, packaged_fmu_path};
@@ -319,14 +319,29 @@ fn assert_both_laws_had_something_to_say(commands: &[(f64, f64)]) {
     );
 }
 
-/// Every situation worth putting a car in on `road`: along it, either side
-/// of its lane, pointing off it, at four speeds, seeing seven different
-/// things ahead.
+/// What a car meets on `road`: the cases somebody chose, then a batch
+/// nobody did.
+///
+/// Both halves are wanted. A chosen case is aimed at something, and says
+/// what in a comment beside it, so a failure there names its own subject.
+/// A random one is aimed at nothing, which is the point: the corners worth
+/// finding are the ones nobody thought to write down.
+fn situations_on(road: &Waypoints) -> Vec<Situation> {
+    let mut situations = chosen_situations(road);
+    situations.extend(random_situations(road));
+
+    // Return both, which every sweep runs together.
+    situations
+}
+
+/// Every situation worth putting a car in deliberately: along the road,
+/// either side of its lane, pointing off it, at four speeds, seeing seven
+/// different things ahead.
 ///
 /// One cross product rather than a sweep per law, because a controller
 /// answers both at once and an interaction between them is exactly what a
 /// hand-picked list would step around.
-fn situations_on(road: &Waypoints) -> Vec<Situation> {
+fn chosen_situations(road: &Waypoints) -> Vec<Situation> {
     // Fractions of the road's length, so the same list means the same
     // places on a road of any size. The last is near enough to the end
     // that a lookahead runs past it, which is where a loop wraps and a
@@ -388,6 +403,67 @@ fn situations_on(road: &Waypoints) -> Vec<Situation> {
     // Return the lot: 36 poses, at each of 4 speeds, seeing each of 7
     // things ahead.
     situations
+}
+
+/// Situations picked at random, to reach what the grid above steps around.
+///
+/// From a fixed seed, because a failure nobody can reproduce is a failure
+/// nobody can fix. The same situations come out on every agent and every
+/// run, so a disagreement found here can be walked back into rather than
+/// chased, and the workspace's own generator is what picks them, since it
+/// is integer arithmetic and answers alike on all four platforms.
+///
+/// The ranges are wider than anything a road produces. A car may sit past
+/// either end of it, twelve meters off to the side, pointing any direction
+/// at all, and a gap may be smaller than a car, which is where the
+/// following law's floor on the gap it divides by starts to matter. None
+/// of that is a world this project runs; all of it is a value a host in
+/// another tool can set.
+fn random_situations(road: &Waypoints) -> Vec<Situation> {
+    // Enough to reach corners, few enough that the suite stays under a
+    // second, which is what keeps it something to run while editing.
+    const SITUATIONS: usize = 250;
+    // The most detections one situation holds. Past a handful, another
+    // detection only adds a slot for the nearest not to be in, and the
+    // chosen cases already fill every slot in one of theirs.
+    const MOST_DETECTIONS: u64 = 5;
+    // Arbitrary. What matters is that it never changes, not what it is.
+    const SEED: u64 = 0x1D3A_7B91_C0DE_4F62;
+
+    let mut random = RandomSplitMix64::new(SEED);
+    let length = road.total_length();
+
+    // Return one situation per draw, each independent of the last.
+    (0..SITUATIONS)
+        .map(|_| {
+            let pose = car_at(
+                road,
+                random.range_f64(-0.2 * length, 1.2 * length),
+                random.range_f64(-12.0, 12.0),
+                random.range_f64(-std::f64::consts::PI, std::f64::consts::PI),
+            );
+            let detections = random.next_u64() % (MOST_DETECTIONS + 1);
+            let scan: Vec<(usize, f64, f64)> = (0..detections)
+                .map(|_| {
+                    (
+                        (random.next_u64() % MAX_DETECTIONS as u64) as usize,
+                        random.range_f64(-2.0, 300.0),
+                        random.range_f64(-25.0, 25.0),
+                    )
+                })
+                .collect();
+
+            Situation {
+                pose,
+                speed: random.range_f64(0.0, 45.0),
+                scan: if scan.is_empty() {
+                    Vec::new()
+                } else {
+                    scan_of(&scan)
+                },
+            }
+        })
+        .collect()
 }
 
 /// A scan holding a detection in each `(slot, range, range_rate)` given,
