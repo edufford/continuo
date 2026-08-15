@@ -297,17 +297,26 @@ fn commands_over(
 /// A comparison of two zeros passes whatever is wrong on either side, and
 /// a road every car sits exactly on would give nothing but zeros from the
 /// steering law. So each sweep says what it managed to provoke.
+///
+/// A NaN satisfies neither comparison, so a command that diverged cannot
+/// stand as evidence that anything was commanded.
 fn assert_both_laws_had_something_to_say(commands: &[(f64, f64)]) {
-    let any = |what: fn(&(f64, f64)) -> f64, sign: f64| {
-        commands
-            .iter()
-            .any(|command| what(command) * sign > 0.0)
-            .then_some(())
-    };
-    assert!(any(|c| c.0, 1.0).is_some(), "nothing accelerated");
-    assert!(any(|c| c.0, -1.0).is_some(), "nothing braked");
-    assert!(any(|c| c.1, 1.0).is_some(), "nothing turned left");
-    assert!(any(|c| c.1, -1.0).is_some(), "nothing turned right");
+    assert!(
+        commands.iter().any(|&(accel, _)| accel > 0.0),
+        "nothing accelerated"
+    );
+    assert!(
+        commands.iter().any(|&(accel, _)| accel < 0.0),
+        "nothing braked"
+    );
+    assert!(
+        commands.iter().any(|&(_, yaw_rate)| yaw_rate > 0.0),
+        "nothing turned left"
+    );
+    assert!(
+        commands.iter().any(|&(_, yaw_rate)| yaw_rate < 0.0),
+        "nothing turned right"
+    );
 }
 
 /// Every situation worth putting a car in on `road`: along it, either side
