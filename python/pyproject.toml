@@ -43,3 +43,6 @@ select = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# `scripts/` holds repo tools rather than package modules, so it is not
+# importable on its own. Naming it here is what lets their tests import them.
+pythonpath = ["scripts"]
