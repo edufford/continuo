@@ -186,6 +186,19 @@ jobs:
             python -m fmpy validate "$fmu"
           done
 
+      # What the step below runs, built here, so the cost lands in a step
+      # named for building rather than inside one named for testing, where
+      # it reads as the tests being slow when they take under a second.
+      #
+      # The two commands differ only in `build` against `test`, and have to.
+      # Asking for one test target rather than all of them resolves fewer
+      # packages and unifies their dependencies' features differently, which
+      # is enough on its own to make cargo rebuild this crate: it reports
+      # the change as `info of dependency thiserror changed`. That is also
+      # why this cannot join the builds above, which select every target.
+      - name: "FMU: build the comparison"
+        run: cargo build --workspace --features packaged-fmu --test packaged_fmu
+
       # Checks the `.fmu` just packaged against the laws compiled into it,
       # reached through FMI rather than called directly, which is what
       # catches a package older than the laws.
