@@ -51,19 +51,6 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      # TEMPORARY, out again once it has reported. The packaged-FMU step
-      # rebuilds fourteen crates every run, `fmi-sys` among them, which is
-      # 52 of its 70 seconds on Windows and reproduces on no other machine.
-      # This probe runs again after each step that builds the same units, so
-      # the readings together say whether the cache never carried them or
-      # something in the run took them away.
-      - name: "Diagnose: fmi-sys after the cache restore"
-        shell: bash
-        run: |
-          # Count what is on disk for fmi-sys, whose rebuild costs the most.
-          echo "fingerprints: $(ls -d target/debug/.fingerprint/fmi-sys-* 2>/dev/null | wc -l)"
-          echo "rlibs: $(ls target/debug/deps/libfmi_sys*.rlib 2>/dev/null | wc -l)"
-
       # Pinned by version, since a packager that changed under us would
       # rewrite modelDescription.xml on a commit that touched nothing. The
       # cache key carries the runner because the binary is native, and a miss
@@ -128,14 +115,6 @@ jobs:
       # than in whichever later step first needs it.
       - name: "Build: debug"
         run: cargo build --workspace --all-targets --all-features
-
-      # TEMPORARY, with the probe above.
-      - name: "Diagnose: fmi-sys after the debug build"
-        shell: bash
-        run: |
-          # The same count, after a step that needed fmi-sys and did not rebuild it.
-          echo "fingerprints: $(ls -d target/debug/.fingerprint/fmi-sys-* 2>/dev/null | wc -l)"
-          echo "rlibs: $(ls target/debug/deps/libfmi_sys*.rlib 2>/dev/null | wc -l)"
 
       # `--lib` and `--test '*'` partition the suite: the first runs the unit
       # tests inside each lib, the second the integration targets in tests/.
@@ -207,15 +186,6 @@ jobs:
             python -m fmpy validate "$fmu"
           done
 
-      # TEMPORARY, with the probes above: the last reading before the step
-      # that rebuilds.
-      - name: "Diagnose: fmi-sys before the comparison"
-        shell: bash
-        run: |
-          # The same count, immediately before the step that rebuilds it.
-          echo "fingerprints: $(ls -d target/debug/.fingerprint/fmi-sys-* 2>/dev/null | wc -l)"
-          echo "rlibs: $(ls target/debug/deps/libfmi_sys*.rlib 2>/dev/null | wc -l)"
-
       # Checks the `.fmu` just packaged against the laws compiled into it,
       # reached through FMI rather than called directly, which is what
       # catches a package older than the laws.
@@ -226,10 +196,8 @@ jobs:
       #
       # Ahead of the upload, so a run whose FMU disagrees with the laws it
       # was built from publishes nothing.
-      #
-      # TEMPORARY: `-v` so cargo names its own reason for each rebuild.
       - name: "FMU: test against the laws it was built from"
-        run: cargo test --workspace --features packaged-fmu --test packaged_fmu -v
+        run: cargo test --workspace --features packaged-fmu --test packaged_fmu
 
       # Every FMU the workspace packages, each carrying this platform's
       # binary alone. One artifact per platform rather than per FMU, because
