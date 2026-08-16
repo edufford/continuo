@@ -922,9 +922,11 @@ it got there, including the roads not taken.
     adaptations say it should. At 20 m/s with 20 m of gap it wants -25.735 m
     of room from a lead pulling away to 30 and commands -1.280 m/s^2 where
     this commands +1.204, and -54.603 m and -9.977 m/s^2 from one reaching
-    35. Its own numbers differ from ours and are not the point: it wants
-    10 m at a standstill against 2, since it folds a car length in, and
-    brakes to 5.
+    35. What was compared is the equation rather than the tuning, so it was
+    fed ours throughout. Its own parameters differ and were not used:
+    `DISTANCE_WANTED` is 10 m against our 2, since it folds a car length
+    into the standstill gap, `COMFORT_ACC_MAX` is 3.0 against our 1.5, and
+    `COMFORT_ACC_MIN` is -5.0 where we brake at 2.0.
 
 - **2026-08-15**: **The road crosses into the FMU as fixed arrays with a
   count, not as a structurally sized one.** The plan preferred a structural
