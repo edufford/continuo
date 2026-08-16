@@ -175,12 +175,16 @@ messages, PR descriptions, console strings.
 - Show a diff for review before committing it. It is read in the editor, so
   there is no need to paste it into chat.
 - Never force push.
-- **A pull request description is the squash commit message.** Merging
-  squashes and takes the title and description, so what is written there is
-  what lands on main, and the branch's own commits survive on the closed PR
-  page and nowhere else. Write it as a commit body from the first push, in
-  the same voice: what was decided and why, and what it cost to find out.
-  Someone reading only the log should come away knowing what the PR settled.
+- **A pull request description is the squash commit message.** This
+  repository squash-merges using the title and description, so what is
+  written there is what lands on main, and the branch's own commits survive
+  on the closed PR page and nowhere else. That setting is deliberate: a
+  branch worked through with an AI coding agent accumulates dozens of small
+  commits answering review comments, and main reads better as one account
+  per PR than as a transcript of how it was reached. Write it as a commit
+  body from the first push, in the same voice: what was decided and why, and
+  what it cost to find out. Someone reading only the log should come away
+  knowing what the PR settled.
   - **Wrap it at 72 columns.** GitHub hard-wraps the description when it
     builds that commit, breaking each line on its own rather than reflowing
     the paragraph, so a 78-column line lands as 72 characters and an orphan
