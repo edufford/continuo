@@ -1,0 +1,57 @@
+[package]
+name = "continuo-fmu-controller-idm"
+# This is the FMU's own description, not just the crate's: the packager
+# writes it into modelDescription.xml, so it is what a host reads.
+description = "A controller for traffic cars, following with IDM and turning with pure pursuit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+# Nothing outside this workspace has a use for it, and the artifact that
+# matters is the packaged .fmu rather than the crate.
+publish = false
+
+# cdylib is what FMI loads; rlib is what `packaged_fmu_path` and the comparison
+# in tests/ link against. Neither can be feature-gated, since `cargo fmi
+# bundle`, which packages the FMU, builds with default features.
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+# Turns on the tests in `tests/packaged_fmu.rs`, which read what
+# `cargo xtask package-fmus` writes and so need it run first. Off by default,
+# which is what makes them opt in rather than a step every test run pays for.
+# CI turns it on after packaging.
+#
+# The gate is a `#![cfg]` in that file rather than `required-features` here
+# because CI runs `--test '*'`, and a glob names every target it matches, so
+# cargo refuses the step over a named target whose features are off.
+packaged-fmu = []
+
+[dependencies]
+continuo-actors = { workspace = true }
+continuo-core = { workspace = true }
+# The derive writes `::fmi::...` paths, so the exporting crate needs `fmi`
+# of its own even though nothing here names it.
+fmi = { workspace = true }
+fmi-export = { workspace = true }
+thiserror = { workspace = true }
+
+# What `tests/packaged_fmu.rs` takes to import the packaged FMU and drive it as
+# a component, which is the only way to reach it across the boundary rather
+# than beside it.
+[dev-dependencies]
+continuo-fmi = { workspace = true }
+serde_json = { workspace = true }
+
+# `export_fmu!` expands to functions marked for a coverage build, and a cfg
+# inside a macro is checked against the crate it lands in rather than the one
+# it came from. Naming it here says it is expected, which silences three dozen
+# warnings without turning the lint off.
+#
+# `check-cfg` in a lint table is Cargo 1.80 and later. An editor calling it
+# invalid is validating against a schema older than the feature; a build
+# script emitting `cargo::rustc-check-cfg` would say the same thing, and is
+# machinery bought to satisfy a schema rather than the compiler.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage_nightly)'] }

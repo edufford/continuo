@@ -769,3 +769,58 @@ than churning the fingerprint twice.
 
 - **External (non-deterministic) ego participation**: a relaxed admission mode
   for a live AV stack under test, after milestone 7.
+
+- **The viewer's `--check` counts components and calls them joins.** Its
+  summary prints `joins / leaves` directly above `actors seen`, and the two
+  count different things: membership is published per component, so a car
+  joining raises two events, one for its controller and one for its physics.
+  A demo run reports 32 joins and 16 leaves against 15 actors, which reads as
+  a discrepancy and is not one: 15 cars at two components each, plus the
+  logger and the spawner at one, and eight cars retiring. Saying "component
+  joins / leaves" would settle it. The CI smoke asserts those exact labels, so
+  the two move together.
+
+- **A native component that follows, so both control laws have a caller on
+  each side of the FMI boundary.** The laws live in `continuo-actors` so that
+  the native side and the FMU call one implementation rather than two kept in
+  step by hand, and only the steering law actually does:
+  `PathFollowController` calls `pure_pursuit_yaw_rate`, while `idm_accel` and
+  `nearest_detection` are reached only from the FMU. The argument for where
+  the laws live is sound and currently half demonstrated.
+  - Which shape it takes is the open question. A second component beside
+    `PathFollowController` keeps that one purely lateral, which M6 made it
+    on purpose: two small commands travel separately so a learned
+    longitudinal FMU can run beside native steering, and one component
+    publishing both would argue against that. Teaching the existing one to
+    follow is less code and gives that back.
+  - What it buys beyond symmetry is a native baseline. Today the only thing
+    that runs IDM in a world is the FMU, so a scenario cannot be run both
+    ways to see what the boundary costs in throughput, and the packaged-FMU
+    comparison is the only place the two are checked against each other at
+    all.
+
+- **`cargo xtask verify`, running what has to pass before a commit.**
+  CLAUDE.md lists five commands in CI's order, cheapest first so a formatting
+  slip is reported in seconds rather than after the workspace has compiled,
+  and they are typed by hand every time. One task would run them in that
+  order and stop at the first failure, which is what the order is for.
+  - Two questions it has to answer rather than assume. Whether it runs the
+    Python half, `ruff` and `pytest` from `python/`, which needs an
+    interpreter and an install that a Rust-only change has no reason to have:
+    running it when it is there and saying it was skipped when it is not
+    beats either failing or silently covering less than the name claims.
+    And whether it packages the FMUs first, since the packaged-FMU tests
+    compare against what `cargo xtask package-fmus` last wrote, so a verify
+    that skipped it would pass against a stale artifact.
+  - The case for it is that the local commands and CI's are not the same
+    commands. CI splits the tests as `--lib` then `--test '*'`, where
+    CLAUDE.md offers one `cargo test --workspace` as covering both, and it
+    does cover both until a target is gated behind a feature: a glob names
+    every target it matches, so cargo refuses the step, where the
+    unqualified form skips the target and passes. That went green locally
+    and red on all four agents. A task typing CI's own commands is what
+    would have caught it, which is worth more than the typing it saves.
+  - What it must not become is a second definition of what CI runs. CI is
+    the authority, so this follows that file rather than the other way
+    round, and anything it grows that CI does not have is a divergence to
+    fix rather than a feature.

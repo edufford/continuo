@@ -1,0 +1,72 @@
+name: Merge FMUs
+
+# CI packages every FMU crate on each of its four agents, and each archive
+# carries only the binary for the platform it ran on. This combines each FMU's
+# four builds into the one archive FMI 3.0 expects, so a user downloads a
+# single file per FMU that loads wherever they are rather than picking the
+# right one of four.
+#
+# Run by hand, naming the CI run whose artifacts to take. The `workflow_run`
+# trigger that fires it on every green run on main follows separately: a
+# workflow cannot be dispatched until it sits on the default branch, so landing
+# both at once would make the first run of this an automatic one that nothing
+# had tried. A dispatch against a real CI run is what tries it.
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "The CI run whose FMU artifacts to merge"
+        required: true
+
+# Reading another run's artifacts needs `actions: read`, which the default
+# token does not carry. Naming the two it uses also drops the rest.
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  merge_fmus:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: "Install: Python"
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: "Install: fmpy"
+        run: python -m pip install fmpy
+
+      # One directory per platform, named as CI named them.
+      - name: "Download: every platform's FMUs"
+        uses: actions/download-artifact@v8
+        with:
+          pattern: fmus-*
+          path: artifacts
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Given the download directory rather than each artifact inside it, so
+      # no shell has to expand a glob, and the script fails by itself when
+      # nothing was downloaded.
+      - name: "Merge: each FMU's builds into one"
+        working-directory: python
+        run: python scripts/merge_fmus.py ../artifacts --out-dir ../merged
+
+      # The same second opinion CI asks of each platform's FMU, asked again of
+      # the ones assembled from them, since merging rewrites the archive.
+      - name: "Validate: the merged FMUs"
+        shell: bash
+        run: |
+          # Validate every merged FMU with fmpy.
+          for fmu in merged/*.fmu; do
+            python -m fmpy validate "$fmu"
+          done
+
+      - name: "Upload: the merged FMUs"
+        uses: actions/upload-artifact@v7
+        with:
+          name: fmus-all-platforms
+          path: merged/*.fmu
+          if-no-files-found: error

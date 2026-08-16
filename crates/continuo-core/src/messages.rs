@@ -34,6 +34,16 @@ pub struct Pose {
     pub orientation: Quat,
 }
 
+/// One thing a sensor found ahead of it: how far off it is, and how fast
+/// that is changing.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Detection {
+    /// Meters to it.
+    pub range: f64,
+    /// How fast the range is changing, m/s, negative when closing.
+    pub range_rate: f64,
+}
+
 /// A routed unit on the transport: canonical JSON payload bytes plus the
 /// metadata that makes delivery deterministic.
 ///

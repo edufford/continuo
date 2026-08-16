@@ -41,23 +41,37 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install Rust (stable)
+      # Everything a step later needs is installed first, so a missing tool is
+      # reported before any of the work rather than partway through it. All
+      # three are cached; only the second ever compiles anything.
+      - name: "Install: Rust (stable)"
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
 
       - uses: Swatinem/rust-cache@v2
 
-      # Ordered cheapest first, so an unformatted file is reported in seconds
-      # rather than after the workspace has been compiled. Steps only run when
-      # every earlier one succeeded.
-      - name: "Lint: format"
-        run: cargo fmt --all --check
+      # Pinned by version, since a packager that changed under us would
+      # rewrite modelDescription.xml on a commit that touched nothing. The
+      # cache key carries the runner because the binary is native, and a miss
+      # costs a release build of cargo-fmi, which is why it is cached at all.
+      - name: "Install: cargo-fmi (cached)"
+        uses: actions/cache@v6
+        id: cargo-fmi-cache
+        with:
+          path: |
+            ~/.cargo/bin/cargo-fmi
+            ~/.cargo/bin/cargo-fmi.exe
+          key: cargo-fmi-0.3.0-${{ runner.os }}-${{ runner.arch }}
+
+      - name: "Install: cargo-fmi (on a cache miss)"
+        if: steps.cargo-fmi-cache.outputs.cache-hit != 'true'
+        run: cargo install cargo-fmi --version 0.3.0 --locked
 
       # The viewer installs with plain `pip`, not `uv`. `uv.lock` is committed
       # as a convenience and nothing requires it, so installing the ordinary
       # way is what keeps that true.
-      - name: Install Python
+      - name: "Install: Python (cached)"
         uses: actions/setup-python@v7
         with:
           python-version: "3.12"
@@ -68,14 +82,35 @@ jobs:
         working-directory: python
         run: python -m pip install -e . pytest ruff
 
-      - name: "Lint: ruff"
-        working-directory: python
+      # fmpy validates what the FMU steps below package, and is nothing to do
+      # with the viewer, so it gets an environment of its own. It brings numpy
+      # and lxml among others, and sharing one would run the viewer's tests
+      # against a tree nobody who installs the viewer has, where an accidental
+      # import of any of it passes here and fails for them.
+      - name: "Install: fmpy"
+        shell: bash
         run: |
-          ruff check .
-          ruff format --check .
+          # Install fmpy in a virtual environment, named for the later steps.
+          python -m venv .venv-fmpy
+          if [ -x .venv-fmpy/bin/python ]; then
+            fmpy_python=.venv-fmpy/bin/python     # Linux and macOS
+          else
+            fmpy_python=.venv-fmpy/Scripts/python # Windows
+          fi
+          "$fmpy_python" -m pip install fmpy
+          echo "FMPY_PYTHON=$fmpy_python" >> "$GITHUB_ENV"
 
+      # Lints run before anything is built for real, cheapest first, so an
+      # unformatted file is reported in seconds rather than after a compile.
+      # Steps only run when every earlier one succeeded.
+      - name: "Lint: format"
+        run: cargo fmt --all --check
+
+      # `--all-features` so a target held behind one is still linted. The
+      # packaged-FMU comparison is such a target, and it would otherwise be
+      # the one file in the workspace nothing here reads.
       - name: "Lint: clippy"
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
       # Catches broken intra-doc links, which nothing else does: the crates
       # cross-reference each other heavily, and a renamed item leaves a link
@@ -85,19 +120,97 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
 
+      - name: "Lint: ruff"
+        working-directory: python
+        run: |
+          ruff check .
+          ruff format --check .
+
+      # A build of its own, so a compile error is reported as one rather than
+      # as whichever test step reached it first. `--all-features` for the same
+      # reason clippy takes it: a target behind a feature compiles here rather
+      # than in whichever later step first needs it.
+      - name: "Build: debug"
+        run: cargo build --workspace --all-targets --all-features
+
+      # Before the tests, because one of them loads the `.fmu` this writes.
+      # Packaging after them would need a second cargo run for that one
+      # test, and asking for a single target resolves fewer packages, which
+      # changes their dependencies' features and rebuilds much of the graph.
+      #
+      # Names no package: the task finds every `continuo-fmu-*` crate
+      # itself, so a second FMU crate needs no edit here.
+      - name: "FMU: package"
+        run: cargo xtask package-fmus
+
+      # Validate with fmpy to get an independent check on the correctness of
+      # the packaged FMUs. The glob is guarded because one matching nothing
+      # expands to itself, and naming the empty directory beats fmpy failing
+      # to open a path with a star in it.
+      - name: "FMU: validate"
+        shell: bash
+        run: |
+          # Validate every packaged FMU with fmpy.
+          packaged=(target/fmu/*.fmu)
+          if [ ! -e "${packaged[0]}" ]; then
+            echo "ERROR: no .fmu in target/fmu; the packaging step produced none"
+            exit 1
+          fi
+          for fmu in "${packaged[@]}"; do
+            "$FMPY_PYTHON" -m fmpy validate "$fmu"
+          done
+
       # `--lib` and `--test '*'` partition the suite: the first runs the unit
       # tests inside each lib, the second the integration targets in tests/.
       # Note `--tests` would *not* work as the second half, because it
       # includes lib unit tests too, so the two steps would re-run them.
+      #
+      # `--all-features` matches the build above, so neither step compiles
+      # anything: a changed feature list alone makes cargo rebuild a crate.
+      # It is also what runs the packaged-FMU comparison, one of the
+      # integration targets.
       - name: "Test: unit"
-        run: cargo test --workspace --lib
+        run: cargo test --workspace --all-features --lib
 
       - name: "Test: integration"
-        run: cargo test --workspace --test '*'
+        run: cargo test --workspace --all-features --test '*'
 
       - name: "Test: viewer"
         working-directory: python
         run: pytest -v
+
+      # Release from here on, so the smokes run against the profile the
+      # packaged FMU was built at and will be loaded beside. Packaging above
+      # asks for `--release` itself, since a host loads the binary it finds
+      # and cannot rebuild it.
+      - name: "Build: release"
+        run: cargo build --release --workspace --examples
+
+      # The world hash is pinned by a test that runs debug, and everything
+      # after this point runs release, so this is what carries the pin across
+      # to the other profile. rustc does not reassociate float arithmetic at
+      # any optimization level, which is why the two agree; this is what would
+      # notice if that stopped being true, on whichever agent it stopped on.
+      - name: "Test: the world hash holds in release too"
+        shell: bash
+        run: |
+          # Run the demo under both profiles and compare the hash it prints.
+          debug_hash=$(cargo run -q -p continuo-examples --example traffic \
+            | sed -n 's/.*world hash \([0-9a-f]*\).*/\1/p')
+          release_hash=$(cargo run -q --release -p continuo-examples --example traffic \
+            | sed -n 's/.*world hash \([0-9a-f]*\).*/\1/p')
+          echo "debug $debug_hash, release $release_hash"
+
+          # Two empty captures would otherwise match, so a demo that stopped
+          # printing its hash would pass this rather than fail it.
+          if [ -z "$debug_hash" ]; then
+            echo "ERROR: no world hash in the demo's output; this check would be vacuous"
+            exit 1
+          fi
+          if [ "$debug_hash" != "$release_hash" ]; then
+            echo "ERROR: the world hash differs between profiles"
+            exit 1
+          fi
 
       # Smoke steps run the shipped examples end to end, covering what the
       # test suites cannot: that the examples themselves build and run, and
@@ -108,13 +221,13 @@ jobs:
       #
       # New end-to-end checks belong here, with the same "Smoke:" prefix.
       - name: "Smoke: traffic demo"
-        run: cargo run -p continuo-examples --example traffic
+        run: cargo run --release -p continuo-examples --example traffic
 
       - name: "Smoke: record a run and verify the unmodified log"
         shell: bash
         run: |
-          cargo run -q -p continuo-examples --example traffic_record -- ci-run.jsonl
-          cargo run -q -p continuo-examples --example traffic_verify -- ci-run.jsonl
+          cargo run -q --release -p continuo-examples --example traffic_record -- ci-run.jsonl
+          cargo run -q --release -p continuo-examples --example traffic_verify -- ci-run.jsonl
 
       # `verification_stops_at_the_first_divergence` in the highway tests
       # already checks that a tampered log is rejected, where it can be run
@@ -124,27 +237,29 @@ jobs:
       #
       # Neither `if` below can become `! cmd`. Bash exempts an inverted
       # command from `set -e`, so the short form would never fail the step.
+      #
+      # The awk corrupts one pose x-coordinate mid-run, at the first match on
+      # or after line 6000 (roughly sim time 14 s of 30), keeping the JSON
+      # valid, so verification checks a long clean prefix before diverging
+      # and stops there rather than running to completion.
       - name: "Smoke: verification detects a modified log"
         shell: bash
         run: |
-          # Corrupt one pose x-coordinate mid-run, at the first match on or
-          # after line 6000 (roughly sim time 14 s of 30), keeping the JSON
-          # valid, so verification checks a long clean prefix before
-          # diverging (and stops there rather than running to completion).
+          # Corrupt one pose mid-run, then check verification rejects the log.
           awk 'NR>=6000 && !done && /"x":/ { sub(/"x":[-0-9.eE]*/, "\"x\":99.9"); done=1 } { print }' \
             ci-run.jsonl > ci-tampered.jsonl
           if cmp -s ci-run.jsonl ci-tampered.jsonl; then
             echo "ERROR: awk matched nothing, log was NOT modified; this check would be vacuous"
             exit 1
           fi
-          if cargo run -q -p continuo-examples --example traffic_verify -- ci-tampered.jsonl; then
+          if cargo run -q --release -p continuo-examples --example traffic_verify -- ci-tampered.jsonl; then
             echo "ERROR: verification PASSED on the modified log; divergence was NOT detected"
             exit 1
           fi
 
       - name: "Smoke: open-loop resimulation from the recorded log"
         shell: bash
-        run: cargo run -q -p continuo-examples --example traffic_resim -- ci-run.jsonl
+        run: cargo run -q --release -p continuo-examples --example traffic_resim -- ci-run.jsonl
 
       # The viewer's own tests build their logs from synthetic events. This is
       # the only check that it reads what the conductor actually writes, which
@@ -188,12 +303,22 @@ jobs:
       # A smoke, not a benchmark: a shared runner cannot hold a rate steady
       # enough to assert one, so this checks that a large world still runs and
       # leaves the numbers for a human reading the log.
-      #
-      # Release, because the numbers it prints mean nothing from a debug build,
-      # and `--no-default-features` so that costs a release build of 60 crates
-      # rather than the 911 the viz feature brings in. This example needs none
-      # of them.
       - name: "Smoke: a scaled world"
-        run: >
-          cargo run --release -p continuo-examples
-          --no-default-features --example traffic_scale
+        run: cargo run --release -p continuo-examples --example traffic_scale
+
+      # Last, because publishing is the one thing here that leaves the job.
+      # A step only runs when every earlier one succeeded, so an FMU reaches
+      # the merge workflow only from a run that passed all of it.
+      #
+      # Every FMU the workspace packages, each carrying this platform's
+      # binary alone. One artifact per platform rather than per FMU, because
+      # an upload step produces one artifact and a workflow cannot loop over
+      # steps, so a name per FMU would mean a step per FMU to keep updated.
+      # The merge workflow groups them by file name instead.
+      - name: "FMU: upload"
+        uses: actions/upload-artifact@v7
+        with:
+          name: fmus-${{ runner.os }}-${{ runner.arch }}
+          path: target/fmu/*.fmu
+          # A step that collected nothing would otherwise pass.
+          if-no-files-found: error

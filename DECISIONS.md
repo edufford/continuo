@@ -864,3 +864,174 @@ it got there, including the roads not taken.
     `x = 0` on the next line, and runs only at instantiate and reset, before
     an importer can write a parameter. Setting `x` directly is refused outside
     Continuous Time Mode and Event Mode.
+
+- **2026-08-15**: **The demo's FMU is the whole controller, and the laws it
+  runs stay in `continuo-actors`.** The FMU crate holds the FMI interface
+  declaration and nothing else, delegating every answer to `idm_accel`,
+  `nearest_detection` and `pure_pursuit_yaw_rate`. A planner publishing an
+  acceleration for a component to track was the alternative, and it lost on
+  reading the signal flow out: its longitudinal half consumed a number and
+  republished it unchanged, where IDM is the follow controller rather than a
+  reference for one.
+  - Only the steering law has a native caller today.
+    `PathFollowController` calls `pure_pursuit_yaw_rate`, so those two
+    agree by being one implementation rather than by being kept in step,
+    which is the whole argument for this arrangement. Nothing native calls
+    `idm_accel` or `nearest_detection`, because M6 gives traffic its
+    longitudinal behavior through the FMU and leaves that controller purely
+    lateral. So the argument is currently half demonstrated, and PLAN.md
+    defers the component that would finish it.
+  - The packaging is its own crate because FMI allows one model per shared
+    library, the model identifier follows the cdylib's name, and
+    `crate-type` cannot be feature-gated.
+  - What that costs is a `.fmu` carrying a compiled snapshot of the laws,
+    since the cdylib links them statically and nothing calls back into the
+    host. Editing a law without packaging again leaves the copy behind, and
+    the comparison in `crates/continuo-fmu-controller-idm/tests/` is the
+    only thing that would notice. Its failures name
+    `cargo xtask package-fmus` for that reason.
+
+- **2026-08-15**: **The following law is the published equation with one
+  departure, and its parameters are the published five.** A wanted gap does
+  not go below zero. A lead pulling away contributes a negative closing
+  term, and the equation as written lets that take the wanted gap negative,
+  where squaring turns it back into braking: at 20 m/s with 20 m of gap and
+  a lead pulling away to 30, it commands -1.28 m/s^2 where the answer wanted
+  is +1.20. A guard on the output cannot fix that, since -1.28 is an
+  ordinary number to command and only its sign is wrong.
+  - The command is held inside `[-b, a]`, the two rates the equation already
+    names, so `IdmParams` invents no number of its own. The plan had a
+    `b_max` of 4.0 for emergency braking and a `GAP_FLOOR` guarding the
+    division; both are gone, the first because the parameter set should be
+    the published one and the second because flooring the wanted gap is what
+    the departure above already does.
+  - The consequence is that a car brakes no harder than comfortably, which
+    is right for a law that is here to be representative rather than to
+    drive well. It does mean the ego-lane work needs more spawn distance
+    than the plan budgeted, which assumed braking at 4.0.
+  - Two of the values are Treiber's own, the 1.5 s headway and the 2 m
+    standstill gap his simulator lists for a car. The acceleration and
+    comfortable braking there are picked to bring stop-and-go waves out of a
+    crowded road, which is a different thing to demonstrate, so those two
+    are this project's, and the plan overstated all of them as calibrated.
+  - Cross-checked once against highway-env's `IDMVehicle`, which implements
+    the unclamped form: `desired_gap` has no floor and `acceleration`
+    applies no limit of its own. Fed our parameters, it agrees with this
+    implementation to the last bit or two at every sampled point where the
+    wanted gap stays positive, and parts from it exactly where the two
+    adaptations say it should. At 20 m/s with 20 m of gap it wants -25.735 m
+    of room from a lead pulling away to 30 and commands -1.280 m/s^2 where
+    this commands +1.204, and -54.603 m and -9.977 m/s^2 from one reaching
+    35. What was compared is the equation rather than the tuning, so it was
+    fed ours throughout. Its own parameters differ and were not used:
+    `DISTANCE_WANTED` is 10 m against our 2, since it folds a car length
+    into the standstill gap, `COMFORT_ACC_MAX` is 3.0 against our 1.5, and
+    `COMFORT_ACC_MIN` is -5.0 where we brake at 2.0.
+
+- **2026-08-15**: **The road crosses into the FMU as fixed arrays with a
+  count, not as a structurally sized one.** The plan preferred a structural
+  parameter sizing the arrays, so a road would cross as exactly as many
+  points as it has. `fmi-export` 0.3.0 cannot: a `[T; N]` field emits a
+  fixed dimension and `#[variable(...)]` has no key naming a sizing
+  variable, while a `Vec<T>` field hardcodes value reference 0, which is the
+  derive's own `time`, and implements neither the get nor the set trait. So
+  the road is `road_x` and `road_y` at `MAX_WAYPOINTS` with
+  `road_point_count` beside them, and that count is an ordinary parameter
+  rather than a structural one, which would claim a role it does not have
+  and send an importer into configuration mode for nothing. None of this
+  reaches `continuo-fmi`, which supports both forms because StateSpace
+  requires it.
+
+- **2026-08-15**: **The FMU refuses at run time what its model description
+  cannot state.** `fmi-export` 0.3.0 has no `min` or `max` key, so the
+  description carries no bounds and a host's own checker has nothing to
+  check against. A doc comment protects whoever builds the parameters in
+  Rust and nobody who loads the packaged `.fmu` in another tool, sets the
+  target speed to zero and gets NaN in every command after. So the model
+  checks the four parameters its laws divide by, a point count no road could
+  have, and a road of no length, and reports what it was sent through FMI's
+  own status and log rather than panicking, since an unwind through the C
+  interface would take the host process with it.
+
+- **2026-08-15**: **`cargo xtask package-fmus` packages every
+  `continuo-fmu-*` crate, and `cargo-fmi` stays a binary rather than a
+  dependency.** Discovery is by crate-name prefix through `cargo metadata`,
+  so a second FMU crate is packaged by the task and by CI with no edit
+  anywhere. An xtask rather than a `build.rs`, because packaging is a real
+  entry point somebody types rather than a side effect of building, and
+  rather than a cargo alias, because aliases cannot chain commands. It
+  passes `--release`, since how a packaged FMU is optimized is settled when
+  it is packaged and a host loads the binary it finds.
+  - Each agent packages its own platform's binary, so CI's four artifacts
+    are four FMUs nobody can hand to anyone else.
+    `python/scripts/merge_fmus.py` combines any set that differs only in the
+    binaries it carries, checking first that the model descriptions agree:
+    two packagings of one commit differ in `generationDateAndTime` alone,
+    and the instantiation token is a v5 UUID of the model name, so it is the
+    same everywhere. It lives beside the viewer rather than in the xtask
+    because merging needs several platforms' output and so has no use on one
+    machine, and because the job that runs it then needs no Rust toolchain.
+  - That job arrives with a manual trigger alone, taking the CI run to
+    read artifacts from as an input. A workflow cannot be dispatched until
+    it sits on the default branch, so a `workflow_run` trigger arriving
+    with it would make the first run of it an automatic one that nothing
+    had tried. That trigger follows once a dispatch has shown the
+    cross-run download works.
+
+- **2026-08-15**: **The packaged-FMU comparison sits behind a feature and
+  runs inside the ordinary integration step.** Everything in it reads a file
+  `cargo xtask package-fmus` writes, so `packaged-fmu` gates it and a plain
+  `cargo test --workspace` needs nothing packaged. The gate is a `#![cfg]`
+  on the file rather than `required-features` in the manifest, because CI
+  runs its integration tests as `--test '*'`, and a glob names every target
+  it matches, so cargo refuses the whole step over a named target whose
+  features are off.
+  - CI packages before it tests rather than after, which is what lets the
+    comparison run as one of the integration targets. Running it afterwards
+    means a second cargo invocation naming that one target, and **asking for
+    a single target resolves fewer packages**: 142 units against 399 here,
+    the whole Zenoh tree among the missing. Their dependencies then unify
+    features differently, so the crate links a different `thiserror` and
+    every crate between the two rebuilds, which cargo reports as `info of
+    dependency thiserror changed`. That cost 12 to 31 seconds a run on every
+    agent until the steps were reordered.
+  - Worth knowing before optimizing anything else here: the same step
+    measured 79, 70, 71, 37 and 92 seconds across five runs of materially
+    identical work, so a single run says almost nothing.
+
+- **2026-08-15**: **`proc-macro-error2` is patched to its fix rather than
+  suppressed.** `fmi-export-derive` pulls it in, and it re-exports a private
+  `extern crate proc_macro`, which rustc will make an error and warns about
+  meanwhile on every build touching the FMU crate. The crate is archived, so
+  2.0.1 is the last release there will be and there is nothing to upgrade
+  to. `[patch.crates-io]` points at the two-line fix rustc's own help
+  suggests, from the pull request that was open when the repository was
+  archived, pinned by revision so what builds is the commit that was read.
+  `[future-incompat-report] frequency = "never"` was tried and dropped: it
+  is workspace wide, so it would hide every other dependency's warnings to
+  quiet one, and the hard error would still be coming.
+
+- **2026-08-16**: **Each situation in the packaged-FMU comparison is a run
+  of its own, with a reset between them.** The sweeps drive situations
+  picked to reach corners of the input space, and no car could drive from
+  one to the next, so stepping them in sequence asked the model to account
+  for a trajectory that never happened. That was sound only because these
+  laws carry nothing across a step, which is a property of the
+  implementation rather than anything the test established. `fmi3Reset`
+  takes the assumption out, and it is what the standard offers for exactly
+  this: a reset instance costs about a hundredth of a fresh one, since
+  construction extracts the archive and loads the library where a reset
+  does neither.
+  - **A reset does not restore an FMU's size.** It returns an instance to
+    Instantiated, which is before it was ever configured, and Configuration
+    Mode closes before Initialization Mode opens, so the next step is
+    already too late. The adapter therefore writes the mapping's structural
+    parameters again as part of the reset. Without that a reset StateSpace
+    would come back at the size its description declares while the bindings
+    went on addressing the size the mapping asked for.
+  - Each situation is stepped twice, because the first step after a reset
+    is Initialization Mode and `fmi3DoStep` needs an interval behind it
+    that a start time does not have. Resetting and stepping once instead
+    would have taken `fmi3DoStep` out of the sweeps altogether while
+    costing no measurable time, which is what a safety gain and a coverage
+    loss look like from the outside.

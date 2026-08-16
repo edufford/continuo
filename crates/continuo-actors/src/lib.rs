@@ -2,6 +2,10 @@
 //! path-following controller, unicycle physics, a pose logger, and a
 //! traffic spawner.
 //!
+//! [`control_laws`] holds the laws themselves, as pure functions over
+//! their arguments. A controller component is then the wiring around one:
+//! read the inbox, call the law, publish the answer.
+//!
 //! [`PathFollowController`] and [`UnicyclePhysics`] form a car: the
 //! composite `[controller, physics]`, where the controller runs at the
 //! slower period and intra-composite same-instant delivery feeds its
@@ -20,6 +24,7 @@
 //! one freeway scenario; both carry TODOs pointing at the world spec and
 //! scenario configuration that replace them.
 
+pub mod control_laws;
 mod controller;
 mod logger;
 mod path;
@@ -36,6 +41,17 @@ pub use traffic_spawner::{
     DespawnTrafficRequest, SpawnTrafficRequest, TrafficSpawner, road_pose, straight_road,
     traffic_despawn_key, traffic_spawn_key,
 };
+
+/// How many detections a scan carries at most.
+///
+/// A placeholder for demo development, picked well above anything the
+/// scenarios here produce so truncation is not a question yet. It settles
+/// once a sensor has a range and a scenario has a traffic density, and
+/// until then the arguments for any particular number are guesswork.
+///
+/// A consumer wanting the scan as a fixed-length array reads it from
+/// here, so the cap and the array are one number.
+pub const MAX_DETECTIONS: usize = 64;
 
 /// Key for an actor's pose in `world`.
 pub fn pose_key(world_name: &str, actor_name: &str) -> KeyExpr {

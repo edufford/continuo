@@ -65,7 +65,7 @@ rather than after the workspace has compiled:
 
 ```sh
 cargo fmt --all --check
-cargo clippy --workspace --all-targets -- -D warnings
+cargo clippy --workspace --all-targets --all-features -- -D warnings
 RUSTDOCFLAGS=-D warnings cargo doc --workspace --no-deps
 cargo test --workspace
 cargo run -p continuo-examples --example traffic
@@ -76,6 +76,19 @@ and a renamed item leaves a broken intra-doc link that still compiles.
 
 CI splits the test step in two, `--lib` then `--test '*'`, so neither reruns
 the other's tests. One `cargo test --workspace` covers both locally.
+
+A change reaching an FMU crate or the laws it links needs two more commands,
+in this order, because a `.fmu` carries its own compiled copy of everything it
+links and the suite above compares nothing against it:
+
+```sh
+cargo xtask package-fmus
+cargo test --workspace --all-features
+```
+
+`continuo-actors` is the one to watch, since editing a control law there
+leaves the packaged FMU a build behind and `cargo test --workspace` stays
+green. Packaging needs `cargo install cargo-fmi` once.
 
 Python changes also need `ruff check .`, `ruff format --check .` and `pytest`
 from `python/`.

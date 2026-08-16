@@ -332,6 +332,43 @@ fn two_identical_fmu_runs_publish_identically() {
 }
 
 #[test]
+fn a_reset_instance_runs_again_from_where_it_first_started() {
+    // A gravity the fixture does not declare, so a second run answering like
+    // the first says the mapping's own values were written again rather than
+    // the FMU's start values quietly standing in for them.
+    let mut mapping = empty_mapping(10);
+    mapping.initial_values = vec![("g".to_string(), json!(-20.0))];
+    mapping.outputs = vec![OutputBinding::new("h", key("ball"))];
+    let mut ball = FmuComponent::new("ball", fixture_path("BouncingBall"), mapping).expect("build");
+
+    let run = |ball: &mut FmuComponent| -> Vec<f64> {
+        (0..50)
+            .map(|tick| {
+                step(ball, SimTime::from_millis(tick * 10), Vec::new())[0].payload["h"]
+                    .as_f64()
+                    .expect("a height")
+            })
+            .collect()
+    };
+
+    let first = run(&mut ball);
+    ball.reset().expect("the FMU resets");
+    let second = run(&mut ball);
+
+    // A ball that only fell would leave less behind for a reset to undo than
+    // one that bounced, whose velocity changed sign along the way.
+    assert!(
+        first.windows(2).any(|pair| pair[1] > pair[0]),
+        "the run bounces, so what reset has to undo is more than a fall: {first:?}"
+    );
+    assert_eq!(
+        first.iter().map(|h| h.to_bits()).collect::<Vec<_>>(),
+        second.iter().map(|h| h.to_bits()).collect::<Vec<_>>(),
+        "a reset ball falls from where it was dropped rather than from where it had got to"
+    );
+}
+
+#[test]
 fn an_fmu_handles_its_own_events_when_event_mode_is_off() {
     // Instantiated with `event_mode_used = false`, so an FMU must deal with
     // its own events inside a step rather than asking to be taken into event
@@ -452,6 +489,31 @@ fn a_structural_parameter_set_at_construction_resizes_its_arrays() {
         json!([4.0, 5.0]),
         "every array resized together with the parameter that sizes them"
     );
+}
+
+#[test]
+fn a_reset_instance_is_sized_by_its_structural_parameters_again() {
+    // Reset drops an FMU back to Instantiated, which is before it was ever
+    // sized, and StateSpace sizes every array from `m`, `n` and `r`. Left
+    // there, those would return to the 3 its description declares, so `u`
+    // and `y` would each hold three elements while the binding goes on
+    // writing the two the mapping asked for. Configuration Mode closes
+    // before Initialization Mode opens, so the next step is already too
+    // late to put it right.
+    let mut mapping = state_space(&[("m", 2), ("n", 2), ("r", 2)], identity(2));
+    mapping.inputs = vec![InputBinding::new("u", key("u")).with_pointer("/u/*")];
+    let mut fmu = FmuComponent::new("ss", fixture_path("StateSpace"), mapping).expect("build");
+
+    let fed = |fmu: &mut FmuComponent, now| {
+        step(fmu, now, vec![message("u", json!({"u": [4.0, 5.0]}))])[0].payload["y"].clone()
+    };
+
+    let before = fed(&mut fmu, SimTime::ZERO);
+    fmu.reset().expect("the FMU resets");
+    let after = fed(&mut fmu, SimTime::from_millis(1000));
+
+    assert_eq!(before, json!([4.0, 5.0]), "sized before the reset");
+    assert_eq!(after, before, "and sized the same way after it");
 }
 
 #[test]

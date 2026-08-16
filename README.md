@@ -98,9 +98,11 @@ instant, and repeats.
 | [`continuo-core`](crates/continuo-core/) | `SimTime`/`SimDuration`, ids and paths, key expressions, `Vec3`/`Quat`/Euler (canonical Z-Y-X conversions), wire messages, the `Component` trait, owned hash/random/seed derivation |
 | [`continuo-transport`](crates/continuo-transport/) | `Transport` trait, deterministic `InProcTransport`, `MonitorTransport` for out-of-band message recording |
 | [`continuo-conductor`](crates/continuo-conductor/) | Registry (component tree as data), event schedule, the conductor loop, tick fingerprints, and the event log: `record`, `verify`, `playback` |
-| [`continuo-actors`](crates/continuo-actors/) | Sample components: waypoint path, path-follow controller, unicycle physics, pose logger, traffic spawner |
+| [`continuo-actors`](crates/continuo-actors/) | Sample components: waypoint path, path-follow controller, unicycle physics, pose logger, traffic spawner. Also the control laws they steer and follow by, IDM and pure pursuit, which the exported FMU compiles in rather than reimplements |
 | [`continuo-viz-bridge`](crates/continuo-viz-bridge/) | Relays a run's published messages and membership changes to a live viewer, as a transport monitor rather than a component |
 | [`continuo-fmi`](crates/continuo-fmi/) | Runs an imported FMI 3.0 Co-Simulation FMU as a component, wired to the world by a mapping rather than by code |
+| [`continuo-fmu-controller-idm`](crates/continuo-fmu-controller-idm/) | The car controller as an exported FMU: the FMI interface declaration, delegating every answer to the laws in `continuo-actors` |
+| [`xtask`](xtask/) | Workspace tasks cargo has no command for, run as `cargo xtask <task>` |
 | [`continuo-examples`](crates/continuo-examples/) | Runnable example worlds: `traffic` (base demo), `traffic_realtime`, `traffic_record`, `traffic_verify`, `traffic_resim`, `traffic_viz`, `traffic_scale` |
 | [`python/continuo_viz`](python/) | The viewer: reads a recorded log or a live Zenoh session, and draws the world top-down |
 
@@ -140,6 +142,17 @@ cargo test --workspace
 # Lint / format
 cargo clippy --workspace --all-targets
 cargo fmt --all
+
+# Package the FMUs into target/fmu. Needs `cargo install cargo-fmi` once.
+# An .fmu links the control laws statically, so it carries a snapshot of
+# them: run this again after editing anything they reach, or what it
+# computes and what the native code computes drift apart.
+cargo xtask package-fmus
+
+# Drive each packaged FMU across the FMI boundary and check it answers what
+# the laws answer, to the bit. Behind a feature, so the plain test run above
+# needs nothing packaged and skips it.
+cargo test --workspace --all-features
 
 # Run the demo: an ego car on a straight highway, traffic spawning ahead of
 # it and retiring once passed; free-run, 30 sim-seconds

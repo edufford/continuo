@@ -38,13 +38,34 @@ pub struct FmuComponent {
     outputs: Vec<BoundOutput>,
     subscriptions: Vec<KeyExpr>,
     period: SimDuration,
-    /// Variables the mapping gives a starting value. Held until the first
-    /// step, which is where Initialization Mode happens.
+    /// Structural parameters the mapping sets, written in Configuration Mode
+    /// before anything else. Kept rather than spent, since [`Self::reset`]
+    /// sends the FMU back to where both modes begin and each set is written
+    /// again on the way through.
+    structural_vars: Vec<(ResolvedVariable, Value)>,
+    /// Variables the mapping gives a starting value, written during
+    /// Initialization Mode. Kept for the same reason as the structural vars
+    /// above.
     vars_to_initialize: Vec<(ResolvedVariable, Value)>,
-    /// When this component last stepped, and `None` until it has. The FMU's
-    /// own clock: `fmi3DoStep` is told the point it steps from, so the
-    /// adapter has to remember where it left the model.
-    last_step: Option<SimTime>,
+    /// Where this instance stands in FMI's own state machine, as far as the
+    /// two states an adapter with event mode off ever sees.
+    phase: Phase,
+}
+
+/// The FMI states an instance passes through here, and the FMU's own clock.
+///
+/// The standard's machine has more states than these, but the rest are
+/// passed through inside a single call: Configuration Mode opens and closes
+/// within [`FmuComponent::new`], and Initialization Mode within the step
+/// that performs it. These two are the ones an instance rests in between
+/// calls, so they are what a step has to tell apart.
+enum Phase {
+    /// Instantiated and sized, waiting for a step to initialize it.
+    Uninitialized,
+    /// In Step Mode, having last stepped at this instant. `fmi3DoStep` is
+    /// told the point it steps from, so the adapter has to remember where it
+    /// left the model.
+    Stepping { last: SimTime },
 }
 
 impl FmuComponent {
@@ -174,35 +195,70 @@ impl FmuComponent {
             outputs,
             subscriptions,
             period,
+            structural_vars,
             vars_to_initialize,
-            last_step: None,
+            phase: Phase::Uninitialized,
         };
-
-        // Configuration Mode is the only state where a structural parameter
-        // may be written, and it comes before initialization. Entering it for
-        // nothing would be a call an FMU need not implement, so an FMU with
-        // no structural parameters in its mapping never sees it.
-        if !structural_vars.is_empty() {
-            component
-                .instance
-                .enter_configuration_mode()
-                .map_err(|source| FmuConstructionError::Configure {
-                    instance_name: component.id.to_string(),
-                    reason: format!("{source:?}"),
-                })?;
-            component.set_initial_values(&structural_vars)?;
-            component
-                .instance
-                .exit_configuration_mode()
-                .map_err(|source| FmuConstructionError::Configure {
-                    instance_name: component.id.to_string(),
-                    reason: format!("{source:?}"),
-                })?;
-        }
+        component.size_by_structural_parameters()?;
 
         // Return a component sized by its structural parameters and ready to
         // initialize, which it does on its first step.
         Ok(component)
+    }
+
+    /// Writes the mapping's structural parameters, which decide how large the
+    /// FMU's arrays are.
+    ///
+    /// Configuration Mode is the only state where one may be written, and it
+    /// comes before initialization. Entering it for nothing would be a call an
+    /// FMU need not implement, so an FMU with no structural parameters in its
+    /// mapping never sees it.
+    fn size_by_structural_parameters(&mut self) -> Result<(), FmuConstructionError> {
+        if self.structural_vars.is_empty() {
+            return Ok(());
+        }
+        self.instance.enter_configuration_mode().map_err(|source| {
+            FmuConstructionError::Configure {
+                instance_name: self.id.to_string(),
+                reason: format!("{source:?}"),
+            }
+        })?;
+        Self::set_initial_values(&mut self.instance, &self.id, &self.structural_vars)?;
+        self.instance.exit_configuration_mode().map_err(|source| {
+            FmuConstructionError::Configure {
+                instance_name: self.id.to_string(),
+                reason: format!("{source:?}"),
+            }
+        })?;
+
+        Ok(())
+    }
+
+    /// Puts the FMU back to how it was instantiated, so the next step
+    /// initializes it again.
+    ///
+    /// This is what `fmi3Reset` is for: running a model again without paying
+    /// to load it a second time. It does not initialize, because
+    /// Initialization Mode needs a start time and only a step carries one.
+    /// The next step writes the mapping's starting values on its way through,
+    /// so a second run begins where the first did.
+    ///
+    /// Its structural parameters go in here instead, because Configuration
+    /// Mode is the only state that accepts one and it closes before
+    /// Initialization Mode opens. Without that a reset StateSpace would come
+    /// back at the size its description declares while the bindings still
+    /// addressed the size the mapping asked for.
+    pub fn reset(&mut self) -> Result<(), CoreError> {
+        self.instance
+            .reset()
+            .map_err(|source| step_failure(&self.id, "", "fmi3Reset", &source))?;
+        self.size_by_structural_parameters()
+            .map_err(|error| CoreError::ComponentFailure {
+                reason: error.to_string(),
+            })?;
+        self.phase = Phase::Uninitialized;
+
+        Ok(())
     }
 
     /// Writes values the mapping wrote out straight into the FMU.
@@ -214,8 +270,13 @@ impl FmuComponent {
     /// Used twice, in the two modes the standard allows: structural
     /// parameters during configuration, and everything else during
     /// initialization.
+    ///
+    /// Takes the instance and the id rather than the whole component, so a
+    /// caller can pass a field of that same component as the values without
+    /// borrowing it twice.
     fn set_initial_values(
-        &mut self,
+        instance: &mut InstanceCS,
+        id: &ComponentId,
         initial_vals: &[(ResolvedVariable, Value)],
     ) -> Result<(), FmuConstructionError> {
         for (variable, value) in initial_vals {
@@ -228,7 +289,7 @@ impl FmuComponent {
                     dimensions: variable.dimensions.clone(),
                 });
             }
-            set_values(&mut self.instance, &self.id, variable, &elements).map_err(|source| {
+            set_values(instance, id, variable, &elements).map_err(|source| {
                 FmuConstructionError::InitialValue {
                     variable: variable.name.clone(),
                     reason: source.to_string(),
@@ -390,12 +451,12 @@ impl Component for FmuComponent {
     fn step(&mut self, ctx: &mut StepCtx) -> Result<SimTime, CoreError> {
         let now = ctx.now();
 
-        match self.last_step {
-            // Nothing to step across yet, so the first step initializes and
+        match self.phase {
+            // Nothing to step across yet, so this step initializes and
             // publishes what the FMU starts out holding. Initialization ends
             // in Step Mode, since this instance declared it does not handle
             // events.
-            None => {
+            Phase::Uninitialized => {
                 self.instance
                     .enter_initialization_mode(None, now.as_secs_f64(), None)
                     .map_err(|source| {
@@ -405,8 +466,7 @@ impl Component for FmuComponent {
                 // The mapping's values first, then the inbox, so a message
                 // arriving at instant zero wins over a start value written
                 // for the case where none does.
-                let vars_to_initialize = std::mem::take(&mut self.vars_to_initialize);
-                self.set_initial_values(&vars_to_initialize)
+                Self::set_initial_values(&mut self.instance, &self.id, &self.vars_to_initialize)
                     .map_err(|error| CoreError::ComponentFailure {
                         reason: error.to_string(),
                     })?;
@@ -415,7 +475,7 @@ impl Component for FmuComponent {
                     step_failure(&self.id, "", "exit_initialization_mode", &source)
                 })?;
             }
-            Some(last) => {
+            Phase::Stepping { last } => {
                 self.apply_inbox(ctx.inbox())?;
 
                 let mut event_handling_needed = false;
@@ -488,7 +548,7 @@ impl Component for FmuComponent {
         }
 
         self.publish_outputs(ctx)?;
-        self.last_step = Some(now);
+        self.phase = Phase::Stepping { last: now };
 
         // Return the next instant this FMU is due.
         Ok(now + self.period)

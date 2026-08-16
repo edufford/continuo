@@ -22,7 +22,7 @@ pub use hash::{HashFnv1a64, hash_bytes};
 pub use ids::{ComponentId, ComponentPath};
 pub use keyexpr::{KEY_ROOT, KeyExpr};
 pub use math::{EulerDeg, EulerRad, Quat, Vec3};
-pub use messages::{Message, Pose, TickDone, TickStart};
+pub use messages::{Detection, Message, Pose, TickDone, TickStart};
 pub use random::RandomSplitMix64;
 pub use seed::{derive_component_seed, mix_seeds};
 pub use time::{SimDuration, SimTime};
