@@ -6,30 +6,26 @@ name: Merge FMUs
 # single file per FMU that loads wherever they are rather than picking the
 # right one of four.
 #
-# Triggered by CI finishing rather than by a clock: the event names the run
-# whose artifacts to take, so there is no searching for the latest green build
-# and no asking whether this commit was merged already. One merged FMU per
-# commit that reaches main, by construction.
+# Run by hand, naming the CI run whose artifacts to take. The `workflow_run`
+# trigger that fires it on every green run on main follows separately: a
+# workflow cannot be dispatched until it sits on the default branch, so landing
+# both at once would make the first run of this an automatic one that nothing
+# had tried. A dispatch against a real CI run is what tries it.
 on:
-  workflow_run:
-    workflows: ["CI"]
-    types: [completed]
-    branches: [main]
   workflow_dispatch:
+    inputs:
+      run_id:
+        description: "The CI run whose FMU artifacts to merge"
+        required: true
 
-# Reading another run's artifacts needs `actions: read`, which a `workflow_run`
-# job does not get by default. Naming the two it uses also drops the rest.
+# Reading another run's artifacts needs `actions: read`, which the default
+# token does not carry. Naming the two it uses also drops the rest.
 permissions:
   actions: read
   contents: read
 
 jobs:
   merge_fmus:
-    # A failed CI run still uploads whatever agents got that far, and merging
-    # those would publish an FMU from a commit that did not pass.
-    if: >
-      github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -48,7 +44,7 @@ jobs:
         with:
           pattern: fmus-*
           path: artifacts
-          run-id: ${{ github.event.workflow_run.id || github.run_id }}
+          run-id: ${{ inputs.run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       # Given the download directory rather than each artifact inside it, so

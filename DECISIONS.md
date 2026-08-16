@@ -970,7 +970,13 @@ it got there, including the roads not taken.
     and the instantiation token is a v5 UUID of the model name, so it is the
     same everywhere. It lives beside the viewer rather than in the xtask
     because merging needs several platforms' output and so has no use on one
-    machine, and because a scheduled job then needs no Rust toolchain.
+    machine, and because the job that runs it then needs no Rust toolchain.
+  - That job arrives with a manual trigger alone, taking the CI run to
+    read artifacts from as an input. A workflow cannot be dispatched until
+    it sits on the default branch, so a `workflow_run` trigger arriving
+    with it would make the first run of it an automatic one that nothing
+    had tried. That trigger follows once a dispatch has shown the
+    cross-run download works.
 
 - **2026-08-15**: **The packaged-FMU comparison sits behind a feature and
   runs inside the ordinary integration step.** Everything in it reads a file
