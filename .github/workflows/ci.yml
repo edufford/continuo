@@ -70,8 +70,7 @@ jobs:
 
       # The viewer installs with plain `pip`, not `uv`. `uv.lock` is committed
       # as a convenience and nothing requires it, so installing the ordinary
-      # way is what keeps that true. `fmpy` joins it for the FMU validation
-      # below, which is a second implementation's opinion of what we package.
+      # way is what keeps that true.
       - name: "Install: Python (cached)"
         uses: actions/setup-python@v7
         with:
@@ -79,9 +78,27 @@ jobs:
           cache: pip
           cache-dependency-path: python/pyproject.toml
 
-      - name: "Install: viewer and fmpy"
+      - name: "Install: viewer"
         working-directory: python
-        run: python -m pip install -e . pytest ruff fmpy
+        run: python -m pip install -e . pytest ruff
+
+      # fmpy validates what the FMU steps below package, and is nothing to do
+      # with the viewer, so it gets an environment of its own. It brings numpy
+      # and lxml among others, and sharing one would run the viewer's tests
+      # against a tree nobody who installs the viewer has, where an accidental
+      # import of any of it passes here and fails for them.
+      - name: "Install: fmpy"
+        shell: bash
+        run: |
+          # Install fmpy in a virtual environment, named for the later steps.
+          python -m venv .venv-fmpy
+          if [ -x .venv-fmpy/bin/python ]; then
+            fmpy_python=.venv-fmpy/bin/python     # Linux and macOS
+          else
+            fmpy_python=.venv-fmpy/Scripts/python # Windows
+          fi
+          "$fmpy_python" -m pip install fmpy
+          echo "FMPY_PYTHON=$fmpy_python" >> "$GITHUB_ENV"
 
       # Lints run before anything is built for real, cheapest first, so an
       # unformatted file is reported in seconds rather than after a compile.
@@ -140,7 +157,7 @@ jobs:
             exit 1
           fi
           for fmu in "${packaged[@]}"; do
-            python -m fmpy validate "$fmu"
+            "$FMPY_PYTHON" -m fmpy validate "$fmu"
           done
 
       # `--lib` and `--test '*'` partition the suite: the first runs the unit
