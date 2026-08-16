@@ -197,12 +197,57 @@ fn set_parameter(mapping: &mut FmuMapping, name: &str, value: Value) {
     slot.1 = value;
 }
 
-/// Steps the FMU once in `situation` and returns what it commanded.
+/// Runs `situation` through the packaged FMU as a run of its own, and
+/// returns what it commanded.
+///
+/// A reset first, since these situations reach corners of the input space
+/// no car could drive between, and stepping them in sequence would ask the
+/// model to account for a trajectory that never happened.
+///
+/// Then two steps, at the same pair of instants whatever the situation,
+/// since a reset FMU starts over rather than carrying on the last one's
+/// clock. The first is Initialization Mode, which has no interval behind
+/// it to step over, so `fmi3DoStep` is what the second reaches.
+///
+/// The same inputs and the same road are behind both, so both must command
+/// the same thing. Initializing is the more elaborate path, the one that
+/// writes the parameters and builds the road, and this is where it is held
+/// to what a plain step answers.
+fn fmu_commands(fmu: &mut FmuComponent, situation: &Situation) -> (f64, f64) {
+    fmu.reset().expect("the FMU resets");
+    let period = SimDuration::from_millis(PERIOD_MS);
+    let initializing = step_once(fmu, SimTime::ZERO, None, situation);
+    let stepping = step_once(fmu, SimTime::ZERO + period, Some(period), situation);
+
+    // No `MAYBE_STALE` here. A package older than the laws puts both of
+    // these wrong together, so it cannot be why they differ from one
+    // another.
+    assert_eq!(
+        (initializing.0.to_bits(), initializing.1.to_bits()),
+        (stepping.0.to_bits(), stepping.1.to_bits()),
+        "the FMU commands {initializing:?} out of initialization and \
+         {stepping:?} out of a step, {}",
+        situation.summary(),
+    );
+
+    // Return what both paths answered.
+    stepping
+}
+
+/// Steps the FMU once at `now` in `situation` and returns what it commanded.
+///
+/// `dt` is what a conductor would pass: `None` on a first step and the
+/// interval since the last one after that. This FMU does not read it, but a
+/// context claiming otherwise is one no conductor builds.
 ///
 /// Both outputs are bound to one key, so one message comes back carrying
 /// both, which is the shape [`OutputBinding`] merges them into.
-fn fmu_commands(fmu: &mut FmuComponent, tick: i64, situation: &Situation) -> (f64, f64) {
-    let now = SimTime::from_millis(tick * PERIOD_MS);
+fn step_once(
+    fmu: &mut FmuComponent,
+    now: SimTime,
+    dt: Option<SimDuration>,
+    situation: &Situation,
+) -> (f64, f64) {
     let inbox = vec![
         message(
             "pose",
@@ -215,7 +260,7 @@ fn fmu_commands(fmu: &mut FmuComponent, tick: i64, situation: &Situation) -> (f6
         message("radar", json!({ "detections": situation.scan })),
     ];
 
-    let mut ctx = StepCtx::new(now, None, WORLD, 0, inbox);
+    let mut ctx = StepCtx::new(now, dt, WORLD, 0, inbox);
     fmu.step(&mut ctx).expect("the FMU steps");
     let outbox = ctx.take_outbox();
     assert_eq!(outbox.len(), 1, "both commands share one key");
@@ -252,6 +297,11 @@ fn native_commands(
 /// Runs every situation through the packaged FMU and through the laws,
 /// asserting the two agree to the bit, and returns what was commanded so a
 /// caller can check the comparison had something to compare.
+///
+/// One instance serves the whole sweep, since [`fmu_commands`] resets it
+/// before each situation. What that saves is the import: building an
+/// `FmuComponent` extracts the archive and loads the library it holds,
+/// which measures around a hundred times what a reset costs.
 fn commands_over(
     road: &Waypoints,
     pursuit: PurePursuitParams,
@@ -261,15 +311,11 @@ fn commands_over(
     let mapping = controller_mapping(road, pursuit, idm);
     let mut fmu = FmuComponent::new("controller", packaged(), mapping).expect("the FMU builds");
 
-    // Return each situation's commands, having agreed at every one. The
-    // instance is reused across them because the laws are a map from
-    // inputs to commands: nothing carries from one step to the next but
-    // the road, which is what makes a sweep like this meaningful at all.
+    // Return each situation's commands, having agreed at every one.
     situations
         .iter()
-        .enumerate()
-        .map(|(tick, situation)| {
-            let from_fmu = fmu_commands(&mut fmu, tick as i64, situation);
+        .map(|situation| {
+            let from_fmu = fmu_commands(&mut fmu, situation);
             let from_laws = native_commands(road, pursuit, idm, situation);
             assert_eq!(
                 from_fmu.0.to_bits(),
@@ -287,6 +333,8 @@ fn commands_over(
                 from_laws.1,
                 situation.summary(),
             );
+
+            // Return what the laws answered, which the FMU has agreed with.
             from_laws
         })
         .collect()
@@ -420,8 +468,9 @@ fn chosen_situations(road: &Waypoints) -> Vec<Situation> {
 /// of that is a world this project runs; all of it is a value a host in
 /// another tool can set.
 fn random_situations(road: &Waypoints) -> Vec<Situation> {
-    // Enough to reach corners, few enough that the suite stays under a
-    // second, which is what keeps it something to run while editing.
+    // Enough to reach corners, few enough that the suite runs in about a
+    // second, which is what keeps it something to run while editing. Each
+    // one costs a reset and two steps.
     const SITUATIONS: usize = 250;
     // The most detections one situation holds. Past a handful, another
     // detection only adds a slot for the nearest not to be in, and the
@@ -575,8 +624,8 @@ fn the_padding_past_the_count_is_never_read() {
     set_parameter(&mut mapping, "road_y", json!(road_y));
 
     let mut fmu = FmuComponent::new("controller", packaged(), mapping).expect("the FMU builds");
-    for (tick, situation) in situations.iter().enumerate() {
-        let from_fmu = fmu_commands(&mut fmu, tick as i64, situation);
+    for situation in &situations {
+        let from_fmu = fmu_commands(&mut fmu, situation);
         let from_laws = native_commands(&road, PURSUIT, IDM, situation);
         assert_eq!(
             (from_fmu.0.to_bits(), from_fmu.1.to_bits()),
@@ -705,7 +754,10 @@ fn a_tuning_parameter_changed_between_steps_changes_the_command() {
             ),
             message("tuning", json!({ "v0_speed_tgt": v0_speed_tgt })),
         ];
-        let mut ctx = StepCtx::new(now, None, WORLD, 0, inbox);
+        // These steps really do follow one another, so only the first has no
+        // interval behind it, which is what a conductor would say too.
+        let dt = (tick > 0).then(|| SimDuration::from_millis(PERIOD_MS));
+        let mut ctx = StepCtx::new(now, dt, WORLD, 0, inbox);
         fmu.step(&mut ctx).expect("the FMU steps");
         let payload: Value =
             serde_json::from_slice(&ctx.take_outbox()[0].1).expect("the payload decodes");
@@ -764,7 +816,7 @@ fn the_nearest_of_several_detections_is_the_one_followed() {
     // taking either end would be a different command rather than the same
     // one by luck.
     let scan = scan_of(&[(2, 55.0, -1.0), (19, 18.0, -6.0), (44, 31.0, 2.0)]);
-    let (accel_cmd, _) = fmu_commands(&mut fmu, 0, &situation(scan));
+    let (accel_cmd, _) = fmu_commands(&mut fmu, &situation(scan));
     assert_eq!(
         accel_cmd.to_bits(),
         idm_accel(SPEED, 18.0, 6.0, IDM).to_bits(),
@@ -782,7 +834,7 @@ fn the_nearest_of_several_detections_is_the_one_followed() {
     // same way every time it is read. Both carry the same range and
     // different rates, so which one won reaches the command.
     let tied = scan_of(&[(5, 22.0, -3.0), (40, 22.0, 7.0)]);
-    let (accel_cmd, _) = fmu_commands(&mut fmu, 1, &situation(tied));
+    let (accel_cmd, _) = fmu_commands(&mut fmu, &situation(tied));
     assert_eq!(
         accel_cmd.to_bits(),
         idm_accel(SPEED, 22.0, 3.0, IDM).to_bits(),
