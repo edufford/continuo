@@ -780,6 +780,25 @@ than churning the fingerprint twice.
   joins / leaves" would settle it. The CI smoke asserts those exact labels, so
   the two move together.
 
+- **A native component that follows, so both control laws have a caller on
+  each side of the FMI boundary.** The laws live in `continuo-actors` so that
+  the native side and the FMU call one implementation rather than two kept in
+  step by hand, and only the steering law actually does:
+  `PathFollowController` calls `pure_pursuit_yaw_rate`, while `idm_accel` and
+  `nearest_detection` are reached only from the FMU. The argument for where
+  the laws live is sound and currently half demonstrated.
+  - Which shape it takes is the open question. A second component beside
+    `PathFollowController` keeps that one purely lateral, which M6 made it
+    on purpose: two small commands travel separately so a learned
+    longitudinal FMU can run beside native steering, and one component
+    publishing both would argue against that. Teaching the existing one to
+    follow is less code and gives that back.
+  - What it buys beyond symmetry is a native baseline. Today the only thing
+    that runs IDM in a world is the FMU, so a scenario cannot be run both
+    ways to see what the boundary costs in throughput, and the packaged-FMU
+    comparison is the only place the two are checked against each other at
+    all.
+
 - **`cargo xtask verify`, running what has to pass before a commit.**
   CLAUDE.md lists five commands in CI's order, cheapest first so a formatting
   slip is reported in seconds rather than after the workspace has compiled,

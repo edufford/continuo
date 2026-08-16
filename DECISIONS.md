@@ -868,13 +868,19 @@ it got there, including the roads not taken.
 - **2026-08-15**: **The demo's FMU is the whole controller, and the laws it
   runs stay in `continuo-actors`.** The FMU crate holds the FMI interface
   declaration and nothing else, delegating every answer to `idm_accel`,
-  `nearest_detection` and `pure_pursuit_yaw_rate`, which the native
-  controller calls too. The two agree because they are one implementation,
-  not because somebody keeps them in step. A planner publishing an
+  `nearest_detection` and `pure_pursuit_yaw_rate`. A planner publishing an
   acceleration for a component to track was the alternative, and it lost on
   reading the signal flow out: its longitudinal half consumed a number and
   republished it unchanged, where IDM is the follow controller rather than a
   reference for one.
+  - Only the steering law has a native caller today.
+    `PathFollowController` calls `pure_pursuit_yaw_rate`, so those two
+    agree by being one implementation rather than by being kept in step,
+    which is the whole argument for this arrangement. Nothing native calls
+    `idm_accel` or `nearest_detection`, because M6 gives traffic its
+    longitudinal behavior through the FMU and leaves that controller purely
+    lateral. So the argument is currently half demonstrated, and PLAN.md
+    defers the component that would finish it.
   - The packaging is its own crate because FMI allows one model per shared
     library, the model identifier follows the cdylib's name, and
     `crate-type` cannot be feature-gated.
