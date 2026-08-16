@@ -175,6 +175,32 @@ messages, PR descriptions, console strings.
 - Show a diff for review before committing it. It is read in the editor, so
   there is no need to paste it into chat.
 - Never force push.
+- **A pull request description is the squash commit message.** This
+  repository squash-merges using the title and description, so what is
+  written there is what lands on main, and the branch's own commits survive
+  on the closed PR page and nowhere else. That setting is deliberate: a
+  branch worked through with an AI coding agent accumulates dozens of small
+  commits answering review comments, and main reads better as one account
+  per PR than as a transcript of how it was reached. Write it as a commit
+  body from the first push, in the same voice: what was decided and why, and
+  what it cost to find out. Someone reading only the log should come away
+  knowing what the PR settled.
+  - **Wrap it at 72 columns.** GitHub hard-wraps the description when it
+    builds that commit, breaking each line on its own rather than reflowing
+    the paragraph, so a 78-column line lands as 72 characters and an orphan
+    fragment on the line below. `2540aed` is what that looks like.
+  - Nothing in it can be a branch SHA, a checkbox, or a link into the diff,
+    since none of those mean anything against main once the branch is gone.
+    The `Co-authored-by:` trailers are GitHub's to append, so the description
+    carries none of its own.
+- **A draft carries its review notes below a marker.** The description is
+  also where a to-do list and notes to reviewers want to live, and those must
+  not reach main, so they go under a `---` and a heading reading
+  `## Draft notes (deleted before merge)`. Everything above that marker is
+  the commit message throughout, and the marker and all beneath it are
+  deleted when the PR is marked ready. Nothing enforces this yet, on purpose:
+  the convention earns a barrier once a few PRs have shown it is worth
+  keeping.
 - Comments posted through `gh` authenticate as the repository owner. Every one
   Claude writes is italicized throughout and ends with a footer line reading
   "Posted by Claude Code" behind a robot-face emoji, italic like the rest, so
