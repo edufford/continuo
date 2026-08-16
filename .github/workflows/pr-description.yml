@@ -1,0 +1,48 @@
+name: PR description
+
+# A PR description becomes the squash commit message, so a draft's review
+# notes must not still be attached when it merges. This fails a PR that is out
+# of draft while its body carries the marker they live under.
+#
+# Its own workflow rather than a job in CI, because the events that matter
+# here are `edited` and `ready_for_review`, which fire on every touch of a
+# description. Adding those to CI would run the four-agent matrix to check one
+# string, and a typo fixed in prose would cost minutes of build.
+on:
+  pull_request:
+    types: [opened, edited, reopened, ready_for_review, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  draft_notes_are_gone:
+    name: The draft notes are deleted
+    # A draft is where those notes belong, so only a PR out of draft is asked.
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - name: "Check: no draft notes survive into the description"
+        # Through the environment rather than interpolated into the script. A
+        # description is written by whoever opened the PR, and `${{ }}` pastes
+        # it in as shell source, where a body containing backticks or `$(...)`
+        # would run as commands on the runner.
+        env:
+          BODY: ${{ github.event.pull_request.body }}
+        shell: bash
+        run: |
+          # Fail if the marker heading is still in the description.
+          #
+          # Anchored to the start of a line, which is the difference between
+          # a section and a mention: a description explaining this convention
+          # names the marker in prose, and #27 is one that does.
+          if printf '%s\n' "$BODY" | grep -q '^## Draft notes'; then
+            echo "ERROR: this PR is out of draft and its description still"
+            echo "has a '## Draft notes' section."
+            echo
+            echo "That description is the squash commit message, so the"
+            echo "section would land on main. Delete the marker and"
+            echo "everything below it, then mark the PR ready again."
+            exit 1
+          fi
+          echo "No draft notes in the description."
