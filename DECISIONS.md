@@ -1010,3 +1010,28 @@ it got there, including the roads not taken.
   `[future-incompat-report] frequency = "never"` was tried and dropped: it
   is workspace wide, so it would hide every other dependency's warnings to
   quiet one, and the hard error would still be coming.
+
+- **2026-08-16**: **Each situation in the packaged-FMU comparison is a run
+  of its own, with a reset between them.** The sweeps drive situations
+  picked to reach corners of the input space, and no car could drive from
+  one to the next, so stepping them in sequence asked the model to account
+  for a trajectory that never happened. That was sound only because these
+  laws carry nothing across a step, which is a property of the
+  implementation rather than anything the test established. `fmi3Reset`
+  takes the assumption out, and it is what the standard offers for exactly
+  this: a reset instance costs about a hundredth of a fresh one, since
+  construction extracts the archive and loads the library where a reset
+  does neither.
+  - **A reset does not restore an FMU's size.** It returns an instance to
+    Instantiated, which is before it was ever configured, and Configuration
+    Mode closes before Initialization Mode opens, so the next step is
+    already too late. The adapter therefore writes the mapping's structural
+    parameters again as part of the reset. Without that a reset StateSpace
+    would come back at the size its description declares while the bindings
+    went on addressing the size the mapping asked for.
+  - Each situation is stepped twice, because the first step after a reset
+    is Initialization Mode and `fmi3DoStep` needs an interval behind it
+    that a start time does not have. Resetting and stepping once instead
+    would have taken `fmi3DoStep` out of the sweeps altogether while
+    costing no measurable time, which is what a safety gain and a coverage
+    loss look like from the outside.
