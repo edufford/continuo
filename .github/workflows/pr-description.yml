@@ -1,0 +1,72 @@
+name: PR description
+
+# This repository squash-merges using the PR title and description, so the
+# description is the commit message that lands on main. This holds a PR that
+# is out of draft to what such a message needs: no review notes still
+# attached, and no line wider than the commit will keep.
+#
+# Its own workflow rather than a job in CI, because the events that matter
+# here are `edited` and `ready_for_review`, which fire on every touch of a
+# description. Adding those to CI would run the four-agent matrix to check one
+# string, and a typo fixed in prose would cost minutes of build.
+on:
+  pull_request:
+    types: [opened, edited, reopened, ready_for_review, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  ready_to_be_a_commit_message:
+    name: The description is ready to be a commit message
+    # A draft is where those notes belong, so only a PR out of draft is asked.
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      # The description reaches the script through the environment rather than
+      # interpolated into it. One is written by whoever opened the PR, and
+      # `${{ }}` pastes it in as shell source, where a body carrying backticks
+      # or `$(...)` would run as commands on the runner.
+      #
+      # The match is anchored to the start of a line, which is the difference
+      # between a section and a mention: a description explaining this
+      # convention names the marker in prose, and `4a3f309` is one that does.
+      - name: "Check: no draft notes survive into the description"
+        env:
+          BODY: ${{ github.event.pull_request.body }}
+        shell: bash
+        run: |
+          # Check the description for a '## Draft notes' heading.
+          if printf '%s\n' "$BODY" | grep -q '^## Draft notes'; then
+            echo "ERROR: this PR is out of draft and its description still"
+            echo "has a '## Draft notes' section."
+            echo
+            echo "That description is the squash commit message, so the"
+            echo "section would land on main. Delete the marker and"
+            echo "everything below it, then mark the PR ready again."
+            exit 1
+          fi
+          echo "No draft notes in the description."
+
+      # Carriage returns are stripped first because a description arrives with
+      # CRLF endings, and counting the `\r` would report every line at its
+      # width plus one and fail a description that is exactly right.
+      - name: "Check: no line is too wide for the commit message"
+        env:
+          BODY: ${{ github.event.pull_request.body }}
+        shell: bash
+        run: |
+          # Measure every line of the description against 72 columns.
+          too_wide=$(printf '%s\n' "$BODY" | tr -d '\r' \
+            | awk 'length > 72 { print "  line " NR ": " length " columns" }')
+          if [ -n "$too_wide" ]; then
+            echo "ERROR: the description has lines past 72 columns:"
+            printf '%s\n' "$too_wide"
+            echo
+            echo "GitHub hard-wraps the description when it builds the squash"
+            echo "commit, breaking each line on its own rather than reflowing"
+            echo "the paragraph, so each of these lands as 72 characters and"
+            echo "an orphan fragment on the line below."
+            exit 1
+          fi
+          echo "Every line fits the commit message."
