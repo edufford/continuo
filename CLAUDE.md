@@ -185,6 +185,12 @@ messages, PR descriptions, console strings.
   body from the first push, in the same voice: what was decided and why, and
   what it cost to find out. Someone reading only the log should come away
   knowing what the PR settled.
+  - **Merge from the web interface.** Only it honors the repository's
+    setting. The iOS app writes the title alone and silently drops the
+    description and the trailers with it, which is the worse failure for
+    looking like an ordinary tidy subject line rather than like something
+    that went wrong. `70b3a59` is a commit whose own reasoning survives
+    nowhere but its closed PR page.
   - **Wrap it at 72 columns.** GitHub hard-wraps the description when it
     builds that commit, breaking each line on its own rather than reflowing
     the paragraph, so a 78-column line lands as 72 characters and an orphan
