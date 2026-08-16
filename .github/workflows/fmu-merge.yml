@@ -6,12 +6,19 @@ name: Merge FMUs
 # single file per FMU that loads wherever they are rather than picking the
 # right one of four.
 #
-# Run by hand, naming the CI run whose artifacts to take. The `workflow_run`
-# trigger that fires it on every green run on main follows separately: a
-# workflow cannot be dispatched until it sits on the default branch, so landing
-# both at once would make the first run of this an automatic one that nothing
-# had tried. A dispatch against a real CI run is what tries it.
+# CI finishing on main is what fires it, rather than a clock: the event names
+# the run whose artifacts to take, so nothing has to search for the latest
+# green build or ask whether this commit was merged already. One merged FMU
+# per commit that reaches main, by construction.
+#
+# A dispatch does the same thing for a run named by hand, which is how this
+# was proved before the automatic trigger was trusted with it, and is the way
+# to retry a merge that failed without pushing a commit to provoke one.
 on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
     inputs:
       run_id:
@@ -26,6 +33,12 @@ permissions:
 
 jobs:
   merge_fmus:
+    # A failed CI run still uploads whatever agents got that far, and merging
+    # those would publish an FMU from a commit that did not pass. A dispatch
+    # is exempt because somebody chose the run it names.
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -44,7 +57,7 @@ jobs:
         with:
           pattern: fmus-*
           path: artifacts
-          run-id: ${{ inputs.run_id }}
+          run-id: ${{ github.event.workflow_run.id || inputs.run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       # Given the download directory rather than each artifact inside it, so
