@@ -6,6 +6,8 @@
 //! which is what makes it a real entry point somebody types rather than a
 //! side effect hidden inside `cargo build`.
 
+mod verify;
+
 use std::io;
 use std::process::{Command, ExitCode};
 
@@ -19,14 +21,17 @@ const FMU_CRATE_PREFIX: &str = "continuo-fmu-";
 /// What to install when the packaging subcommand is missing.
 const INSTALL_CARGO_FMI: &str = "cargo install cargo-fmi";
 
+/// The tasks there are, named in one place so a new one cannot be added
+/// without the usage line learning about it.
+const USAGE: &str = "usage: cargo xtask [package-fmus|verify]";
+
 fn main() -> ExitCode {
     let task = std::env::args().nth(1);
     let result = match task.as_deref() {
         Some("package-fmus") => package_fmus(),
-        Some(unknown) => Err(format!(
-            "unknown task `{unknown}`\nusage: cargo xtask package-fmus"
-        )),
-        None => Err("no task given\nusage: cargo xtask package-fmus".to_string()),
+        Some("verify") => verify::verify(),
+        Some(unknown) => Err(format!("unknown task `{unknown}`\n{USAGE}")),
+        None => Err(format!("no task given\n{USAGE}")),
     };
 
     // Return the failure as a message rather than a panic, since these
@@ -142,5 +147,10 @@ fn package(name: &str) -> Result<(), String> {
 /// `rustup run` or a `+toolchain` argument is the one used throughout
 /// rather than being swapped halfway.
 fn cargo() -> Command {
-    Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string()))
+    Command::new(cargo_path())
+}
+
+/// The path [`cargo`] runs, for a caller building its own [`Command`].
+fn cargo_path() -> String {
+    std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string())
 }

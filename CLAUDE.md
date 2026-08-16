@@ -60,38 +60,27 @@ components end up on separate hosts.
 
 ## Verify before every commit
 
-In CI's order, cheapest first, so a formatting slip is reported in seconds
-rather than after the workspace has compiled:
-
 ```sh
-cargo fmt --all --check
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-RUSTDOCFLAGS=-D warnings cargo doc --workspace --no-deps
-cargo test --workspace
-cargo run -p continuo-examples --example traffic
+cargo xtask verify
 ```
 
-The doc build is not optional. The crates cross-reference each other heavily,
-and a renamed item leaves a broken intra-doc link that still compiles.
+It runs CI's own commands in CI's order, cheapest first, so a formatting slip
+is reported in seconds rather than after the workspace has compiled, and it
+stops at the first failure. `xtask/src/verify.rs` says what each one is for,
+and a test in there fails when a command it runs stops being one of CI's, so
+this file never becomes a second answer to what has to pass.
 
-CI splits the test step in two, `--lib` then `--test '*'`, so neither reruns
-the other's tests. One `cargo test --workspace` covers both locally.
+Two things it does that are easy to forget by hand. It packages the FMUs
+before the tests, because a `.fmu` carries its own compiled copy of the laws
+and the comparison against it reads whatever `cargo xtask package-fmus` last
+wrote, so a control law edited in `continuo-actors` and not packaged again
+leaves the two disagreeing. That needs `cargo install cargo-fmi` once. And it
+runs the viewer's `ruff` and `pytest` when the viewer is installed, saying
+they were skipped when it is not, so a Rust-only change is not blocked on a
+Python environment nobody set up.
 
-A change reaching an FMU crate or the laws it links needs two more commands,
-in this order, because a `.fmu` carries its own compiled copy of everything it
-links and the suite above compares nothing against it:
-
-```sh
-cargo xtask package-fmus
-cargo test --workspace --all-features
-```
-
-`continuo-actors` is the one to watch, since editing a control law there
-leaves the packaged FMU a build behind and `cargo test --workspace` stays
-green. Packaging needs `cargo install cargo-fmi` once.
-
-Python changes also need `ruff check .`, `ruff format --check .` and `pytest`
-from `python/`.
+It leaves out CI's separate debug build, which would rebuild the binary
+running it, and it smokes the demo in debug where CI uses release.
 
 ## Turn a mistake into a check
 

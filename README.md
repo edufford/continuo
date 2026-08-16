@@ -133,6 +133,10 @@ libclang, the workspace's only native-code prerequisite. See
 [Installing libclang](#installing-libclang) below.
 
 ```sh
+# Everything CI checks, in CI's order, stopping at the first failure. The
+# viewer's checks are skipped, and say so, unless it is installed.
+cargo xtask verify
+
 # Build everything
 cargo build --workspace
 
