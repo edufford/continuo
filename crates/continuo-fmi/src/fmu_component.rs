@@ -47,10 +47,25 @@ pub struct FmuComponent {
     /// Initialization Mode. Kept for the same reason as the structural vars
     /// above.
     vars_to_initialize: Vec<(ResolvedVariable, Value)>,
-    /// When this component last stepped, and `None` until it has. The FMU's
-    /// own clock: `fmi3DoStep` is told the point it steps from, so the
-    /// adapter has to remember where it left the model.
-    last_step: Option<SimTime>,
+    /// Where this instance stands in FMI's own state machine, as far as the
+    /// two states an adapter with event mode off ever sees.
+    phase: Phase,
+}
+
+/// The FMI states an instance passes through here, and the FMU's own clock.
+///
+/// The standard's machine has more states than these, but the rest are
+/// passed through inside a single call: Configuration Mode opens and closes
+/// within [`FmuComponent::new`], and Initialization Mode within the step
+/// that performs it. These two are the ones an instance rests in between
+/// calls, so they are what a step has to tell apart.
+enum Phase {
+    /// Instantiated and sized, waiting for a step to initialize it.
+    Uninitialized,
+    /// In Step Mode, having last stepped at this instant. `fmi3DoStep` is
+    /// told the point it steps from, so the adapter has to remember where it
+    /// left the model.
+    Stepping { last: SimTime },
 }
 
 impl FmuComponent {
@@ -182,7 +197,7 @@ impl FmuComponent {
             period,
             structural_vars,
             vars_to_initialize,
-            last_step: None,
+            phase: Phase::Uninitialized,
         };
         component.size_by_structural_parameters()?;
 
@@ -241,7 +256,7 @@ impl FmuComponent {
             .map_err(|error| CoreError::ComponentFailure {
                 reason: error.to_string(),
             })?;
-        self.last_step = None;
+        self.phase = Phase::Uninitialized;
 
         Ok(())
     }
@@ -436,12 +451,12 @@ impl Component for FmuComponent {
     fn step(&mut self, ctx: &mut StepCtx) -> Result<SimTime, CoreError> {
         let now = ctx.now();
 
-        match self.last_step {
-            // Nothing to step across yet, so the first step initializes and
+        match self.phase {
+            // Nothing to step across yet, so this step initializes and
             // publishes what the FMU starts out holding. Initialization ends
             // in Step Mode, since this instance declared it does not handle
             // events.
-            None => {
+            Phase::Uninitialized => {
                 self.instance
                     .enter_initialization_mode(None, now.as_secs_f64(), None)
                     .map_err(|source| {
@@ -460,7 +475,7 @@ impl Component for FmuComponent {
                     step_failure(&self.id, "", "exit_initialization_mode", &source)
                 })?;
             }
-            Some(last) => {
+            Phase::Stepping { last } => {
                 self.apply_inbox(ctx.inbox())?;
 
                 let mut event_handling_needed = false;
@@ -533,7 +548,7 @@ impl Component for FmuComponent {
         }
 
         self.publish_outputs(ctx)?;
-        self.last_step = Some(now);
+        self.phase = Phase::Stepping { last: now };
 
         // Return the next instant this FMU is due.
         Ok(now + self.period)
