@@ -1,7 +1,8 @@
 name: PR description
 
-# A PR description becomes the squash commit message, so a draft's review
-# notes must not still be attached when it merges. This fails a PR that is out
+# This repository squash-merges using the PR title and description, so the
+# description is the commit message that lands on main, and a draft's review
+# notes must not still be attached when it does. This fails a PR that is out
 # of draft while its body carries the marker they live under.
 #
 # Its own workflow rather than a job in CI, because the events that matter
@@ -16,26 +17,26 @@ permissions:
   contents: read
 
 jobs:
-  draft_notes_are_gone:
-    name: The draft notes are deleted
+  ready_to_be_a_commit_message:
+    name: The description is ready to be a commit message
     # A draft is where those notes belong, so only a PR out of draft is asked.
     if: github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     steps:
+      # The description reaches the script through the environment rather than
+      # interpolated into it. One is written by whoever opened the PR, and
+      # `${{ }}` pastes it in as shell source, where a body carrying backticks
+      # or `$(...)` would run as commands on the runner.
+      #
+      # The match is anchored to the start of a line, which is the difference
+      # between a section and a mention: a description explaining this
+      # convention names the marker in prose, and `4a3f309` is one that does.
       - name: "Check: no draft notes survive into the description"
-        # Through the environment rather than interpolated into the script. A
-        # description is written by whoever opened the PR, and `${{ }}` pastes
-        # it in as shell source, where a body containing backticks or `$(...)`
-        # would run as commands on the runner.
         env:
           BODY: ${{ github.event.pull_request.body }}
         shell: bash
         run: |
-          # Fail if the marker heading is still in the description.
-          #
-          # Anchored to the start of a line, which is the difference between
-          # a section and a mention: a description explaining this convention
-          # names the marker in prose, and #27 is one that does.
+          # Check the description for a '## Draft notes' heading.
           if printf '%s\n' "$BODY" | grep -q '^## Draft notes'; then
             echo "ERROR: this PR is out of draft and its description still"
             echo "has a '## Draft notes' section."
@@ -46,3 +47,27 @@ jobs:
             exit 1
           fi
           echo "No draft notes in the description."
+
+      # Carriage returns are stripped first because a description arrives with
+      # CRLF endings, and counting the `\r` would report every line at its
+      # width plus one and fail a description that is exactly right.
+      - name: "Check: no line is too wide for the commit message"
+        env:
+          BODY: ${{ github.event.pull_request.body }}
+        shell: bash
+        run: |
+          # Measure every line of the description against 72 columns.
+          too_wide=$(printf '%s\n' "$BODY" | tr -d '\r' \
+            | awk 'length > 72 { print "  line " NR ": " length " columns" }')
+          if [ -n "$too_wide" ]; then
+            echo "ERROR: the description has lines past 72 columns:"
+            printf '%s\n' "$too_wide"
+            echo
+            echo "GitHub hard-wraps the description when it builds the squash"
+            echo "commit, breaking each line on its own rather than reflowing"
+            echo "the paragraph, so each of these lands as 72 characters and"
+            echo "an orphan fragment on the line below. 2540aed is one that"
+            echo "went in before this check existed, if you want to see it."
+            exit 1
+          fi
+          echo "Every line fits the commit message."

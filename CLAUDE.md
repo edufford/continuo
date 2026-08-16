@@ -199,15 +199,18 @@ messages, PR descriptions, console strings.
     since none of those mean anything against main once the branch is gone.
     The `Co-authored-by:` trailers are GitHub's to append, so the description
     carries none of its own.
-- **A draft carries its review notes below a marker.** The description is
-  also where a to-do list and notes to reviewers want to live, and those must
-  not reach main, so they go under a `---` and a heading reading
-  `## Draft notes (deleted before merge)`. Everything above that marker is
-  the commit message throughout, and the marker and all beneath it are
-  deleted when the PR is marked ready. `pr-description.yml` fails a PR that
-  is out of draft while its body still carries the marker. It matches only
-  at the start of a line, so a description explaining this convention can
-  still name the marker in prose, as this one does.
+- **A pull request opens as a draft, carrying its review notes below a
+  marker.** The iterations happen there, and marking it ready is a separate
+  step taken once they are done rather than part of opening it. The
+  description is also where a to-do list and notes to reviewers want to
+  live, and those must not reach main, so they go under a `---` and a
+  heading reading `## Draft notes (deleted before merge)`. Everything above
+  that marker is the commit message throughout, and the marker and all
+  beneath it are deleted when the PR is marked ready.
+- `pr-description.yml` holds a PR that is out of draft to both halves of
+  that: no `## Draft notes` heading, and no line past 72 columns. The first
+  is anchored to the start of a line, so a description explaining this
+  convention can still name the marker in prose, as this one does.
 - Comments posted through `gh` authenticate as the repository owner. Every one
   Claude writes is italicized throughout and ends with a footer line reading
   "Posted by Claude Code" behind a robot-face emoji, italic like the rest, so
