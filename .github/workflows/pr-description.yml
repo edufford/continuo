@@ -1,9 +1,9 @@
 name: PR description
 
 # This repository squash-merges using the PR title and description, so the
-# description is the commit message that lands on main, and a draft's review
-# notes must not still be attached when it does. This fails a PR that is out
-# of draft while its body carries the marker they live under.
+# description is the commit message that lands on main. This holds a PR that
+# is out of draft to what such a message needs: no review notes still
+# attached, and no line wider than the commit will keep.
 #
 # Its own workflow rather than a job in CI, because the events that matter
 # here are `edited` and `ready_for_review`, which fire on every touch of a
@@ -66,8 +66,7 @@ jobs:
             echo "GitHub hard-wraps the description when it builds the squash"
             echo "commit, breaking each line on its own rather than reflowing"
             echo "the paragraph, so each of these lands as 72 characters and"
-            echo "an orphan fragment on the line below. 2540aed is one that"
-            echo "went in before this check existed, if you want to see it."
+            echo "an orphan fragment on the line below."
             exit 1
           fi
           echo "Every line fits the commit message."
