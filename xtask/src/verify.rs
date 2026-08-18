@@ -50,14 +50,27 @@ enum Dir {
 
 /// What has to answer before the viewer's own tests are worth running.
 ///
-/// Asking whether `pytest` is on the path is not the question, and neither is
-/// asking only whether the viewer imports. `pytest` is on plenty of machines
-/// that have never installed this viewer, and a half-finished install imports
-/// while its drawing and image libraries are missing, which surfaces as
-/// failing tests rather than as the setup nobody did. So it names what the
-/// suite reaches for, and goes through `python -m` so the interpreter that
-/// answers is the one about to run.
-const VIEWER_IS_INSTALLED: &[&str] = &["python", "-c", "import continuo_viz, pygame, PIL, pytest"];
+/// Two questions, because a machine can fail either one alone. Whether the
+/// viewer is installed has to be asked of the metadata rather than by
+/// importing it: these run from `python/`, where `continuo_viz` is a
+/// subdirectory, so it imports from the working directory whether or not
+/// anything installed it, and an interpreter belonging to an unrelated
+/// project said yes to that here. `importlib.metadata` reads what an install
+/// wrote, and an editable install registers itself the same way.
+///
+/// Whether the libraries are there is the other, since an install made with
+/// `--no-deps`, or one whose dependencies were removed later, satisfies the
+/// first and still cannot draw. `pytest` is in neither, being a development
+/// dependency the viewer does not declare.
+///
+/// Asked of `python` for the same reason the step runs through `python -m`:
+/// the interpreter on the path may be some other project's, and it is the one
+/// about to run that has to answer.
+const VIEWER_AND_PYTEST_IS_INSTALLED: &[&str] = &[
+    "python",
+    "-c",
+    "import pygame, PIL, pytest, importlib.metadata as m; m.distribution('continuo-viz')",
+];
 
 /// What has to answer before the viewer's linting is worth running.
 ///
@@ -124,7 +137,7 @@ const STEPS: &[Step] = &[
         argv: &["python", "-m", "pytest", "-v"],
         dir: Dir::Python,
         env: &[],
-        skip_unless: Some(VIEWER_IS_INSTALLED),
+        skip_unless: Some(VIEWER_AND_PYTEST_IS_INSTALLED),
     },
     Step {
         argv: &[
