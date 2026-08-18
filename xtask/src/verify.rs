@@ -23,6 +23,7 @@
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Instant;
 
 /// One command to run.
 struct Step {
@@ -158,6 +159,7 @@ const STEPS: &[Step] = &[
 pub fn run() -> Result<(), String> {
     let root = workspace_root();
     let mut skipped = false;
+    let mut took_sec = Vec::new();
 
     for step in STEPS {
         let shown = shown(step);
@@ -167,9 +169,12 @@ pub fn run() -> Result<(), String> {
             continue;
         }
         println!("--- {shown}");
+        let started = Instant::now();
         run_step(step, &root)?;
+        took_sec.push((shown, started.elapsed().as_secs_f64()));
     }
 
+    report_timing(&took_sec);
     report_skips(skipped);
 
     // Return once every step that could run has passed, which is as much as
@@ -230,6 +235,23 @@ fn shown(step: &Step) -> String {
         Dir::Root => command,
         Dir::Python => format!("{command}   (in python/)"),
     }
+}
+
+/// What each step cost, so the slow one is visible rather than guessed at.
+///
+/// A check earns its place here by being quick, and the only way that stays
+/// true is if the cost of adding to it is on the screen every run.
+fn report_timing(took_sec: &[(String, f64)]) {
+    let total: f64 = took_sec.iter().map(|(_, seconds)| seconds).sum();
+    println!();
+    for (shown, seconds) in took_sec {
+        println!("{seconds:>7.1} s   {shown}");
+    }
+
+    // As wide as the column it closes, seven for the number and two for the
+    // unit, so the total reads as a sum of what is above it.
+    println!("{:-<9}", "");
+    println!("{total:>7.1} s   in total");
 }
 
 /// Says what was not run, so a pass never reads as more than it was.
