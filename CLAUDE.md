@@ -108,10 +108,8 @@ way. Validation is skipped, and says so, when fmpy is not installed.
 
 `continuo-actors` is the one to watch, since editing a control law there
 leaves the packaged FMU a build behind and `cargo test --workspace` stays
-green. Packaging needs `cargo install cargo-fmi` once, and fmpy comes from
-`python -m pip install fmpy`, which is worth putting somewhere other than the
-viewer's environment so its tests keep running against what a user of the
-viewer has.
+green. Packaging needs `cargo install cargo-fmi` once, and validating needs
+`python -m pip install fmpy`.
 
 ## Turn a mistake into a check
 
