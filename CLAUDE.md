@@ -91,22 +91,27 @@ and a renamed item leaves a broken intra-doc link that still compiles.
 CI splits the test step in two, `--lib` then `--test '*'`, so neither reruns
 the other's tests. One `cargo test --workspace` covers both locally.
 
-A change reaching an FMU crate or the laws it links needs two more commands,
-in this order, because a `.fmu` carries its own compiled copy of everything it
-links and the suite above compares nothing against it. `verify` leaves both
+A change reaching an FMU crate or the laws it links needs more than that,
+because a `.fmu` carries its own compiled copy of everything it links and the
+checks above compare nothing against it:
+
+```sh
+cargo xtask verify-fmus
+```
+
+It packages every FMU, validates each with fmpy, and runs the comparison
+against the packaged copy under `--all-features`. `verify` leaves all three
 out on purpose: packaging costs a release build of the FMU crate whenever a
 law changed, and `--all-features` resolves features differently from a plain
 `cargo test`, so alternating between them rebuilds much of the graph each
-way.
-
-```sh
-cargo xtask package-fmus
-cargo test --workspace --all-features
-```
+way. Validation is skipped, and says so, when fmpy is not installed.
 
 `continuo-actors` is the one to watch, since editing a control law there
 leaves the packaged FMU a build behind and `cargo test --workspace` stays
-green. Packaging needs `cargo install cargo-fmi` once.
+green. Packaging needs `cargo install cargo-fmi` once, and fmpy comes from
+`python -m pip install fmpy`, which is worth putting somewhere other than the
+viewer's environment so its tests keep running against what a user of the
+viewer has.
 
 ## Turn a mistake into a check
 

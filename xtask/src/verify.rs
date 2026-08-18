@@ -182,20 +182,30 @@ pub fn run() -> Result<(), String> {
     Ok(())
 }
 
-/// Runs one step, failing with what it was and what it returned.
+/// Runs one step in the directory it belongs to.
 fn run_step(step: &Step, root: &Path) -> Result<(), String> {
-    let program = if step.argv[0] == "cargo" {
-        crate::cargo_path()
-    } else {
-        step.argv[0].to_string()
-    };
-    let mut command = Command::new(&program);
-    command.args(&step.argv[1..]);
-    command.current_dir(match step.dir {
+    let dir = match step.dir {
         Dir::Root => root.to_path_buf(),
         Dir::Python => root.join("python"),
-    });
-    for (name, value) in step.env {
+    };
+
+    run_command(step.argv, &dir, step.env)
+}
+
+/// Runs one command, failing with what it was and what it returned.
+///
+/// A first word of `cargo` is the cargo that invoked this, so a toolchain
+/// chosen by `+toolchain` holds for everything a task runs.
+pub(crate) fn run_command(argv: &[&str], dir: &Path, env: &[(&str, &str)]) -> Result<(), String> {
+    let program = if argv[0] == "cargo" {
+        crate::cargo_path()
+    } else {
+        argv[0].to_string()
+    };
+    let mut command = Command::new(&program);
+    command.args(&argv[1..]);
+    command.current_dir(dir);
+    for (name, value) in env {
         command.env(name, value);
     }
 
@@ -204,7 +214,7 @@ fn run_step(step: &Step, root: &Path) -> Result<(), String> {
         _ => format!("cannot run {program}: {error}"),
     })?;
     if !status.success() {
-        return Err(format!("`{}` failed ({status})", shown(step)));
+        return Err(format!("`{}` failed ({status})", argv.join(" ")));
     }
 
     Ok(())
@@ -215,7 +225,7 @@ fn run_step(step: &Step, root: &Path) -> Result<(), String> {
 /// Run from the viewer's directory and with its output thrown away, since
 /// what is wanted is the exit code and a machine missing the tool would
 /// otherwise print an error nobody asked for.
-fn answers(probe: &[&str], root: &Path) -> bool {
+pub(crate) fn answers(probe: &[&str], root: &Path) -> bool {
     Command::new(probe[0])
         .args(&probe[1..])
         .current_dir(root.join("python"))
@@ -271,7 +281,7 @@ fn report_skips(skipped: bool) {
 /// Taken from where this crate was compiled rather than from the working
 /// directory, so `cargo xtask verify` means the same thing from anywhere in
 /// the tree.
-fn workspace_root() -> PathBuf {
+pub(crate) fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("the xtask crate sits one level under the workspace root")

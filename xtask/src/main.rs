@@ -8,26 +8,22 @@
 
 mod package_fmus;
 mod verify;
+mod verify_fmus;
 
 use std::process::{Command, ExitCode};
 
 /// The tasks there are, named in one place so a new one cannot be added
 /// without the usage line learning about it.
-const USAGE: &str = "usage: cargo xtask [package-fmus|verify]";
+const USAGE: &str = "usage: cargo xtask [package-fmus|verify|verify-fmus]";
 
 fn main() -> ExitCode {
     let task = std::env::args().nth(1);
     let result = match task.as_deref() {
         Some("package-fmus") => package_fmus::run(),
         Some("verify") => verify::run(),
-        Some(unknown) => Err(format!(
-            "unknown task `{unknown}`
-{USAGE}"
-        )),
-        None => Err(format!(
-            "no task given
-{USAGE}"
-        )),
+        Some("verify-fmus") => verify_fmus::run(),
+        Some(unknown) => Err(format!("unknown task `{unknown}`\n{USAGE}")),
+        None => Err(format!("no task given\n{USAGE}")),
     };
 
     // Return the failure as a message rather than a panic, since these

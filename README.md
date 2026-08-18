@@ -148,16 +148,14 @@ cargo test --workspace
 cargo clippy --workspace --all-targets
 cargo fmt --all
 
-# Package the FMUs into target/fmu. Needs `cargo install cargo-fmi` once.
-# An .fmu links the control laws statically, so it carries a snapshot of
-# them: run this again after editing anything they reach, or what it
-# computes and what the native code computes drift apart.
-cargo xtask package-fmus
-
-# Drive each packaged FMU across the FMI boundary and check it answers what
-# the laws answer, to the bit. Behind a feature, so the plain test run above
-# needs nothing packaged and skips it.
-cargo test --workspace --all-features
+# Package every FMU into target/fmu, validate each with fmpy, and drive the
+# packaged copy across the FMI boundary to check it answers what the laws
+# answer, to the bit. An .fmu links the control laws statically, so it
+# carries a snapshot of them: run this after editing anything they reach, or
+# what it computes and what the native code computes drift apart. Needs
+# `cargo install cargo-fmi` once, and `cargo xtask package-fmus` is the
+# packaging on its own.
+cargo xtask verify-fmus
 
 # Run the demo: an ego car on a straight highway, traffic spawning ahead of
 # it and retiring once passed; free-run, 30 sim-seconds
