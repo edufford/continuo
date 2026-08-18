@@ -99,12 +99,13 @@ checks above compare nothing against it:
 cargo xtask verify-fmus
 ```
 
-It packages every FMU, validates each with fmpy, and runs the comparison
-against the packaged copy under `--all-features`. `verify` leaves all three
+It packages every FMU, validates each with fmpy, and runs the tests that
+check the packaged copy against the laws it was built from, asking for the
+feature each FMU crate holds those tests behind. `verify` leaves all of it
 out on purpose: packaging costs a release build of the FMU crate whenever a
-law changed, and `--all-features` resolves features differently from a plain
-`cargo test`, so alternating between them rebuilds much of the graph each
-way. Validation is skipped, and says so, when fmpy is not installed.
+law changed, and the tests say nothing without it, so the pair belongs with a
+change that reaches a law rather than in an editing loop. Validation is
+skipped, and says so, when fmpy is not installed.
 
 `continuo-actors` is the one to watch, since editing a control law there
 leaves the packaged FMU a build behind and `cargo test --workspace` stays

@@ -41,7 +41,7 @@ pub fn run() -> Result<(), String> {
 /// for the reader and the log: cargo's order is its own business, and a
 /// packaging run that names its crates in a different order each time
 /// invites the question of what else moved.
-fn fmu_crates() -> Result<Vec<String>, String> {
+pub(crate) fn fmu_crates() -> Result<Vec<String>, String> {
     let output = crate::cargo()
         .args(["metadata", "--no-deps", "--format-version", "1"])
         .output()

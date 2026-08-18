@@ -7,6 +7,7 @@
 //! side effect hidden inside `cargo build`.
 
 mod package_fmus;
+mod task;
 mod verify;
 mod verify_fmus;
 

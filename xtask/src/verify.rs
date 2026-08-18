@@ -11,19 +11,16 @@
 //! before a push, so what matters most about it is that it is fast enough to
 //! sit in an editing loop.
 //!
-//! That is why it packages no FMUs and asks for no features. Packaging costs
-//! a release build of the FMU crate whenever a law changed, 13 seconds
-//! against 0.7 when nothing did, and `--all-features` resolves features
-//! differently from a plain `cargo test`, so alternating between this and one
-//! typed by hand rebuilds much of the graph each way, 4 seconds a turn. The
-//! packaged-FMU comparison sits behind that feature and so does not run here.
-//! CI runs it every time, and CLAUDE.md says to package by hand after editing
-//! a law.
+//! That is why it packages no FMUs and asks for no features, which
+//! `cargo xtask verify-fmus` is for. Packaging costs a release build of the
+//! FMU crate whenever a law changed, 13 seconds against 0.7 when nothing did,
+//! and the comparison it feeds cannot say anything without it. Asking for the
+//! features that comparison sits behind would then build the Zenoh and viewer
+//! trees this has no use for.
 
-use std::io;
-use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::time::Instant;
+use std::path::Path;
+
+use crate::task::{Progress, answers, run_command, workspace_root};
 
 /// One command to run.
 struct Step {
@@ -158,24 +155,23 @@ const STEPS: &[Step] = &[
 /// Runs every step, stopping at the first that fails.
 pub fn run() -> Result<(), String> {
     let root = workspace_root();
-    let mut skipped = false;
-    let mut took_sec = Vec::new();
+    let mut progress = Progress::new();
 
     for step in STEPS {
         let shown = shown(step);
-        if step.skip_unless.is_some_and(|probe| !answers(probe, &root)) {
-            println!("--- skipping: {shown}");
-            skipped = true;
+        if step
+            .skip_unless
+            .is_some_and(|probe| !answers(probe, &root.join("python")))
+        {
+            progress.skip(&shown);
             continue;
         }
-        println!("--- {shown}");
-        let started = Instant::now();
-        run_step(step, &root)?;
-        took_sec.push((shown, started.elapsed().as_secs_f64()));
+        progress.run(&shown, || run_step(step, &root))?;
     }
 
-    report_timing(&took_sec);
-    report_skips(skipped);
+    progress.report(&format!(
+        "The viewer's checks were skipped, which `{INSTALL_THE_VIEWER}` turns          on. CI runs them either way."
+    ));
 
     // Return once every step that could run has passed, which is as much as
     // this claims: CI is what says the commit is good.
@@ -192,49 +188,6 @@ fn run_step(step: &Step, root: &Path) -> Result<(), String> {
     run_command(step.argv, &dir, step.env)
 }
 
-/// Runs one command, failing with what it was and what it returned.
-///
-/// A first word of `cargo` is the cargo that invoked this, so a toolchain
-/// chosen by `+toolchain` holds for everything a task runs.
-pub(crate) fn run_command(argv: &[&str], dir: &Path, env: &[(&str, &str)]) -> Result<(), String> {
-    let program = if argv[0] == "cargo" {
-        crate::cargo_path()
-    } else {
-        argv[0].to_string()
-    };
-    let mut command = Command::new(&program);
-    command.args(&argv[1..]);
-    command.current_dir(dir);
-    for (name, value) in env {
-        command.env(name, value);
-    }
-
-    let status = command.status().map_err(|error| match error.kind() {
-        io::ErrorKind::NotFound => format!("cannot find {program} on the path"),
-        _ => format!("cannot run {program}: {error}"),
-    })?;
-    if !status.success() {
-        return Err(format!("`{}` failed ({status})", argv.join(" ")));
-    }
-
-    Ok(())
-}
-
-/// Whether a probe answers, which is what decides that a step can run.
-///
-/// Run from the viewer's directory and with its output thrown away, since
-/// what is wanted is the exit code and a machine missing the tool would
-/// otherwise print an error nobody asked for.
-pub(crate) fn answers(probe: &[&str], root: &Path) -> bool {
-    Command::new(probe[0])
-        .args(&probe[1..])
-        .current_dir(root.join("python"))
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .is_ok_and(|status| status.success())
-}
-
 /// The step as a person would have typed it.
 fn shown(step: &Step) -> String {
     let command = step.argv.join(" ");
@@ -245,45 +198,4 @@ fn shown(step: &Step) -> String {
         Dir::Root => command,
         Dir::Python => format!("{command}   (in python/)"),
     }
-}
-
-/// What each step cost, so the slow one is visible rather than guessed at.
-///
-/// A check earns its place here by being quick, and the only way that stays
-/// true is if the cost of adding to it is on the screen every run.
-fn report_timing(took_sec: &[(String, f64)]) {
-    let total: f64 = took_sec.iter().map(|(_, seconds)| seconds).sum();
-    println!();
-    for (shown, seconds) in took_sec {
-        println!("{seconds:>7.1} s   {shown}");
-    }
-
-    // As wide as the column it closes, seven for the number and two for the
-    // unit, so the total reads as a sum of what is above it.
-    println!("{:-<9}", "");
-    println!("{total:>7.1} s   in total");
-}
-
-/// Says what was not run, so a pass never reads as more than it was.
-fn report_skips(skipped: bool) {
-    if !skipped {
-        println!("\nEverything passed.");
-        return;
-    }
-    println!(
-        "\nEverything that ran passed. The viewer's checks were skipped, \
-         which `{INSTALL_THE_VIEWER}` turns on. CI runs them either way."
-    );
-}
-
-/// The root of this checkout.
-///
-/// Taken from where this crate was compiled rather than from the working
-/// directory, so `cargo xtask verify` means the same thing from anywhere in
-/// the tree.
-pub(crate) fn workspace_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("the xtask crate sits one level under the workspace root")
-        .to_path_buf()
 }
