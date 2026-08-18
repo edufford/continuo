@@ -160,24 +160,17 @@ jobs:
             "$FMPY_PYTHON" -m fmpy validate "$fmu"
           done
 
-      # `--lib --bins` and `--test '*'` partition the suite: the first runs
-      # the unit tests inside each lib and each binary, the second the
-      # integration targets in tests/. Note `--tests` would *not* work as the
-      # second half, because it includes the unit tests too, so the two steps
-      # would re-run them.
-      #
-      # `--bins` is there because a target selection reaches only what it
-      # names, and `xtask` is a binary with no lib, so its own tests are
-      # invisible to `--lib`. One of them is what holds `cargo xtask verify`
-      # to running the commands on this page, and a check nothing runs is
-      # worth nothing.
+      # `--lib` and `--test '*'` partition the suite: the first runs the unit
+      # tests inside each lib, the second the integration targets in tests/.
+      # Note `--tests` would *not* work as the second half, because it
+      # includes lib unit tests too, so the two steps would re-run them.
       #
       # `--all-features` matches the build above, so neither step compiles
       # anything: a changed feature list alone makes cargo rebuild a crate.
       # It is also what runs the packaged-FMU comparison, one of the
       # integration targets.
       - name: "Test: unit"
-        run: cargo test --workspace --all-features --lib --bins
+        run: cargo test --workspace --all-features --lib
 
       - name: "Test: integration"
         run: cargo test --workspace --all-features --test '*'

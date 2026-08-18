@@ -133,8 +133,9 @@ libclang, the workspace's only native-code prerequisite. See
 [Installing libclang](#installing-libclang) below.
 
 ```sh
-# Everything CI checks, in CI's order, stopping at the first failure. The
-# viewer's checks are skipped, and say so, unless it is installed.
+# A quick pre-commit check: format, lint, docs, tests and the demo, stopping
+# at the first failure. The viewer's checks are skipped, and say so, unless
+# it is installed. CI is what checks a commit thoroughly.
 cargo xtask verify
 
 # Build everything
