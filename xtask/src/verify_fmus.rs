@@ -36,7 +36,7 @@ pub fn run() -> Result<(), String> {
 
     progress.run("cargo xtask package-fmus", crate::package_fmus::run)?;
     validate(&packaged_fmus(&root)?, &root, &mut progress)?;
-    let features = test_features()?;
+    let features = fmu_test_features()?;
     progress.run(
         &format!("cargo test --workspace --features {features}"),
         || {
@@ -64,7 +64,7 @@ pub fn run() -> Result<(), String> {
 /// covered here by the edit that adds it and no other. A crate that carries
 /// no such feature fails the run naming itself, which is the report worth
 /// having: the convention is what makes discovery by prefix work at all.
-fn test_features() -> Result<String, String> {
+fn fmu_test_features() -> Result<String, String> {
     // Return them comma separated, which is how cargo takes a list.
     Ok(crate::package_fmus::fmu_crates()?
         .iter()
