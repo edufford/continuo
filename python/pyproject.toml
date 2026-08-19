@@ -38,6 +38,9 @@ select = [
     "UP",  # pyupgrade
     "B",   # bugbear
     "SIM", # simplify
+    # A comma missing from a collection joins two of its entries rather
+    # than separating them, and ISC004 names that.
+    "ISC", # implicit string concatenation
     "RUF",
 ]
 

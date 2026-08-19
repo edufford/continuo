@@ -127,7 +127,24 @@ fingerprint, and no compile error would say so. `.gitattributes` marks
 archive somewhere far from the cause. `DEMO_WORLD_HASH` is pinned because a
 world hash that moves quietly is a change nobody sees. CI corrupts a recorded
 log on purpose, because a verifier that accepts a tampered log fails only
-when it matters.
+when it matters. `string-literals.yml` reads for a run of four spaces inside
+a string literal, which is what a line-continuation backslash lost from the
+end of a source line leaves behind: the literal is still valid Rust, and
+`rustfmt` does not reformat what is inside a string, so it accepts the
+over-wide line as well. Ruff's `ISC` rules are the same barrier on the
+viewer, where the mistake takes Python's own shape: a comma missing from a
+collection joins two of its entries rather than separating them.
+
+`string-literals.yml` is a heuristic where the rest are exact, so it is a
+workflow of its own and stays out of the required checks: a rule that can be
+wrong about correct code must not be able to block a merge. It reads only
+the lines a pull request adds, for the same reason. A literal meaning to
+carry a run of spaces is then answered once, in the description of the pull
+request adding it, where reading the whole tree would fail every pull request
+after that one, and a check which is always red is a check nobody reads.
+`ISC` needs none of that, naming the cause rather than reading for a shape,
+so it sits in `ruff check` with everything else and fails in the editing
+loop rather than only on a pull request.
 
 The mistakes worth this treatment are the ones nothing else catches: a
 corrupt comment still compiles, and a reordered map gives the right answer
