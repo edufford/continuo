@@ -60,8 +60,13 @@ components end up on separate hosts.
 
 ## Verify before every commit
 
-In CI's order, cheapest first, so a formatting slip is reported in seconds
-rather than after the workspace has compiled:
+```sh
+cargo xtask verify
+```
+
+It runs these in this order, cheapest first, so a formatting slip is reported
+in seconds rather than after the workspace has compiled, and it stops at the
+first failure:
 
 ```sh
 cargo fmt --all --check
@@ -71,27 +76,41 @@ cargo test --workspace
 cargo run -p continuo-examples --example traffic
 ```
 
+It adds the viewer's `ruff check .`, `ruff format --check .` and `pytest`
+when the viewer is installed, and says they were skipped when it is not, so a
+Rust-only change is not held up by a Python environment nobody set up.
+
+It is a quick check rather than a thorough one, and CI stays the authority:
+four platforms, both profiles, the packaged FMUs and the recorded-log smokes.
+What this is for is catching the ordinary mistake before a push, so being
+fast enough to sit in an editing loop is what matters most about it.
+
 The doc build is not optional. The crates cross-reference each other heavily,
 and a renamed item leaves a broken intra-doc link that still compiles.
 
 CI splits the test step in two, `--lib` then `--test '*'`, so neither reruns
 the other's tests. One `cargo test --workspace` covers both locally.
 
-A change reaching an FMU crate or the laws it links needs two more commands,
-in this order, because a `.fmu` carries its own compiled copy of everything it
-links and the suite above compares nothing against it:
+A change reaching an FMU crate or the laws it links needs more than that,
+because a `.fmu` carries its own compiled copy of everything it links and the
+checks above compare nothing against it:
 
 ```sh
-cargo xtask package-fmus
-cargo test --workspace --all-features
+cargo xtask verify-fmus
 ```
+
+It packages every FMU, validates each with fmpy, and runs the tests that
+check the packaged copy against the laws it was built from, asking for the
+feature each FMU crate holds those tests behind. `verify` leaves all of it
+out on purpose: packaging costs a release build of the FMU crate whenever a
+law changed, and the tests say nothing without it, so the pair belongs with a
+change that reaches a law rather than in an editing loop. Validation is
+skipped, and says so, when fmpy is not installed.
 
 `continuo-actors` is the one to watch, since editing a control law there
 leaves the packaged FMU a build behind and `cargo test --workspace` stays
-green. Packaging needs `cargo install cargo-fmi` once.
-
-Python changes also need `ruff check .`, `ruff format --check .` and `pytest`
-from `python/`.
+green. Packaging needs `cargo install cargo-fmi` once, and validating needs
+`python -m pip install fmpy`.
 
 ## Turn a mistake into a check
 

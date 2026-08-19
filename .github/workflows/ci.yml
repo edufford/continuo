@@ -175,9 +175,13 @@ jobs:
       - name: "Test: integration"
         run: cargo test --workspace --all-features --test '*'
 
+      # Through `python -m` rather than the `pytest` on the path, so the
+      # interpreter running the tests is the one the viewer was installed
+      # into. A `pytest` shim from some other environment would collect these
+      # files and fail to import what they need.
       - name: "Test: viewer"
         working-directory: python
-        run: pytest -v
+        run: python -m pytest -v
 
       # Release from here on, so the smokes run against the profile the
       # packaged FMU was built at and will be loaded beside. Packaging above

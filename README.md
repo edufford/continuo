@@ -143,17 +143,6 @@ cargo test --workspace
 cargo clippy --workspace --all-targets
 cargo fmt --all
 
-# Package the FMUs into target/fmu. Needs `cargo install cargo-fmi` once.
-# An .fmu links the control laws statically, so it carries a snapshot of
-# them: run this again after editing anything they reach, or what it
-# computes and what the native code computes drift apart.
-cargo xtask package-fmus
-
-# Drive each packaged FMU across the FMI boundary and check it answers what
-# the laws answer, to the bit. Behind a feature, so the plain test run above
-# needs nothing packaged and skips it.
-cargo test --workspace --all-features
-
 # Run the demo: an ego car on a straight highway, traffic spawning ahead of
 # it and retiring once passed; free-run, 30 sim-seconds
 cargo run -p continuo-examples --example traffic
@@ -178,6 +167,31 @@ cargo run -p continuo-examples --example traffic_resim -- run.jsonl
 # What a world costs as it grows: the demo's size against a scaled one.
 # Release, because a debug build measures the optimiser
 cargo run --release -p continuo-examples --example traffic_scale
+```
+
+### Workspace tasks
+
+Cargo has no user-defined commands and its aliases cannot chain them, so
+anything that runs several lives in [`xtask`](xtask/), reached as
+`cargo xtask <task>`. Each says what every step cost when it finishes.
+
+```sh
+# What to run before a commit: format, lint, docs, tests and the demo, in
+# that order, cheapest first, stopping at the first failure. The viewer's
+# ruff and pytest run when the viewer is installed and say they were skipped
+# when it is not. A quick check rather than a thorough one, since CI is the
+# authority on whether a commit is good.
+cargo xtask verify
+
+# What a change reaching an FMU crate needs on top: package every FMU into
+# target/fmu, validate each with fmpy, and run the tests that check the
+# packaged copy against the laws it was built from. An .fmu links those laws
+# statically, so it carries a snapshot of them. Needs
+# `cargo install cargo-fmi` once, and fmpy for the validation.
+cargo xtask verify-fmus
+
+# The packaging on its own, which is what CI calls before its own tests.
+cargo xtask package-fmus
 ```
 
 The demo logs every live car's pose once per sim-second and finishes in a
