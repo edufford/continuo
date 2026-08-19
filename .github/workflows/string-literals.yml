@@ -29,32 +29,18 @@ jobs:
         with:
           fetch-depth: 0
 
-      # Only the lines this pull request adds, which is what keeps a rule that
-      # can be wrong from becoming permanent noise. A literal that means to
-      # carry a run of spaces reports once, on the pull request adding it,
-      # where it is answered in the description and merged past. Every later
-      # pull request is silent about it, because by then nobody is adding it.
+      # Only the lines this pull request adds. An accepted exception is then
+      # argued once, on the pull request adding it, rather than reported
+      # against every one after it.
       #
-      # Reading the whole tree would be simpler and is the wrong instrument:
-      # one accepted exception would fail every pull request after it, and a
-      # check that is always red is a check nobody reads.
-      #
-      # Rust alone, wherever it sits, since the diff is filtered by pathspec
-      # rather than by a list of directories a new crate would leave behind.
-      # Python is left out on its own grounds rather than by oversight. It
-      # continues a string the other way round, keeping the next line's
-      # indentation where Rust strips it, so a run of spaces there is what a
-      # backslash does rather than what losing one does, and its own idiom is
-      # two literals side by side with no backslash at all. No line in the
-      # viewer ends in one, where 32 Rust literals do.
+      # Rust alone: Python keeps a continuation line's indentation where Rust
+      # strips it, so the same run of spaces there is ordinary rather than a
+      # symptom. Ruff's `ISC` rules cover its own shape of the mistake.
       #
       # The match wants a quote, then text, then a non-space, and only then
-      # the run, which is what keeps indentation and an aligned table in a
-      # comment out of it. Four is the threshold because every run written on
-      # purpose in these sources is three, as in `"{typed}   (in python/)"`.
-      # Aligning a column inside a literal is the false positive to expect,
-      # and nothing about Rust prevents it: the viewer already aligns at four
-      # spaces and wider, and these sources would be within their rights to.
+      # the run, which keeps indentation and an aligned table in a comment
+      # out of it. Four because every run written on purpose here is three.
+      # Aligning a column inside a literal is the false positive to expect.
       - name: "Check: no added line stretches a string literal"
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
