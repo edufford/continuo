@@ -46,7 +46,9 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha }}
         shell: bash
         run: |
-          # The base has to be here, or an empty diff would pass in silence.
+          # Read the lines this pull request adds for a stretched literal.
+          # The base has to be there first, or an empty diff would pass in
+          # silence.
           if ! git rev-parse --verify --quiet "$BASE^{commit}" > /dev/null; then
             echo "ERROR: the base commit is not in this checkout, so the"
             echo "diff would be empty and this would check nothing:"
