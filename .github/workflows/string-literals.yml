@@ -1,0 +1,110 @@
+name: String literals
+
+# A string literal split across source lines carries a backslash at the end of
+# each, and losing one joins the pair with the second line's indentation left
+# inside the string. It prints as a gap in the middle of a sentence, and
+# nothing else here objects: the literal is valid Rust, `rustfmt` does not
+# reformat what is inside a string and so accepts the over-wide line it leaves
+# behind, and no clippy lint reads in there either. One reached a branch of
+# #30 as `turns          on.`, where reading the diff is what caught it. That
+# is the only reason it never reached main, and it is not a method.
+#
+# Its own workflow, and deliberately not a required check. This reads for a
+# shape rather than parsing Rust, so a literal that means to carry that run
+# would fail it, and a rule that can be wrong must not be able to block a
+# merge. Putting the mistake in front of a reviewer is the whole of the job.
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  no_stretched_string_literals:
+    name: No string literal carries a run of four spaces
+    runs-on: ubuntu-latest
+    steps:
+      # The whole history, since the step below reads a diff against the base.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Only the lines this pull request adds, which is what keeps a rule that
+      # can be wrong from becoming permanent noise. A literal that means to
+      # carry a run of spaces reports once, on the pull request adding it,
+      # where it is answered in the description and merged past. Every later
+      # pull request is silent about it, because by then nobody is adding it.
+      #
+      # Reading the whole tree would be simpler and is the wrong instrument:
+      # one accepted exception would fail every pull request after it, and a
+      # check that is always red is a check nobody reads.
+      #
+      # Rust alone, wherever it sits, since the diff is filtered by pathspec
+      # rather than by a list of directories a new crate would leave behind.
+      # Python is left out on its own grounds rather than by oversight. It
+      # continues a string the other way round, keeping the next line's
+      # indentation where Rust strips it, so a run of spaces there is what a
+      # backslash does rather than what losing one does, and its own idiom is
+      # two literals side by side with no backslash at all. No line in the
+      # viewer ends in one, where 32 Rust literals do.
+      #
+      # The match wants a quote, then text, then a non-space, and only then
+      # the run, which is what keeps indentation and an aligned table in a
+      # comment out of it. Four is the threshold because every run written on
+      # purpose in these sources is three, as in `"{typed}   (in python/)"`.
+      # Aligning a column inside a literal is the false positive to expect,
+      # and nothing about Rust prevents it: the viewer already aligns at four
+      # spaces and wider, and these sources would be within their rights to.
+      - name: "Check: no added line stretches a string literal"
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        shell: bash
+        run: |
+          # The base has to be here, or an empty diff would pass in silence.
+          if ! git rev-parse --verify --quiet "$BASE^{commit}" > /dev/null; then
+            echo "ERROR: the base commit is not in this checkout, so the"
+            echo "diff would be empty and this would check nothing:"
+            echo "  $BASE"
+            exit 1
+          fi
+
+          # Rebuild file and line for every Rust line the branch adds. The
+          # hunk header carries the new-side start, and each added line after
+          # it advances that by one, which `--unified=0` is for: with no
+          # context lines, every line in a hunk is one that was added.
+          added=$(git diff --unified=0 "$BASE"...HEAD -- '*.rs' | awk '
+            index($0, "+++ b/") == 1 { file = substr($0, 7); next }
+            index($0, "@@ ") == 1 {
+              split($0, header, "+"); split(header[2], start, /[ ,]/)
+              line = start[1]; next
+            }
+            substr($0, 1, 1) == "+" {
+              print file ":" line ":" substr($0, 2); line++
+            }
+          ')
+
+          if [ -z "$added" ]; then
+            echo "This branch adds no Rust source lines."
+            exit 0
+          fi
+          counted=$(printf '%s\n' "$added" | wc -l)
+
+          stretched=$(printf '%s\n' "$added" \
+            | grep -E '"[^"]*[^"[:space:]] {4,}') || true
+          if [ -n "$stretched" ]; then
+            echo "ERROR: added lines with four or more spaces in a literal:"
+            printf '%s\n' "$stretched"
+            echo
+            echo "That is what a continuation backslash lost from the end of"
+            echo "a source line leaves behind, and it prints as a gap in the"
+            echo "middle of a sentence."
+            echo
+            echo "Aligning a column inside a literal reads the same way, and"
+            echo "is the false positive to expect. This does not block a"
+            echo "merge: where the run is meant, say so in the description"
+            echo "and merge past it. Only the lines this pull request adds"
+            echo "are read, so what is accepted here will not be raised on"
+            echo "the next one."
+            exit 1
+          fi
+          echo "Read $counted added Rust lines. None stretches a literal."
