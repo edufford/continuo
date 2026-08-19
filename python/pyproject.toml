@@ -38,6 +38,14 @@ select = [
     "UP",  # pyupgrade
     "B",   # bugbear
     "SIM", # simplify
+    # Implicit concatenation is how Python joins a string across source
+    # lines, and a comma missing from a collection joins two of its entries
+    # rather than separating them, silently shortening the list. ISC004 says
+    # exactly that. It sits here rather than in a workflow of its own
+    # because it names the cause instead of reading for a shape, so a
+    # failure is worth blocking on, unlike its Rust counterpart in
+    # `.github/workflows/string-literals.yml`.
+    "ISC",
     "RUF",
 ]
 
