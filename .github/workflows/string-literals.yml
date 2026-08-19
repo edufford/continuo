@@ -80,7 +80,7 @@ jobs:
           stretched=$(printf '%s\n' "$added" \
             | grep -E '"[^"]*[^"[:space:]] {4,}') || true
           if [ -n "$stretched" ]; then
-            echo "ERROR: added lines with four or more spaces in a literal:"
+            echo "WARNING: added lines with four or more spaces in a literal:"
             printf '%s\n' "$stretched"
             echo
             echo "That is what a continuation backslash lost from the end of"
