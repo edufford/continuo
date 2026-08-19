@@ -14,16 +14,15 @@
 //! That is why it packages no FMUs and asks for no features, which
 //! `cargo xtask verify-fmus` is for. Packaging costs a release build of the
 //! FMU crate whenever a law changed, 13 seconds against 0.7 when nothing did,
-//! and the comparison it feeds cannot say anything without it. Asking for the
-//! features that comparison sits behind would then build the Zenoh and viewer
-//! trees this has no use for.
+//! and the tests it feeds say nothing without it, so the two belong with a
+//! change that reaches a law rather than in an editing loop.
 
 use std::path::Path;
 
 use crate::task::{Progress, answers, run_command, workspace_root};
 
-/// One command to run.
-struct Step {
+/// One command `verify` runs, fixed at compile time.
+struct VerifyCommand {
     /// The program and its arguments. A first word of `cargo` is the cargo
     /// that invoked this, so a toolchain chosen by `+toolchain` holds.
     argv: &'static [&'static str],
@@ -32,12 +31,12 @@ struct Step {
     /// Environment this one command needs, which is how `RUSTDOCFLAGS`
     /// reaches the doc build without leaking into everything after it.
     env: &'static [(&'static str, &'static str)],
-    /// What must answer before this step is worth running, or `None` where
-    /// nothing may excuse it. A failing probe skips the step and says so.
+    /// What must answer before this is worth running, or `None` where
+    /// nothing may excuse it. A failing probe skips it and says so.
     skip_unless: Option<&'static [&'static str]>,
 }
 
-/// Where a step runs.
+/// Where a command runs.
 enum Dir {
     /// The workspace root.
     Root,
@@ -61,7 +60,7 @@ enum Dir {
 /// first and still cannot draw. `pytest` is in neither, being a development
 /// dependency the viewer does not declare.
 ///
-/// Asked of `python` for the same reason the step runs through `python -m`:
+/// Asked of `python` for the same reason the command runs through `python -m`:
 /// the interpreter on the path may be some other project's, and it is the one
 /// about to run that has to answer.
 const VIEWER_AND_PYTEST_IS_INSTALLED: &[&str] = &[
@@ -75,13 +74,13 @@ const VIEWER_AND_PYTEST_IS_INSTALLED: &[&str] = &[
 /// Only the tool, since `ruff` reads files rather than importing anything.
 const RUFF_IS_INSTALLED: &[&str] = &["ruff", "--version"];
 
-/// What to type to turn the skipped steps on.
+/// What to type to turn the skipped commands on.
 const INSTALL_THE_VIEWER: &str = "python -m pip install -e . pytest ruff   (in python/)";
 
 /// Every command, cheapest first, which is what stopping at the first failure
 /// is for.
-const STEPS: &[Step] = &[
-    Step {
+const VERIFY_COMMANDS: &[VerifyCommand] = &[
+    VerifyCommand {
         argv: &["cargo", "fmt", "--all", "--check"],
         dir: Dir::Root,
         env: &[],
@@ -90,7 +89,7 @@ const STEPS: &[Step] = &[
     // `--all-features` here but not on the tests below, because linting a
     // target held behind a feature costs only the lint, where testing one
     // costs the packaging it reads and a rebuild of much of the graph.
-    Step {
+    VerifyCommand {
         argv: &[
             "cargo",
             "clippy",
@@ -107,37 +106,37 @@ const STEPS: &[Step] = &[
     },
     // Not optional. The crates cross-reference each other heavily, and a
     // renamed item leaves a broken intra-doc link that still compiles.
-    Step {
+    VerifyCommand {
         argv: &["cargo", "doc", "--workspace", "--no-deps"],
         dir: Dir::Root,
         env: &[("RUSTDOCFLAGS", "-D warnings")],
         skip_unless: None,
     },
-    Step {
+    VerifyCommand {
         argv: &["ruff", "check", "."],
         dir: Dir::Python,
         env: &[],
         skip_unless: Some(RUFF_IS_INSTALLED),
     },
-    Step {
+    VerifyCommand {
         argv: &["ruff", "format", "--check", "."],
         dir: Dir::Python,
         env: &[],
         skip_unless: Some(RUFF_IS_INSTALLED),
     },
-    Step {
+    VerifyCommand {
         argv: &["cargo", "test", "--workspace"],
         dir: Dir::Root,
         env: &[],
         skip_unless: None,
     },
-    Step {
+    VerifyCommand {
         argv: &["python", "-m", "pytest", "-v"],
         dir: Dir::Python,
         env: &[],
         skip_unless: Some(VIEWER_AND_PYTEST_IS_INSTALLED),
     },
-    Step {
+    VerifyCommand {
         argv: &[
             "cargo",
             "run",
@@ -152,50 +151,52 @@ const STEPS: &[Step] = &[
     },
 ];
 
-/// Runs every step, stopping at the first that fails.
+/// Runs every command, stopping at the first that fails.
 pub fn run() -> Result<(), String> {
     let root = workspace_root();
     let mut progress = Progress::new();
 
-    for step in STEPS {
-        let shown = shown(step);
-        if step
+    for command in VERIFY_COMMANDS {
+        let work_label = label_from(command);
+        if command
             .skip_unless
             .is_some_and(|probe| !answers(probe, &root.join("python")))
         {
-            progress.skip(&shown);
+            progress.skip(&work_label);
             continue;
         }
-        progress.run(&shown, || run_step(step, &root))?;
+        progress.run(&work_label, || run_one(command, &root))?;
     }
 
     progress.report(&format!(
-        "The viewer's checks were skipped, which `{INSTALL_THE_VIEWER}` turns          on. CI runs them either way."
+        "The viewer's checks were skipped, which `{INSTALL_THE_VIEWER}` turns \
+         on. CI runs them either way."
     ));
 
-    // Return once every step that could run has passed, which is as much as
+    // Return once every command that could run has passed, which is as much as
     // this claims: CI is what says the commit is good.
     Ok(())
 }
 
-/// Runs one step in the directory it belongs to.
-fn run_step(step: &Step, root: &Path) -> Result<(), String> {
-    let dir = match step.dir {
+/// Runs a command in the directory it belongs to.
+fn run_one(command: &VerifyCommand, root: &Path) -> Result<(), String> {
+    let dir = match command.dir {
         Dir::Root => root.to_path_buf(),
         Dir::Python => root.join("python"),
     };
 
-    run_command(step.argv, &dir, step.env)
+    run_command(command.argv, &dir, command.env)
 }
 
-/// The step as a person would have typed it.
-fn shown(step: &Step) -> String {
-    let command = step.argv.join(" ");
+/// The label a command is announced and timed under, which is what a person
+/// would have typed.
+fn label_from(command: &VerifyCommand) -> String {
+    let typed = command.argv.join(" ");
 
     // Return it with the directory named where it is not the root, since two
     // `ruff` lines with nothing to tell them apart would read as a repeat.
-    match step.dir {
-        Dir::Root => command,
-        Dir::Python => format!("{command}   (in python/)"),
+    match command.dir {
+        Dir::Root => typed,
+        Dir::Python => format!("{typed}   (in python/)"),
     }
 }

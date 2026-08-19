@@ -31,21 +31,21 @@ impl Progress {
     /// and both belong in the same table.
     pub(crate) fn run(
         &mut self,
-        shown: &str,
+        work_label: &str,
         work: impl FnOnce() -> Result<(), String>,
     ) -> Result<(), String> {
-        println!("--- {shown}");
+        println!("--- {work_label}");
         let started = Instant::now();
         work()?;
         self.took_sec
-            .push((shown.to_string(), started.elapsed().as_secs_f64()));
+            .push((work_label.to_string(), started.elapsed().as_secs_f64()));
 
         Ok(())
     }
 
     /// Says a piece of work was passed over, and remembers that it was.
-    pub(crate) fn skip(&mut self, shown: &str) {
-        println!("--- skipping: {shown}");
+    pub(crate) fn skip(&mut self, work_label: &str) {
+        println!("--- skipping: {work_label}");
         self.skipped = true;
     }
 
@@ -57,8 +57,8 @@ impl Progress {
     pub(crate) fn report(&self, when_skipped: &str) {
         let total: f64 = self.took_sec.iter().map(|(_, seconds)| seconds).sum();
         println!();
-        for (shown, seconds) in &self.took_sec {
-            println!("{seconds:>7.1} s   {shown}");
+        for (work_label, seconds) in &self.took_sec {
+            println!("{seconds:>7.1} s   {work_label}");
         }
 
         // As wide as the column it closes, seven for the number and two for
