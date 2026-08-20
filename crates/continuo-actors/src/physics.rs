@@ -198,17 +198,42 @@ mod tests {
 
     use super::*;
 
-    /// The period every test here steps at.
+    /// The period every test here steps at, and its length in seconds,
+    /// which every expected value below is worked from.
     const PERIOD: SimDuration = SimDuration::from_millis(10);
+    const STEP_SECS: f64 = 0.01;
 
-    /// A car at the origin pointing along `+x`, doing `speed`.
+    /// How many advancing steps a test takes unless it needs longer.
+    const STEPS: i64 = 100;
+
+    /// The speed a car starts at where the test is not about starting
+    /// from rest.
+    const CRUISE_SPD: f64 = 7.0;
+
+    /// Where a car starts where the test is not about where it starts:
+    /// off the origin and pointing along `+x`, so a plant that lost the
+    /// pose it was built with fails rather than passing.
+    fn start_pose() -> Pose {
+        Pose {
+            position: Vec3::new(12.5, -3.5, 0.0),
+            orientation: Quat::from_yaw(0.0),
+        }
+    }
+
+    /// A car at [`start_pose`] doing `speed`.
     fn plant(speed: f64) -> UnicyclePhysics {
         // Return a plant holding neither command, as one is before it is
         // spoken to.
-        UnicyclePhysics::new("car", PERIOD, CarState::new(Pose::default(), speed))
+        UnicyclePhysics::new("car", PERIOD, CarState::new(start_pose(), speed))
     }
 
-    /// One command message for that car, on the key its last segment names.
+    /// One command message for that car, on the key its last segment
+    /// names.
+    ///
+    /// `seq` is the publisher's own counter, so the two helpers below
+    /// share one sequence: every command here comes from the same
+    /// controller, and a publisher numbers its messages in the order it
+    /// sent them whatever key each went to.
     fn command<T: Serialize>(tail: &str, seq: u64, value: &T) -> Message {
         // Return the message as the transport would deliver it.
         Message {
@@ -253,7 +278,8 @@ mod tests {
     }
 
     /// The state `plant` published after its first step and `steps`
-    /// advancing ones, with `inbox` waiting at the first and nothing after.
+    /// advancing ones, with `inbox` waiting at the first and nothing
+    /// after.
     fn run(plant: &mut UnicyclePhysics, steps: i64, inbox: Vec<Message>) -> CarState {
         let mut payload = step_at(plant, SimTime::ZERO, None, inbox);
         for step in 1..=steps {
@@ -264,13 +290,21 @@ mod tests {
         serde_json::from_slice(&payload).expect("a car state")
     }
 
+    /// How far a car got along `+x`, which is what the tests measure
+    /// rather than an absolute position.
+    fn travelled(state: &CarState) -> f64 {
+        state.position.x - start_pose().position.x
+    }
+
     #[test]
     fn an_initial_state_round_trips_through_json() {
         // Short decimals throughout, so this checks that serde maps the
-        // fields the way it says it does. Longer ones would drag
-        // `serde_json`'s float parsing into a test that is not about it:
-        // `from_str` into an `f64` misses what `to_string` produced by an
-        // ulp for about one number in eight.
+        // fields the way it says it does rather than checking a parser.
+        //
+        // TODO(PLAN "Determinism and correctness"): `from_str` into an
+        // `f64` misses what `to_string` produced by an ulp for about one
+        // number in eight, so a realistic value here would fail. Every
+        // component decoding a pose has the same gap.
         let state = CarState::new(
             Pose {
                 position: Vec3::new(3.0, -4.0, 0.0),
@@ -281,7 +315,7 @@ mod tests {
                     z: 0.8,
                 },
             },
-            21.5,
+            CRUISE_SPD,
         );
         let text = serde_json::to_string(&state).expect("a state serializes");
         assert_eq!(
@@ -292,75 +326,88 @@ mod tests {
         // The field order is the contract. `position` and `orientation`
         // come first and in `Pose`'s own shape, so a pose decoder finds
         // what it expects and the speed sits past the end of it.
+        //
+        // The tail is built through `to_string` rather than written out,
+        // because Rust's own `Display` for a float and serde's are not the
+        // same: 7.0 prints as `7` one way and `7.0` the other, so spelling
+        // the number here would be asserting the wrong text.
+        let speed = serde_json::to_string(&CRUISE_SPD).expect("a speed serializes");
         assert!(text.starts_with("{\"position\":{"), "{text}");
-        assert!(text.ends_with(",\"speed\":21.5}"), "{text}");
+        assert!(text.ends_with(&format!(",\"speed\":{speed}}}")), "{text}");
     }
 
     #[test]
     fn a_pose_decoder_reads_what_the_plant_publishes() {
-        let mut plant = plant(9.0);
+        let mut plant = plant(CRUISE_SPD);
         let payload = step_at(&mut plant, SimTime::ZERO, None, vec![]);
 
-        // The whole compatibility claim in one assertion: a speed rides
-        // on this key, and everything reading it as a pose reads the pose
-        // unchanged and ignores what it did not ask for.
+        // The whole compatibility claim, in two readings of one payload:
+        // taken as a pose it is the pose, and taken as a car state the
+        // speed is there for whoever does want it.
         let pose: Pose = serde_json::from_slice(&payload).expect("still a pose");
-        assert_eq!(pose, Pose::default());
-        assert!(
-            String::from_utf8(payload).expect("utf-8").contains("speed"),
-            "the speed has to be there for anyone who does want it"
-        );
+        assert_eq!(pose, start_pose());
+        let state: CarState = serde_json::from_slice(&payload).expect("and a car state");
+        assert_eq!(state.speed, CRUISE_SPD);
     }
 
     #[test]
     fn a_car_nobody_commands_holds_the_speed_it_was_built_with() {
         // A whole second of nothing said to it, which is the
         // constant-speed car the demo is full of.
-        let state = run(&mut plant(7.0), 100, vec![]);
-        assert_eq!(state.speed, 7.0);
-        assert!((state.position.x - 7.0).abs() < 1e-9, "{state:?}");
-        assert_eq!(state.position.y, 0.0);
+        let state = run(&mut plant(CRUISE_SPD), STEPS, vec![]);
+        assert_eq!(state.speed, CRUISE_SPD);
+        let expected = CRUISE_SPD * STEPS as f64 * STEP_SECS;
+        assert!((travelled(&state) - expected).abs() < 1e-9, "{state:?}");
+        assert_eq!(state.position.y, start_pose().position.y);
     }
 
     #[test]
     fn held_acceleration_integrates_into_speed() {
+        const ACCEL: f64 = 2.0;
+
         // Said once and never again, so what the car does for the other
         // ninety-nine steps is what holding it means.
-        let state = run(&mut plant(0.0), 100, vec![accel(1, 2.0)]);
-        assert!((state.speed - 2.0).abs() < 1e-9, "{state:?}");
+        let state = run(&mut plant(0.0), STEPS, vec![accel(1, ACCEL)]);
+        let seconds = STEPS as f64 * STEP_SECS;
+        assert!((state.speed - ACCEL * seconds).abs() < 1e-9, "{state:?}");
 
-        // From rest under a steady acceleration the distance is a*t^2/2,
-        // and the step integrates speed before it travels, so it runs a
-        // little ahead of the closed form rather than behind it.
-        assert!(
-            (state.position.x - 1.01).abs() < 1e-9,
-            "{state:?} against 1.01 m"
-        );
+        // The step integrates speed before it travels, so what it covers
+        // is the sum of the speeds each step ended at rather than the
+        // a*t^2/2 of the closed form, which is half a step behind it.
+        let steps = STEPS as f64;
+        let summed = ACCEL * STEP_SECS * STEP_SECS * steps * (steps + 1.0) / 2.0;
+        assert!((travelled(&state) - summed).abs() < 1e-9, "{state:?}");
     }
 
     #[test]
     fn speed_never_integrates_below_zero() {
-        // Braking hard enough to stop in a tenth of a second, held for
-        // two seconds: the case that would reverse a car taking the
-        // arithmetic at its word.
-        let mut plant = plant(1.0);
-        let stopped = run(&mut plant, 200, vec![accel(1, -10.0)]);
+        const BRAKE: f64 = -10.0;
+
+        // Braking held for twice as long as stopping takes, which is the
+        // case that would reverse a car taking the arithmetic at its word.
+        let braking_steps = 2 * (CRUISE_SPD / -BRAKE / STEP_SECS) as i64;
+        let mut plant = plant(CRUISE_SPD);
+        let stopped = run(&mut plant, braking_steps, vec![accel(1, BRAKE)]);
         assert_eq!(stopped.speed, 0.0);
 
         // And a stopped car goes nowhere, however long the brake is held.
-        let still_stopped = run(&mut plant, 100, vec![]);
+        let still_stopped = run(&mut plant, STEPS, vec![]);
         assert_eq!(still_stopped.speed, 0.0);
         assert_eq!(still_stopped.position.x, stopped.position.x);
     }
 
     #[test]
     fn accel_and_steer_are_held_independently() {
-        let mut plant = plant(10.0);
+        const FIRST_ACCEL: f64 = 1.0;
+        const SECOND_ACCEL: f64 = 4.0;
+        const YAW_RATE: f64 = 0.5;
+
+        let mut plant = plant(CRUISE_SPD);
         step_at(
             &mut plant,
             SimTime::ZERO,
             None,
-            vec![accel(1, 1.0), steer(2, 0.5)],
+            vec![accel(1, FIRST_ACCEL), steer(2, YAW_RATE)],
         );
 
         // One step where only the acceleration is restated. The new one
@@ -370,13 +417,44 @@ mod tests {
             &mut plant,
             SimTime::from_millis(10),
             Some(PERIOD),
-            vec![accel(3, 4.0)],
+            vec![accel(3, SECOND_ACCEL)],
         );
         let state: CarState = serde_json::from_slice(&payload).expect("a car state");
-        assert!((state.speed - 10.04).abs() < 1e-9, "{state:?}");
+        let expected_speed = CRUISE_SPD + SECOND_ACCEL * STEP_SECS;
+        assert!((state.speed - expected_speed).abs() < 1e-9, "{state:?}");
+        let expected_yaw = YAW_RATE * STEP_SECS;
         assert!(
-            (state.orientation.yaw() - 0.005).abs() < 1e-9,
-            "{state:?} against 0.5 rad/s for 10 ms"
+            (state.orientation.yaw() - expected_yaw).abs() < 1e-9,
+            "{state:?}"
+        );
+    }
+
+    #[test]
+    fn only_the_newest_command_on_a_key_is_applied() {
+        const ACCEL_CMD_1: f64 = -10.0;
+        const ACCEL_CMD_2: f64 = 0.0;
+        const ACCEL_CMD_3: f64 = 2.0;
+
+        // Three accelerations in one inbox, which is what a controller
+        // running faster than its plant delivers. The car takes the last
+        // and never the ones it overtook, so a step samples the command
+        // rather than replaying every one that was sent.
+        let mut plant = plant(0.0);
+        step_at(
+            &mut plant,
+            SimTime::ZERO,
+            None,
+            vec![
+                accel(1, ACCEL_CMD_1),
+                accel(2, ACCEL_CMD_2),
+                accel(3, ACCEL_CMD_3),
+            ],
+        );
+        let payload = step_at(&mut plant, SimTime::from_millis(10), Some(PERIOD), vec![]);
+        let state: CarState = serde_json::from_slice(&payload).expect("a car state");
+        assert!(
+            (state.speed - ACCEL_CMD_3 * STEP_SECS).abs() < 1e-9,
+            "{state:?}"
         );
     }
 }
