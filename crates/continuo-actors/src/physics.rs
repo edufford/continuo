@@ -7,18 +7,16 @@ use crate::commands::{AccelCmd, SteerCmd};
 
 /// Where a car is and how fast it is going.
 ///
-/// One struct for two jobs, since both are the same four numbers: what a
-/// plant is built with, and what it publishes. It is also what scenario
-/// files will carry, so its serde form is contract rather than detail.
+/// Flat, so `position` and `orientation` sit where [`Pose`] puts them and
+/// anything reading a pose off this key goes on reading one.
 ///
-/// The flat fields are the load-bearing part. `position` and
-/// `orientation` sit where [`Pose`] puts them, so anything reading a pose
-/// off this key goes on reading one and ignores the speed beside it.
+/// It is what a plant is built with and what a plant publishes, and when
+/// scenarios come from files it is what those files carry.
 ///
-/// Speed is here and acceleration is not. Speed is state the plant
-/// integrates and nothing else can see. Acceleration is a held command,
-/// replaced by the first message to arrive, and zero is right for a car
-/// nobody commands.
+/// TODO(PLAN "Features"): this is the plant's integrator state, not its
+/// kinematic state. Acceleration and yaw rate belong beside these, and
+/// adding them wants a message of its own rather than a `pose` key that
+/// has grown fields.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub struct CarState {
     /// Where the car is, meters, `z` always zero for a planar model.
@@ -48,13 +46,10 @@ impl CarState {
     }
 }
 
-/// Planar unicycle kinematics: integrates the acceleration and yaw rate
-/// it is holding and publishes where that put the car. Publishes `z = 0`
-/// and yaw-only quaternions per the pose convention.
-///
-/// **It owns speed**, which is why what it publishes carries one. A
-/// controller knows only what it asked for, and the clamp at zero parts
-/// that from what happened.
+/// Planar unicycle kinematics: integrates the commands it is holding, an
+/// acceleration and a yaw rate, and publishes where that put the car,
+/// with the speed it owns beside the pose. Publishes `z = 0` and yaw-only
+/// quaternions per the pose convention.
 ///
 /// Each command is held on its own key, so a car whose controller
 /// publishes one goes on integrating whatever the other last said.
@@ -92,10 +87,6 @@ impl UnicyclePhysics {
     /// command must not depend on whether the other spoke. The inbox is
     /// read backwards so the first match on a key wins, which leaves the
     /// older ones undecoded rather than decoded and overwritten.
-    ///
-    /// The last path segment tells the two apart, which is exact rather
-    /// than a guess: [`Self::subscriptions`] admits these two keys and
-    /// nothing else.
     fn take_commands(&mut self, ctx: &StepCtx) -> Result<(), CoreError> {
         let mut took_accel = false;
         let mut took_steer = false;
@@ -302,9 +293,9 @@ mod tests {
             state
         );
 
-        // Flat, and speed last, so a pose sits where a pose sits. A
-        // nested `pose` field would round-trip just as well and be
-        // readable by nothing that reads poses today.
+        // The field order is the contract. `position` and `orientation`
+        // come first and in `Pose`'s own shape, so a pose decoder finds
+        // what it expects and the speed sits past the end of it.
         assert!(text.starts_with("{\"position\":{"), "{text}");
         assert!(text.ends_with(",\"speed\":21.5}"), "{text}");
     }
