@@ -14,6 +14,16 @@ use crate::path::Waypoints;
 /// Lateral only. Speed is the plant's business, and a car with nobody
 /// commanding an acceleration holds the one it was built with.
 ///
+/// What it publishes is normalized, so `max_yaw_rate` does two jobs: it
+/// is the hardest turn the law will ask for, and it is this controller's
+/// model of the plant's [`DriveLimits::yaw_rate_max`]. The two being one
+/// number is the scenario's doing. Hand them different ones and the car
+/// turns at a rate the controller did not intend, which nothing here can
+/// detect, because a normalized command carries no unit to disagree
+/// about.
+///
+/// [`DriveLimits::yaw_rate_max`]: crate::DriveLimits::yaw_rate_max
+///
 /// Follows the road in **Frenet coordinates**: an arc length `s` found by
 /// projection, and a fixed lateral offset it holds. So every car on a road
 /// shares one [`Waypoints`], and a lane is a number rather than a curve of
@@ -78,8 +88,9 @@ impl Component for PathFollowController {
             self.last_pose = message.decode::<Pose>()?;
         }
 
+        let yaw_rate = pure_pursuit_yaw_rate(&self.road, self.last_pose, self.pursuit_params);
         let cmd = SteerCmd {
-            yaw_rate_cmd: pure_pursuit_yaw_rate(&self.road, self.last_pose, self.pursuit_params),
+            steer_cmd: (yaw_rate / self.pursuit_params.max_yaw_rate).clamp(-1.0, 1.0),
         };
 
         let key = crate::steer_cmd_key(ctx.world_name(), &self.actor_name);

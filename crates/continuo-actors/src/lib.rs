@@ -3,8 +3,9 @@
 //! traffic spawner.
 //!
 //! A controller commands and a plant integrates, and they meet on the
-//! messages in [`commands`]: one per axis, so different components can
-//! answer a car's two halves.
+//! messages in [`commands`]: one per axis, normalized, so different
+//! components can answer a car's two halves and neither has to know what
+//! car it is driving.
 //!
 //! [`control_laws`] holds the laws themselves, as pure functions over
 //! their arguments. A controller component is then the wiring around one:
@@ -42,7 +43,7 @@ pub use commands::{AccelCmd, SteerCmd};
 pub use controller::PathFollowController;
 pub use logger::PoseLogger;
 pub use path::Waypoints;
-pub use physics::{CarState, UnicyclePhysics};
+pub use physics::{CarState, DriveLimits, UnicyclePhysics};
 pub use traffic_spawner::{
     DespawnTrafficRequest, SpawnTrafficRequest, TrafficSpawner, road_pose, straight_road,
     traffic_despawn_key, traffic_spawn_key,

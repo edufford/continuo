@@ -1055,20 +1055,53 @@ it got there, including the roads not taken.
     longitudinal model beside native steering wants a second publisher and
     no new shape. Both say *commanded* in the payload as well as the key,
     because commanded is not actual.
+  - **Both are normalized to [-1, 1] and carry no unit.** A pedal and a
+    steering wheel travel between stops, and how much car is behind them is
+    the car's business, so `DriveLimits` lives on the plant and a command
+    says only what fraction of one it wants. A controller naming an
+    acceleration would be asserting something about a vehicle it does not
+    own, and two cars given one command would have to behave alike.
+    - The cost is that the two sides must agree on the limits with no way
+      to check. A number with no unit has nothing to disagree about, so a
+      controller working from a different `yaw_rate_max` steers to a rate
+      it did not intend and nothing anywhere fails. The scenario hands both
+      halves of a car one `DriveLimits`, and that is the whole of why they
+      match.
+    - Braking gets a limit of its own, because a car brakes harder than
+      it accelerates. One number for both would get one of them wrong.
   - **Silence is hold, which makes the demo cheaper rather than poorer.**
     Nothing in it commands an acceleration, so every car keeps the speed its
     plant was built with and the constant-speed car needs no longitudinal
     publisher to exist. That is why a held zero is the right start: a
     controller saying nothing about acceleration is not saying zero.
-  - **What moved in the hash is payload shapes and keys, and nothing else.**
-    `d747a81be039c5f1` to `152db7f40041f053`. Five sampled poses from a car
-    driving the ellipse in `determinism.rs` are pinned to the bit against
-    what that run produced before. The ellipse rather than the demo's
-    straight road, because there the steering law works the whole way round
-    and a difference in the integration would show; on a straight road every
-    yaw rate is exactly zero and two quite different plants would agree.
-    README's sample poses are unchanged for the same reason, so the diff
-    shows one number moving in a block of numbers that did not.
+  - **The plant's state hash is the integrator state alone.** The held
+    commands are copies of what reached the plant, and every published
+    command is in the fingerprint already, so hashing them counted the same
+    bytes twice.
+    - A divergence in what *arrived* rather than in what was sent would
+      then wait for the pose to show it. That is true of any component
+      holding a decoded input, though, so guarding it here would mean
+      guarding it in every component. This hook is for state a component
+      makes and does not publish, which is what an integrator's is.
+  - **What moved in the hash, and what did not.** `d747a81be039c5f1` to
+    `eccd08f9a316bbbc`, for three things: the payload shapes and keys, the
+    normalizing, and the state hash dropping those commands. No car moved
+    for any of them. Every pose a car publishes driving the ellipse in
+    `determinism.rs` folds into one pinned fingerprint, which holds
+    throughout. The ellipse rather than the demo's straight road, because
+    there the steering law works the whole way round and a difference in
+    the integration would show; on a straight road every yaw rate is
+    exactly zero and two quite different plants would agree. README's
+    sample poses are unchanged for the same reason, so the diff shows one
+    number moving in a block of numbers that did not.
+    - **The world hash cannot make this claim**, which is why the
+      fingerprint exists beside it. It is taken over payload bytes, and
+      this change rewrote those on purpose, so it had to move whether or
+      not a car went anywhere. Folding the decoded numbers is what
+      separates the two questions.
+    - Normalizing survives it as well, which was not a given: dividing by
+      a limit and multiplying by it again is not an exact round trip in
+      general, and here it happens to be at every step of the run.
   - **Actual acceleration stays unobservable**, deferred rather than
     dismissed. It differs from the commanded value wherever the clamp bites,
     and yaw rate would follow it. When something wants them the honest move
