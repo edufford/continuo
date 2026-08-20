@@ -7,7 +7,7 @@ use std::sync::Arc;
 use continuo_actors::{PathFollowController, UnicyclePhysics, Waypoints};
 use continuo_conductor::record::LogEvent;
 use continuo_conductor::{Conductor, ConductorConfig, EventLog, Pacing, Recorder};
-use continuo_core::{Pose, Quat, SimDuration, SimTime};
+use continuo_core::{HashFnv1a64, Pose, Quat, SimDuration, SimTime};
 use continuo_transport::{InProcTransport, MonitorTransport};
 
 fn run_world(sim_seconds: i64, world_seed: u64) -> EventLog {
@@ -86,11 +86,11 @@ fn identical_runs_produce_identical_event_logs() {
     assert!(first.final_world_hash().is_some());
 }
 
-#[test]
-fn cars_actually_move_around_the_loop() {
-    let log = run_world(5, 42);
-    let car1_poses: Vec<Pose> = log
-        .events
+/// Every pose car1 published, in the order it published them.
+fn car1_poses(log: &EventLog) -> Vec<Pose> {
+    // Return the stream, read as poses because that is what everything
+    // else reads off this key.
+    log.events
         .iter()
         .filter_map(|e| match e {
             LogEvent::Msg(m) if m.key.contains("/car1/pose") => Some(
@@ -98,7 +98,58 @@ fn cars_actually_move_around_the_loop() {
             ),
             _ => None,
         })
-        .collect();
+        .collect()
+}
+
+/// A fingerprint of car1's whole trajectory around the ellipse.
+///
+/// **This is the first check in the project that a curved world is
+/// portable.** `DEMO_WORLD_HASH` cannot be: the demo drives a straight
+/// road, so every yaw rate in it is exactly zero and every transcendental
+/// is evaluated where all implementations agree anyway. Routing this
+/// workspace through `libm` moves that hash not at all, which is the
+/// proof it was never testing this.
+///
+/// An ellipse steers the whole way round, so it evaluates `sin`, `cos`
+/// and `atan2` at arguments where implementations are free to differ.
+/// Before `libm` it fingerprinted three ways across the four CI agents,
+/// the two glibc ones agreeing with each other across architectures while
+/// the MSVC CRT and Apple's each differed. This value is what all four
+/// produce now.
+const CAR1_TRAJECTORY: u64 = 0xd53c_ae9c_9360_d41d;
+
+/// Every pose folded through [`HashFnv1a64`], the hash the world
+/// fingerprint is already built from, rather than `DefaultHasher`, which
+/// is explicitly not stable between Rust releases.
+///
+/// No length prefixes, because every field here is eight bytes and a run
+/// of fixed-width fields can only be read one way.
+fn trajectory_fingerprint(poses: &[Pose]) -> u64 {
+    let mut hash = HashFnv1a64::new();
+    for pose in poses {
+        for value in [pose.position.x, pose.position.y, pose.orientation.yaw()] {
+            hash.write_u64(value.to_bits());
+        }
+    }
+
+    // Return the fold.
+    hash.finish()
+}
+
+#[test]
+fn a_curved_world_traces_the_same_path_on_every_platform() {
+    let poses = car1_poses(&run_world(5, 42));
+    assert_eq!(poses.len(), 501, "expected a steady pose stream");
+    assert_eq!(
+        format!("{:016x}", trajectory_fingerprint(&poses)),
+        format!("{CAR1_TRAJECTORY:016x}"),
+        "car1 drove a different path"
+    );
+}
+
+#[test]
+fn cars_actually_move_around_the_loop() {
+    let car1_poses = car1_poses(&run_world(5, 42));
     assert!(
         car1_poses.len() > 100,
         "expected steady pose stream, got {}",

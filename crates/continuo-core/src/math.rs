@@ -109,12 +109,12 @@ impl Quat {
     /// argument is clamped against float drift pushing it past ±1.
     pub fn to_euler(self) -> EulerRad {
         let q = self.normalized();
-        let roll = f64::atan2(
+        let roll = libm::atan2(
             2.0 * (q.w * q.x + q.y * q.z),
             1.0 - 2.0 * (q.x * q.x + q.y * q.y),
         );
-        let pitch = (2.0 * (q.w * q.y - q.z * q.x)).clamp(-1.0, 1.0).asin();
-        let yaw = f64::atan2(
+        let pitch = libm::asin((2.0 * (q.w * q.y - q.z * q.x)).clamp(-1.0, 1.0));
+        let yaw = libm::atan2(
             2.0 * (q.w * q.z + q.x * q.y),
             1.0 - 2.0 * (q.y * q.y + q.z * q.z),
         );
@@ -156,9 +156,9 @@ impl EulerRad {
     /// quaternion). Verified against the composition identity by the
     /// `intrinsic_zyx_composition_order` test.
     pub fn to_quat(self) -> Quat {
-        let (sr, cr) = (self.roll * 0.5).sin_cos();
-        let (sp, cp) = (self.pitch * 0.5).sin_cos();
-        let (sy, cy) = (self.yaw * 0.5).sin_cos();
+        let (sr, cr) = libm::sincos(self.roll * 0.5);
+        let (sp, cp) = libm::sincos(self.pitch * 0.5);
+        let (sy, cy) = libm::sincos(self.yaw * 0.5);
 
         // Return the composed rotation, unit length by construction.
         Quat {

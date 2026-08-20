@@ -1035,3 +1035,37 @@ it got there, including the roads not taken.
     would have taken `fmi3DoStep` out of the sweeps altogether while
     costing no measurable time, which is what a safety gain and a coverage
     loss look like from the outside.
+
+- **2026-08-20**: **Transcendentals go through `libm` rather than the
+  platform's, so the world hash is portable by construction.** PLAN.md
+  deferred this on the grounds that four CI agents agreed on
+  `DEMO_WORLD_HASH`, so the exposure was real but not biting. Both halves
+  of that turned out to be wrong in the same way, and the same measurement
+  settles it.
+  - **The demo hash was never testing this.** Its road is straight, so
+    every yaw rate in it is exactly zero, and `sin`, `cos`, `atan2` and
+    `sincos` are only ever evaluated where every implementation agrees
+    anyway. Switching the whole workspace to `libm` moves that hash *not at
+    all*, which is the proof: a check that cannot move when the arithmetic
+    under it is replaced was not watching the arithmetic.
+  - **A world that steers does not agree.** The ellipse in
+    `continuo-actors`' determinism test fingerprinted three ways across the
+    four agents: the two glibc agents agreed with each other across
+    architectures, and the MSVC CRT and Apple's libm each differed. That is
+    a libm signature rather than an architecture one, which is what
+    `ubuntu-24.04-arm` is in the matrix for.
+  - **So the fix ships with the check that would fail without it.**
+    `a_curved_world_traces_the_same_path_on_every_platform` pins that
+    ellipse trajectory, and all four agents produce the one value. It is
+    the first check here that exercises a transcendental at an argument
+    implementations may round differently, and a straight-road hash cannot
+    replace it.
+  - **`disallowed-methods` keeps the inherent methods out**, one entry per
+    function, in the same file and for the same reason `HashMap` is banned:
+    no compile error would report `x.sin()`, and the world hash would
+    report it only from whichever agent disagreed, long after and far from
+    the line. `sqrt`, `powi`, `rem_euclid` and the rounding family stay,
+    being exact.
+  - **It cost no hash move at all**, which was not the expectation going
+    in: the deferred item budgeted one. Recorded logs stay valid, and the
+    two pinned values on main are untouched.

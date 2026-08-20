@@ -222,10 +222,11 @@ of the same seeded scenario. CI checks it against a written-down value on four
 agents, covering two architectures and three libm implementations (x86_64 and
 arm64, with glibc, the MSVC CRT, and Apple's), and they agree.
 
-That is a test rather than a guarantee. IEEE 754 does not require correct
-rounding for the trigonometry every pose depends on, so a new target or a
-future toolchain could still disagree. What changed is that it would fail
-where it happened instead of passing unnoticed. PLAN.md tracks the rest.
+They agree by construction rather than by luck. IEEE 754 does not require
+correct rounding for the trigonometry a pose depends on, so every `sin`,
+`cos`, `asin` and `atan2` here goes through the `libm` crate, a pure-Rust
+port of MUSL's, and a `disallowed-methods` entry keeps the platform's own
+out. DECISIONS.md records what that was measured against.
 
 Two observer details worth knowing: log lines carry the *message's* sim time
 (an observer is a world-level actor, so it receives time-T poses strictly
