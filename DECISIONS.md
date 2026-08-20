@@ -1038,63 +1038,58 @@ it got there, including the roads not taken.
 
 - **2026-08-19**: **The plant integrates a commanded acceleration and owns
   speed, and the two axes travel as separate messages.** A controller
-  publishing a speed was the plant taking dictation: nothing between the
-  command and the pose could refuse it, so a car asked for 30 m/s was doing
-  30 m/s that instant. Acceleration is what a driver actually has, and
-  integrating it puts a state between the asking and the doing. The clamp at
-  zero is where the two visibly part, since a car already stopped and still
-  told to brake is doing nothing at all.
+  publishing a speed left nothing between the command and the pose to
+  refuse it: a car asked for 30 m/s was doing 30 m/s that instant.
+  Acceleration is what a driver has, and integrating it puts a state in
+  between. The clamp at zero is where commanded and actual visibly part,
+  since a stopped car told to brake is doing nothing.
   - **Speed belongs to the plant, so the plant publishes it.** Nobody else
-    can see it. A controller knows only what it asked for, and the clamp
+    can see it: a controller knows only what it asked for, and the clamp
     means that is not what happened. So `.../pose` carries `speed` beside
     `position` and `orientation`, flat, and every existing reader goes on
     reading a pose and ignores the field it did not ask for. The viewer
     included, which is why nothing in `python/` changed.
   - **Two commands rather than one**, on `.../accel_cmd` and
-    `.../steer_cmd`, held independently. A following law and a steering law
-    are different laws, and nothing says one component has to hold both. The
-    world where a learned longitudinal model runs beside native steering
-    then needs a second publisher and no new shape at all. Both say
-    *commanded* in the payload as well as the key, because commanded is not
-    actual and the wire should not read as though it were.
-  - **Silence is hold, which is what makes the demo cheaper rather than
-    poorer.** Nothing in it commands an acceleration, so every car keeps the
-    speed its plant was built with, and the constant-speed car needs no
-    longitudinal publisher to exist. A held zero is the right start for
-    exactly that reason: a controller saying nothing about acceleration is
-    not saying zero, it is leaving the plant to carry on.
+    `.../steer_cmd`, held independently. Following and steering are
+    different laws and one component need not hold both, so a learned
+    longitudinal model beside native steering wants a second publisher and
+    no new shape. Both say *commanded* in the payload as well as the key,
+    because commanded is not actual.
+  - **Silence is hold, which makes the demo cheaper rather than poorer.**
+    Nothing in it commands an acceleration, so every car keeps the speed its
+    plant was built with and the constant-speed car needs no longitudinal
+    publisher to exist. That is why a held zero is the right start: a
+    controller saying nothing about acceleration is not saying zero.
   - **What moved in the hash is payload shapes and keys, and nothing else.**
-    `d747a81be039c5f1` to `152db7f40041f053`. The proof is a test rather
-    than an argument: five sampled poses from a car driving the ellipse in
-    `determinism.rs`, pinned to the bit against what the same run produced
-    before the reshape. The ellipse rather than the demo's straight road on
-    purpose, since there the steering law works the whole way round and any
-    difference in the integration would show, where on a straight road every
+    `d747a81be039c5f1` to `152db7f40041f053`. Five sampled poses from a car
+    driving the ellipse in `determinism.rs` are pinned to the bit against
+    what that run produced before. The ellipse rather than the demo's
+    straight road, because there the steering law works the whole way round
+    and a difference in the integration would show; on a straight road every
     yaw rate is exactly zero and two quite different plants would agree.
     README's sample poses are unchanged for the same reason, so the diff
     shows one number moving in a block of numbers that did not.
   - **Actual acceleration stays unobservable**, deferred rather than
     dismissed. It differs from the commanded value wherever the clamp bites,
-    and yaw rate would follow it. The honest move when something wants them
-    is renaming the message rather than stretching `pose` a third time,
+    and yaw rate would follow it. When something wants them the honest move
+    is a message of their own rather than stretching `pose` a third time,
     since the key says `pose` and the viewer's `pose_from_payload` reads it
     as one. Nothing needs it yet.
 
 - **2026-08-19**: **A plant's initial state is one deserializable struct
   rather than positional arguments.** `CarState { position, orientation,
-  speed }`, and since the constructor was changing anyway this was the
-  moment it cost nothing. It names the model's integrator state in one
-  place, a later model adds a field rather than a fifth argument, and when
-  scenarios come from files rather than from Rust it is what those files
-  carry, with no signature to change. The FMU side already works this way,
-  since initial values are name-keyed data checked against each variable's
-  declared type, so both paths are converging on the shape scenario
-  configuration needs: a registry instantiating component types from data
-  cannot know any model's state layout.
+  speed }`, and since the constructor was changing anyway it cost nothing.
+  It names the integrator state in one place, a later model adds a field
+  rather than a fifth argument, and when scenarios come from files it is
+  what those files carry, with no signature to change. The FMU side already
+  works this way, since initial values are name-keyed data checked against
+  each variable's declared type, so both paths are converging on the shape
+  scenario configuration needs: a registry instantiating component types
+  from data cannot know any model's state layout.
   - **Named for its contents rather than for the model.** A `UnicycleState`
-    would be renamed by the first plant that is not a unicycle, and it would
-    be renamed for nothing, because where a car is and how fast it is going
-    is what any of them integrate.
+    would be renamed by the first plant that is not a unicycle, and renamed
+    for nothing, since where a car is and how fast it is going is what any
+    of them integrate.
   - **One struct for the constructor and for the wire**, because they are
     the same four numbers. That is also what fixes its layout: the fields
     are flat and `position` and `orientation` sit where `Pose` puts them, so
@@ -1106,5 +1101,5 @@ it got there, including the roads not taken.
     car nobody commands.
   - **The `Component` trait stays out of it**, deliberately. An
     initial-state hook there would have to know a shape that is per-model,
-    and any generic parameter plumbing before scenario configuration says
-    what it must carry would be guessing at it.
+    and plumbing a generic parameter before scenario configuration says what
+    it must carry would be guessing at it.

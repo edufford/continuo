@@ -7,21 +7,18 @@ use crate::commands::{AccelCmd, SteerCmd};
 
 /// Where a car is and how fast it is going.
 ///
-/// One struct doing two jobs, because both are the same four numbers: it
-/// is what a plant is built with, and it is what a plant publishes. When
-/// scenarios come from files rather than from Rust, it is what those files
-/// carry as well, so its serde form is part of the contract rather than an
-/// implementation detail.
+/// One struct for two jobs, since both are the same four numbers: what a
+/// plant is built with, and what it publishes. It is also what scenario
+/// files will carry, so its serde form is contract rather than detail.
 ///
-/// The fields are flat, and that is the load-bearing part: `position` and
-/// `orientation` sit exactly where [`Pose`] puts them, so everything
-/// already reading a pose off this key goes on reading one and ignores the
-/// speed beside it.
+/// The flat fields are the load-bearing part. `position` and
+/// `orientation` sit where [`Pose`] puts them, so anything reading a pose
+/// off this key goes on reading one and ignores the speed beside it.
 ///
-/// Speed is here and acceleration is not. Speed is state, integrated by
-/// the plant and visible nowhere else. Acceleration is a held command, so
-/// the first message to arrive replaces whatever the plant was built with,
-/// and zero is the right start for a car nobody commands.
+/// Speed is here and acceleration is not. Speed is state the plant
+/// integrates and nothing else can see. Acceleration is a held command,
+/// replaced by the first message to arrive, and zero is right for a car
+/// nobody commands.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub struct CarState {
     /// Where the car is, meters, `z` always zero for a planar model.
@@ -33,7 +30,7 @@ pub struct CarState {
 }
 
 impl CarState {
-    /// A car standing at `pose` and doing `speed`.
+    /// A car at `pose` doing `speed`.
     pub fn new(pose: Pose, speed: f64) -> Self {
         CarState {
             position: pose.position,
@@ -42,7 +39,7 @@ impl CarState {
         }
     }
 
-    /// Where the car is, without the speed, for whoever wants only that.
+    /// Where the car is, without the speed.
     pub fn pose(&self) -> Pose {
         Pose {
             position: self.position,
@@ -51,20 +48,19 @@ impl CarState {
     }
 }
 
-/// Planar unicycle kinematics: integrates the acceleration and the yaw
-/// rate it is holding, and publishes where that has put the car. Publishes
-/// `z = 0` and yaw-only quaternions per the pose convention.
+/// Planar unicycle kinematics: integrates the acceleration and yaw rate
+/// it is holding and publishes where that put the car. Publishes `z = 0`
+/// and yaw-only quaternions per the pose convention.
 ///
-/// **It owns speed**, which is why what it publishes carries one. Nothing
-/// else can say how fast a car is going: a controller knows only what it
-/// asked for, and the clamp at zero parts that from what happened.
+/// **It owns speed**, which is why what it publishes carries one. A
+/// controller knows only what it asked for, and the clamp at zero parts
+/// that from what happened.
 ///
-/// The two commands are held separately, each replaced only by a message
-/// on its own key, so a car whose controller publishes one goes on
-/// integrating whatever the other last said. Silence is hold rather than
-/// stop, which is what lets a constant-speed car have no longitudinal
-/// publisher at all: nobody commands an acceleration, the held zero
-/// stands, and the speed it was built with is the speed it keeps.
+/// Each command is held on its own key, so a car whose controller
+/// publishes one goes on integrating whatever the other last said.
+/// Silence is hold rather than stop, which is what lets a constant-speed
+/// car have no longitudinal publisher: the held zero stands, and the
+/// speed it was built with is the speed it keeps.
 pub struct UnicyclePhysics {
     actor_name: String,
     period: SimDuration,
@@ -92,16 +88,14 @@ impl UnicyclePhysics {
 
     /// Applies the newest message on each command key.
     ///
-    /// Newest *per key* rather than newest overall, because the two
-    /// commands arrive separately and holding one must not depend on
-    /// whether the other spoke this step. The inbox is read backwards so
-    /// the first match on a key is the one that wins, which leaves the
-    /// older messages on that key undecoded rather than decoded and then
-    /// overwritten.
+    /// Newest *per key* rather than newest overall, because holding one
+    /// command must not depend on whether the other spoke. The inbox is
+    /// read backwards so the first match on a key wins, which leaves the
+    /// older ones undecoded rather than decoded and overwritten.
     ///
-    /// The last path segment is what tells the two apart, which is exact
-    /// rather than a guess: [`Self::subscriptions`] admits these two keys
-    /// and nothing else.
+    /// The last path segment tells the two apart, which is exact rather
+    /// than a guess: [`Self::subscriptions`] admits these two keys and
+    /// nothing else.
     fn take_commands(&mut self, ctx: &StepCtx) -> Result<(), CoreError> {
         let mut took_accel = false;
         let mut took_steer = false;
@@ -120,16 +114,16 @@ impl UnicyclePhysics {
             }
         }
 
-        // Return success: both commands are now as new as the inbox allows.
+        // Return success: both commands are as new as the inbox allows.
         Ok(())
     }
 
     /// Advances the model by `dt` seconds on the commands it is holding.
     fn advance(&mut self, dt: f64) {
         // Speed first, so the step travels at what was asked for rather
-        // than at what the previous one ended on. It stops at zero because
-        // this model has no reverse gear, and a brake held past a
-        // standstill would otherwise drive the car back up the road.
+        // than at what the last one ended on. It stops at zero because
+        // this model has no reverse: a brake held past a standstill would
+        // otherwise drive the car back up the road.
         self.speed = (self.speed + self.accel_cmd * dt).max(0.0);
         // Midpoint heading keeps arcs smooth at coarse steps while staying
         // a closed-form deterministic update.
@@ -181,11 +175,10 @@ impl Component for UnicyclePhysics {
 
     /// The integrator state and both held commands.
     ///
-    /// The commands are in it because they are state the plant carries and
-    /// nothing publishes: a car holding a brake and a car holding nothing
-    /// publish the same pose for one step and only then part. Hashing what
-    /// is held catches that at the step where they diverge rather than at
-    /// the step where it starts to show.
+    /// The commands are in because they are state nothing publishes: a
+    /// car holding a brake and a car holding nothing publish the same
+    /// pose for one step and only then part. Hashing what is held catches
+    /// that at the step they diverge rather than the step it shows.
     fn state_bytes(&self) -> Option<Vec<u8>> {
         #[derive(serde::Serialize)]
         struct State {
@@ -223,8 +216,8 @@ mod tests {
 
     /// A car at the origin pointing along `+x`, doing `speed`.
     fn plant(speed: f64) -> UnicyclePhysics {
-        // Return a plant holding neither command, as one is before anyone
-        // has spoken to it.
+        // Return a plant holding neither command, as one is before it is
+        // spoken to.
         UnicyclePhysics::new("car", PERIOD, CarState::new(Pose::default(), speed))
     }
 
@@ -268,8 +261,7 @@ mod tests {
         let (key, payload) = outbox.remove(0);
         assert_eq!(key.as_str(), "continuo/w/actor/car/pose");
 
-        // Return the bytes, so a test can read them as whatever it is
-        // checking they can be read as.
+        // Return the bytes, for a test to read as whatever it is checking.
         payload
     }
 
@@ -287,11 +279,11 @@ mod tests {
 
     #[test]
     fn an_initial_state_round_trips_through_json() {
-        // Short decimals throughout, so what is being checked is that
-        // serde maps the fields the way this says it does. Longer ones
-        // would drag `serde_json`'s own float parsing into a test that is
-        // not about it: `from_str` into an `f64` is a bit off the value
-        // `to_string` was given for about one number in eight.
+        // Short decimals throughout, so this checks that serde maps the
+        // fields the way it says it does. Longer ones would drag
+        // `serde_json`'s float parsing into a test that is not about it:
+        // `from_str` into an `f64` misses what `to_string` produced by an
+        // ulp for about one number in eight.
         let state = CarState::new(
             Pose {
                 position: Vec3::new(3.0, -4.0, 0.0),
@@ -310,9 +302,9 @@ mod tests {
             state
         );
 
-        // Flat, and speed last, because that is what leaves a pose sitting
-        // where a pose sits. A nested `pose` field would round-trip just as
-        // well and be readable by nothing that reads poses today.
+        // Flat, and speed last, so a pose sits where a pose sits. A
+        // nested `pose` field would round-trip just as well and be
+        // readable by nothing that reads poses today.
         assert!(text.starts_with("{\"position\":{"), "{text}");
         assert!(text.ends_with(",\"speed\":21.5}"), "{text}");
     }
@@ -322,9 +314,9 @@ mod tests {
         let mut plant = plant(9.0);
         let payload = step_at(&mut plant, SimTime::ZERO, None, vec![]);
 
-        // The whole compatibility claim in one assertion: the plant now
-        // publishes a speed as well, and everything reading this key as a
-        // pose reads it unchanged and ignores what it did not ask for.
+        // The whole compatibility claim in one assertion: a speed rides
+        // on this key, and everything reading it as a pose reads the pose
+        // unchanged and ignores what it did not ask for.
         let pose: Pose = serde_json::from_slice(&payload).expect("still a pose");
         assert_eq!(pose, Pose::default());
         assert!(
@@ -335,7 +327,7 @@ mod tests {
 
     #[test]
     fn a_car_nobody_commands_holds_the_speed_it_was_built_with() {
-        // A whole second of nothing being said to it, which is the
+        // A whole second of nothing said to it, which is the
         // constant-speed car the demo is full of.
         let state = run(&mut plant(7.0), 100, vec![]);
         assert_eq!(state.speed, 7.0);
@@ -345,8 +337,8 @@ mod tests {
 
     #[test]
     fn held_acceleration_integrates_into_speed() {
-        // Said once and then never again, so what the car does for the
-        // remaining ninety-nine steps is what holding it means.
+        // Said once and never again, so what the car does for the other
+        // ninety-nine steps is what holding it means.
         let state = run(&mut plant(0.0), 100, vec![accel(1, 2.0)]);
         assert!((state.speed - 2.0).abs() < 1e-9, "{state:?}");
 
@@ -361,8 +353,8 @@ mod tests {
 
     #[test]
     fn speed_never_integrates_below_zero() {
-        // Braking hard enough to stop in a tenth of a second, held for two
-        // seconds, which is the case that would reverse a car that took the
+        // Braking hard enough to stop in a tenth of a second, held for
+        // two seconds: the case that would reverse a car taking the
         // arithmetic at its word.
         let mut plant = plant(1.0);
         let stopped = run(&mut plant, 200, vec![accel(1, -10.0)]);

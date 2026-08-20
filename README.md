@@ -335,7 +335,7 @@ Steering and acceleration arrive as separate messages, and the physics holds
 each on its own, which is what lets the demo command no acceleration at all:
 every car keeps the speed its physics was built with, because a controller
 saying nothing about acceleration is not saying zero. The pose carries a
-speed for the same reason. The plant owns it, so nothing else can report it.
+speed because the plant owns it, so nothing else can report it.
 
 ## Writing a component
 

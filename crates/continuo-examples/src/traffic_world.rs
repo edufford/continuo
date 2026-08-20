@@ -113,9 +113,9 @@ pub fn config_paced(pacing: Pacing) -> ConductorConfig {
 /// the physics, so its command reaches the physics same-instant when both
 /// are due.
 ///
-/// `speed` goes to the physics rather than to the controller, because the
-/// physics is what owns it. Nothing here commands an acceleration, so what
-/// the car starts at is what it holds for the whole run.
+/// `speed` goes to the physics rather than the controller, because the
+/// physics owns it. Nothing here commands an acceleration, so what the car
+/// starts at is what it holds for the whole run.
 fn add_car<T: Transport>(
     conductor: &mut Conductor<T>,
     actor_name: &str,

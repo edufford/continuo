@@ -140,8 +140,8 @@ def test_commands_are_not_poses():
 
 def test_a_pose_carrying_a_speed_is_still_a_pose():
     # The plant owns speed and publishes it on the pose key, since nothing
-    # else can see it. The viewer has no use for the field and has to go on
-    # reading the pose it does use, which is what lets the two change apart.
+    # else can see it. The viewer has no use for the field and must go on
+    # reading the pose it does use, so the two can change apart.
     payload = pose_payload(4.0)
     payload["speed"] = 22.5
     scene = Scene()

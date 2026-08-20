@@ -11,9 +11,8 @@ use crate::path::Waypoints;
 /// Path follower: reads the latest pose, asks
 /// [`pure_pursuit_yaw_rate`] where to steer, and publishes that.
 ///
-/// Lateral only. How fast a car goes is between its plant and whoever
-/// commands an acceleration, and a car with no such publisher holds the
-/// speed it was built at.
+/// Lateral only. Speed is the plant's business, and a car with nobody
+/// commanding an acceleration holds the one it was built with.
 ///
 /// Follows the road in **Frenet coordinates**: an arc length `s` found by
 /// projection, and a fixed lateral offset it holds. So every car on a road

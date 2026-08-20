@@ -2,9 +2,9 @@
 //! path-following controller, unicycle physics, a pose logger, and a
 //! traffic spawner.
 //!
-//! A controller commands and a plant integrates, and the two meet on the
-//! messages in [`commands`]: one per axis, so the longitudinal and lateral
-//! halves of a car can be answered by different components.
+//! A controller commands and a plant integrates, and they meet on the
+//! messages in [`commands`]: one per axis, so different components can
+//! answer a car's two halves.
 //!
 //! [`control_laws`] holds the laws themselves, as pure functions over
 //! their arguments. A controller component is then the wiring around one:

@@ -90,9 +90,9 @@ fn identical_runs_produce_identical_event_logs() {
 
 /// Every pose car1 published, in the order it published them.
 fn car1_poses(log: &EventLog) -> Vec<Pose> {
-    // Return the stream, read as poses because that is what the rest of
-    // the world reads off this key: the plant publishes its speed there
-    // too, and a `Pose` decode ignores it.
+    // Return the stream, read as poses because that is what everything
+    // else reads off this key. The plant publishes its speed there too,
+    // and a `Pose` decode ignores it.
     log.events
         .iter()
         .filter_map(|e| match e {
@@ -107,14 +107,13 @@ fn car1_poses(log: &EventLog) -> Vec<Pose> {
 /// Where car1 is at five sampled steps of the run above.
 ///
 /// A pinned trajectory, so a change meaning to leave the world alone has
-/// something to prove it with. It moves when the scenario or the model
-/// behind it moves, each a deliberate act, and anything else moving it is
-/// the bug it exists to catch.
+/// something to prove it with. The scenario or the model moving it is a
+/// deliberate act; anything else moving it is the bug this catches.
 ///
-/// The ellipse rather than a straight road is the point: here the steering
-/// law works the whole way round, so a difference in the integration
-/// shows. On a straight road every yaw rate is exactly zero and two quite
-/// different plants would agree.
+/// The ellipse rather than a straight road is the point: here the
+/// steering law works the whole way round, so a difference in the
+/// integration shows. On a straight road every yaw rate is exactly zero
+/// and two quite different plants would agree.
 const BASELINE_CAR1_POSES: [(usize, f64, f64, f64); 5] = [
     (0, 40.0, 0.0, 1.640_540_530_479_719_4),
     (
@@ -146,8 +145,8 @@ const BASELINE_CAR1_POSES: [(usize, f64, f64, f64); 5] = [
 #[test]
 fn a_constant_speed_car_traces_its_pinned_path() {
     // To the bit. Nobody commands an acceleration here, so the held zero
-    // stands, the speed never moves off what the car was built with, and
-    // where it ends up is the geometry's decision alone.
+    // stands, the speed never leaves what the car was built with, and the
+    // geometry alone decides where it ends up.
     let poses = car1_poses(&run_world(5, 42));
     for (index, x, y, yaw) in BASELINE_CAR1_POSES {
         let pose = poses[index];
