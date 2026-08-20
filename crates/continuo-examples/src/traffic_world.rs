@@ -25,8 +25,9 @@
 use std::sync::{Arc, Mutex, OnceLock};
 
 use continuo_actors::{
-    DespawnTrafficRequest, PathFollowController, PoseLogger, SpawnTrafficRequest, TrafficSpawner,
-    UnicyclePhysics, Waypoints, road_pose, straight_road, traffic_despawn_key, traffic_spawn_key,
+    CarState, DespawnTrafficRequest, DriveLimits, PathFollowController, PoseLogger,
+    SpawnTrafficRequest, TrafficSpawner, UnicyclePhysics, Waypoints, road_pose, straight_road,
+    traffic_despawn_key, traffic_spawn_key,
 };
 use continuo_conductor::record::LogEvent;
 use continuo_conductor::{
@@ -75,6 +76,9 @@ const SPAWN_AHEAD: f64 = 40.0;
 const RETIRE_BEHIND: f64 = 60.0;
 const SPAWN_GAP: (f64, f64) = (20.0, 50.0);
 
+/// What a full command is worth on every car in this world.
+const CAR_LIMITS: DriveLimits = DriveLimits::highway_car();
+
 /// A handle on the one road every car in this world drives, built once and
 /// handed out, not rebuilt per call, which is what keeps a run that spawns
 /// twenty cars from carrying twenty copies of the same geometry.
@@ -111,6 +115,15 @@ pub fn config_paced(pacing: Pacing) -> ConductorConfig {
 /// physics]`. Declared order matters: the controller is registered before
 /// the physics, so its command reaches the physics same-instant when both
 /// are due.
+///
+/// `speed` goes to the physics rather than the controller, because the
+/// physics owns it. Nothing here commands an acceleration, so what the car
+/// starts at is what it holds for the whole run.
+///
+/// Both halves read their turn rate out of [`CAR_LIMITS`], since a
+/// normalized command means whatever the plant says it means and a
+/// controller working from a different number would steer to the wrong
+/// rate.
 fn add_car<T: Transport>(
     conductor: &mut Conductor<T>,
     actor_name: &str,
@@ -129,16 +142,16 @@ fn add_car<T: Transport>(
             road.clone(),
             lane_offset,
             SimDuration::from_millis(100),
-            speed,
             6.0, // lookahead, m
             1.5, // heading gain, 1/s
-            1.2, // max yaw rate, rad/s
+            CAR_LIMITS.yaw_rate_max,
             initial_pose,
         )),
         Box::new(UnicyclePhysics::new(
             actor_name,
             SimDuration::from_millis(10),
-            initial_pose,
+            CAR_LIMITS,
+            CarState::new(initial_pose, speed),
         )),
     ];
     for component in components {

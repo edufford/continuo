@@ -4,11 +4,19 @@
 
 use std::sync::Arc;
 
-use continuo_actors::{PathFollowController, UnicyclePhysics, Waypoints};
+use continuo_actors::{CarState, DriveLimits, PathFollowController, UnicyclePhysics, Waypoints};
 use continuo_conductor::record::LogEvent;
 use continuo_conductor::{Conductor, ConductorConfig, EventLog, Pacing, Recorder};
 use continuo_core::{HashFnv1a64, Pose, Quat, SimDuration, SimTime};
 use continuo_transport::{InProcTransport, MonitorTransport};
+
+/// What every car here holds, nobody commanding an acceleration.
+const CAR_SPEED: f64 = 8.0;
+
+/// What a full command is worth on those cars. The controller is handed
+/// the turn rate out of it for the reason `traffic_world` gives: a
+/// normalized command means whatever the plant says it means.
+const CAR_LIMITS: DriveLimits = DriveLimits::highway_car();
 
 fn run_world(sim_seconds: i64, world_seed: u64) -> EventLog {
     let config = ConductorConfig {
@@ -48,10 +56,9 @@ fn run_world(sim_seconds: i64, world_seed: u64) -> EventLog {
                     path.clone(),
                     0.0,                           // lateral offset: on the path itself
                     SimDuration::from_millis(100), // control period
-                    8.0,                           // speed, m/s
                     6.0,                           // lookahead distance, m
                     1.5,                           // heading gain, 1/s
-                    1.2,                           // max yaw rate, rad/s
+                    CAR_LIMITS.yaw_rate_max,
                     initial_pose,
                 )),
             )
@@ -62,7 +69,8 @@ fn run_world(sim_seconds: i64, world_seed: u64) -> EventLog {
                 Box::new(UnicyclePhysics::new(
                     car,
                     SimDuration::from_millis(10), // physics period
-                    initial_pose,
+                    CAR_LIMITS,
+                    CarState::new(initial_pose, CAR_SPEED),
                 )),
             )
             .expect("physics path is unique per car");
@@ -89,7 +97,8 @@ fn identical_runs_produce_identical_event_logs() {
 /// Every pose car1 published, in the order it published them.
 fn car1_poses(log: &EventLog) -> Vec<Pose> {
     // Return the stream, read as poses because that is what everything
-    // else reads off this key.
+    // else reads off this key. The plant publishes its speed there too,
+    // and a `Pose` decode ignores it.
     log.events
         .iter()
         .filter_map(|e| match e {
@@ -116,6 +125,11 @@ fn car1_poses(log: &EventLog) -> Vec<Pose> {
 /// the two glibc ones agreeing with each other across architectures while
 /// the MSVC CRT and Apple's each differed. This value is what all four
 /// produce now.
+///
+/// It answers a second question the world hash also cannot. That hash is
+/// taken over payload bytes, so reshaping a message moves it whether or
+/// not a car moved; this folds the decoded numbers, so it moves only when
+/// a car does.
 const CAR1_TRAJECTORY: u64 = 0xd53c_ae9c_9360_d41d;
 
 /// Every pose folded through [`HashFnv1a64`], the hash the world
@@ -138,6 +152,9 @@ fn trajectory_fingerprint(poses: &[Pose]) -> u64 {
 
 #[test]
 fn a_curved_world_traces_the_same_path_on_every_platform() {
+    // Every step of the run, not a sample. Nobody commands an
+    // acceleration here, so the held zero stands and the geometry alone
+    // decides where the car ends up.
     let poses = car1_poses(&run_world(5, 42));
     assert_eq!(poses.len(), 501, "expected a steady pose stream");
     assert_eq!(
@@ -161,6 +178,6 @@ fn cars_actually_move_around_the_loop() {
     let dist = ((last.position.x - first.position.x).powi(2)
         + (last.position.y - first.position.y).powi(2))
     .sqrt();
-    // ~8 m/s for 5 s along an oval: it must have gone somewhere.
+    // At CAR_SPEED for 5 s along an oval: it must have gone somewhere.
     assert!(dist > 5.0, "car1 barely moved: {dist} m");
 }

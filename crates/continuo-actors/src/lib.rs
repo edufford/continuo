@@ -2,6 +2,11 @@
 //! path-following controller, unicycle physics, a pose logger, and a
 //! traffic spawner.
 //!
+//! A controller commands and a plant integrates, and they meet on the
+//! messages in [`commands`]: one per axis, normalized, so different
+//! components can answer a car's two halves and neither has to know what
+//! car it is driving.
+//!
 //! [`control_laws`] holds the laws themselves, as pure functions over
 //! their arguments. A controller component is then the wiring around one:
 //! read the inbox, call the law, publish the answer.
@@ -24,6 +29,7 @@
 //! one freeway scenario; both carry TODOs pointing at the world spec and
 //! scenario configuration that replace them.
 
+pub mod commands;
 pub mod control_laws;
 mod controller;
 mod logger;
@@ -33,10 +39,11 @@ mod traffic_spawner;
 
 use continuo_core::KeyExpr;
 
-pub use controller::{Cmd, PathFollowController};
+pub use commands::{AccelCmd, SteerCmd};
+pub use controller::PathFollowController;
 pub use logger::PoseLogger;
 pub use path::Waypoints;
-pub use physics::UnicyclePhysics;
+pub use physics::{CarState, DriveLimits, UnicyclePhysics};
 pub use traffic_spawner::{
     DespawnTrafficRequest, SpawnTrafficRequest, TrafficSpawner, road_pose, straight_road,
     traffic_despawn_key, traffic_spawn_key,
@@ -58,7 +65,14 @@ pub fn pose_key(world_name: &str, actor_name: &str) -> KeyExpr {
     KeyExpr::new_rooted(format!("{world_name}/actor/{actor_name}/pose")).expect("valid pose key")
 }
 
-/// Key for an actor's drive command in `world`.
-pub fn cmd_key(world_name: &str, actor_name: &str) -> KeyExpr {
-    KeyExpr::new_rooted(format!("{world_name}/actor/{actor_name}/cmd")).expect("valid cmd key")
+/// Key for the acceleration commanded to an actor in `world`.
+pub fn accel_cmd_key(world_name: &str, actor_name: &str) -> KeyExpr {
+    KeyExpr::new_rooted(format!("{world_name}/actor/{actor_name}/accel_cmd"))
+        .expect("valid accel command key")
+}
+
+/// Key for the yaw rate commanded to an actor in `world`.
+pub fn steer_cmd_key(world_name: &str, actor_name: &str) -> KeyExpr {
+    KeyExpr::new_rooted(format!("{world_name}/actor/{actor_name}/steer_cmd"))
+        .expect("valid steer command key")
 }

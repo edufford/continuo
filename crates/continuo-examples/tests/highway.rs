@@ -141,7 +141,7 @@ fn the_dynamic_world_reproduces_exactly() {
 ///
 /// It moves when the scenario, the seed, or the hashing moves, each a
 /// deliberate act. Update it and README.md's sample output together.
-const DEMO_WORLD_HASH: u64 = 0xd747_a81b_e039_c5f1;
+const DEMO_WORLD_HASH: u64 = 0xeccd_08f9_a316_bbbc;
 
 #[test]
 fn the_demo_world_hashes_to_the_same_value_on_every_platform() {

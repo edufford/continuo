@@ -131,7 +131,8 @@ Key expression conventions (draft):
 | Key expression | Payload | Status |
 | -------------- | ------- | ------ |
 | `continuo/{world}/actor/{id}/pose` | actor pose | built |
-| `continuo/{world}/actor/{id}/cmd` | drive command | built |
+| `continuo/{world}/actor/{id}/accel_cmd` | commanded acceleration, [-1, 1] | built |
+| `continuo/{world}/actor/{id}/steer_cmd` | commanded steering, [-1, 1], +1 full left | built |
 | `continuo/{world}/conductor/membership/status` | applied join or leave | built (M5) |
 | `continuo_viz/{world}/**` | observer side channel, mirroring `continuo/{world}/**` beneath it | built (M5) |
 | `continuo/{world}/tick` | `TickStart` | M7 |
@@ -569,6 +570,45 @@ what the system *is* rather than the history of how it got there.
 
 ## Deferred (decided-not-now, revisit when they bite)
 
+### Determinism and correctness
+
+Both are about the numbers a run produces rather than about what it is
+computing, and each changes the world hash when fixed, which invalidates
+recorded logs. They want landing together, and alongside the binary mode
+under "Wire format", rather than churning the fingerprint once apiece.
+
+- **Folding yaw into [0, TAU) breaks mirror symmetry.** `rem_euclid` is exact,
+  but the fold it performs is not even-handed: it leaves a positive angle
+  alone and rewrites a negative one as `TAU` minus it, which rounds. Two cars
+  mirrored about the road therefore drift apart. Driving `UnicyclePhysics`
+  directly, one 10 ms step at 0.3 rad/s gives yaws of 0.003 and
+  -0.0030000000000003583, and after 500 steps the pair of positions has parted
+  by about 1e-12 m.
+
+  `wrap_to_pi` in `control_laws` is this problem already solved, and its doc
+  comment argues exactly this case: it wraps the magnitude and puts the sign
+  back, so it is odd to the bit. Folding to [-pi, pi] through it is a two-line
+  change, and the only reason it is not made in passing is that it moves the
+  world hash, which belongs to a change that is about it.
+
+- **A pose does not survive its own JSON round trip.** `serde_json::from_str`
+  into an `f64` returns a value one ulp off what `to_string` produced, for
+  about one number in eight over 200,000 of the kind a run makes. The same
+  numbers read through `serde_json::Value`, which `arbitrary_precision` keeps
+  exact, come back unchanged, as they do through Rust's own `str::parse`, and
+  stock serde_json outside this workspace behaves identically, so the feature
+  is not the cause.
+
+  Determinism is unharmed. The error is a pure function of the bytes and the
+  parser is pure Rust, so every run on every platform makes the same mistake,
+  which is why nothing has ever failed over it. Fidelity is another matter:
+  every component decoding a pose works from a number its publisher does not
+  hold, and `continuo-fmi` feeds decoded values across a boundary where the
+  golden tests compare them against the native laws. The fixes are routing
+  decodes through `Value`, which allocates on a hot path, or writing a
+  deserializer for `f64`. Either moves the hash, so it belongs here with the
+  rest.
+
 ### Wire format
 
 - **Getting large payloads out of a viewer's way.** A camera frame or lidar
@@ -671,6 +711,15 @@ what the system *is* rather than the history of how it got there.
   component, so enabling it changes the world hash**, while the bridge's switch
   cannot, being outside the sim. They look like two settings and are not the
   same kind of knob.
+
+- **The plant should publish its whole kinematic state**, rather than a pose
+  that has grown a speed. `CarState` is what the integrator carries, and the
+  first thing it leaves unobservable is the actual acceleration, which differs
+  from the commanded value wherever the clamp at zero bites; yaw rate would
+  follow it. The cost is a rename, which is why it is a deliberate act rather
+  than another field: the key says `pose` and the viewer's `pose_from_payload`
+  reads it as one, so a third stretch of that message would be the dishonest
+  version of this. `CarState` carries the TODO pointing here.
 
 - **A component asking to retire itself**: `StepCtx` has no way back to the
   conductor, so nothing can say "I am done" (see `Component`'s TODO).

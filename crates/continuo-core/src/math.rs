@@ -69,6 +69,11 @@ impl Quat {
     };
 
     /// Rotation about Z only, the common case for planar (2D) models.
+    ///
+    /// Positive turns counter-clockwise seen from above, which is left
+    /// for anything driving along the ground. That follows from the
+    /// right-handed Z-up frame rather than being a choice made here, and
+    /// it is the sign every planar model in the workspace steers by.
     pub fn from_yaw(yaw: f64) -> Self {
         EulerRad {
             roll: 0.0,
@@ -124,6 +129,9 @@ impl Quat {
     }
 
     /// Yaw component only, a convenience for planar models.
+    ///
+    /// Measured counter-clockwise from the +x axis, which is the angle
+    /// [`Quat::from_yaw`] takes.
     pub fn yaw(self) -> f64 {
         self.to_euler().yaw
     }

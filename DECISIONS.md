@@ -1061,6 +1061,108 @@ it got there, including the roads not taken.
     costing no measurable time, which is what a safety gain and a coverage
     loss look like from the outside.
 
+- **2026-08-19**: **The plant integrates a commanded acceleration and owns
+  speed, and the two axes travel as separate messages.** A controller
+  publishing a speed left nothing between the command and the pose to
+  refuse it: a car asked for 30 m/s was doing 30 m/s that instant.
+  Acceleration is what a driver has, and integrating it puts a state in
+  between. The clamp at zero is where commanded and actual visibly part,
+  since a stopped car told to brake is doing nothing.
+  - **Speed belongs to the plant, so the plant publishes it.** Nobody else
+    can see it: a controller knows only what it asked for, and the clamp
+    means that is not what happened. So `.../pose` carries `speed` beside
+    `position` and `orientation`, flat, and every existing reader goes on
+    reading a pose and ignores the field it did not ask for. The viewer
+    included, which is why nothing in `python/` changed.
+  - **Two commands rather than one**, on `.../accel_cmd` and
+    `.../steer_cmd`, held independently. Following and steering are
+    different laws and one component need not hold both, so a learned
+    longitudinal model beside native steering wants a second publisher and
+    no new shape. Both say *commanded* in the payload as well as the key,
+    because commanded is not actual.
+  - **Both are normalized to [-1, 1] and carry no unit.** A pedal and a
+    steering wheel travel between stops, and how much car is behind them is
+    the car's business, so `DriveLimits` lives on the plant and a command
+    says only what fraction of one it wants. A controller naming an
+    acceleration would be asserting something about a vehicle it does not
+    own, and two cars given one command would have to behave alike.
+    - The cost is that the two sides must agree on the limits with no way
+      to check. A number with no unit has nothing to disagree about, so a
+      controller working from a different `yaw_rate_max` steers to a rate
+      it did not intend and nothing anywhere fails. The scenario hands both
+      halves of a car one `DriveLimits`, and that is the whole of why they
+      match.
+    - Braking gets a limit of its own, because a car brakes harder than
+      it accelerates. One number for both would get one of them wrong.
+  - **A plant holds its last command rather than clearing it.** Nothing in
+    the demo commands an acceleration, so every car keeps the speed its
+    plant was built with and needs no longitudinal publisher at all. A
+    controller saying nothing about acceleration is not saying zero, which
+    is why a held zero is the right start.
+  - **The plant's state hash is the integrator state alone.** The held
+    commands are copies of what reached the plant, and every published
+    command is in the fingerprint already, so hashing them counted the same
+    bytes twice.
+    - A divergence in what *arrived* rather than in what was sent would
+      then wait for the pose to show it. That is true of any component
+      holding a decoded input, though, so guarding it here would mean
+      guarding it in every component. This hook is for state a component
+      makes and does not publish, which is what an integrator's is.
+  - **What moved in the hash, and what did not.** `d747a81be039c5f1` to
+    `eccd08f9a316bbbc`, for three things: the payload shapes and keys, the
+    normalizing, and the state hash dropping those commands. No car moved
+    for any of them. Every pose a car publishes driving the ellipse in
+    `determinism.rs` folds into one pinned fingerprint, which holds
+    throughout. The ellipse rather than the demo's straight road, because
+    there the steering law works the whole way round and a difference in
+    the integration would show; on a straight road every yaw rate is
+    exactly zero and two quite different plants would agree. README's
+    sample poses are unchanged for the same reason, so the diff shows one
+    number moving in a block of numbers that did not.
+    - **The world hash cannot make this claim**, which is why the
+      fingerprint exists beside it. It is taken over payload bytes, and
+      this change rewrote those on purpose, so it had to move whether or
+      not a car went anywhere. Folding the decoded numbers is what
+      separates the two questions.
+    - Normalizing survives it as well, which was not a given: dividing by
+      a limit and multiplying by it again is not an exact round trip in
+      general, and here it happens to be at every step of the run.
+  - **Actual acceleration stays unobservable**, deferred rather than
+    dismissed. It differs from the commanded value wherever the clamp bites,
+    and yaw rate would follow it. When something wants them the honest move
+    is a message of their own rather than stretching `pose` a third time,
+    since the key says `pose` and the viewer's `pose_from_payload` reads it
+    as one. Nothing needs it yet.
+
+- **2026-08-19**: **A plant's initial state is one deserializable struct
+  rather than positional arguments.** `CarState { position, orientation,
+  speed }`, and since the constructor was changing anyway it cost nothing.
+  It names the integrator state in one place, a later model adds a field
+  rather than a fifth argument, and when scenarios come from files it is
+  what those files carry, with no signature to change. The FMU side already
+  works this way, since initial values are name-keyed data checked against
+  each variable's declared type, so both paths are converging on the shape
+  scenario configuration needs: a registry instantiating component types
+  from data cannot know any model's state layout.
+  - **Named for its contents rather than for the model.** A `UnicycleState`
+    would be renamed by the first plant that is not a unicycle, and renamed
+    for nothing, since where a car is and how fast it is going is what any
+    of them integrate.
+  - **One struct for the constructor and for the wire**, because they
+    carry the same thing: a position, an orientation and a speed. That is
+    also what fixes its layout: the fields
+    are flat and `position` and `orientation` sit where `Pose` puts them, so
+    what the plant publishes is a pose with a speed after it rather than a
+    new shape. A nested `pose` field would read better in Rust and be
+    readable by nothing that reads poses today.
+  - **No acceleration in it.** That is a held command rather than integrator
+    state, replaced by the first message to arrive, and zero is right for a
+    car nobody commands.
+  - **The `Component` trait stays out of it**, deliberately. An
+    initial-state hook there would have to know a shape that is per-model,
+    and plumbing a generic parameter before scenario configuration says what
+    it must carry would be guessing at it.
+
 - **2026-08-20**: **Transcendentals go through `libm` rather than the
   platform's, so the world hash is portable by construction.** PLAN.md
   deferred this on the grounds that four CI agents agreed on

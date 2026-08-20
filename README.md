@@ -207,7 +207,7 @@ INFO pose sim_time=4.0 key="continuo/demo/actor/traffic1/pose" x=145.38 y=-3.50 
 INFO pose sim_time=4.0 key="continuo/demo/actor/traffic2/pose" x=190.87 y=-3.50 yaw_deg=0.0
 ...
 done: world 'demo' reached sim time 30.0 in 3031 ticks (free-run)
-actual time: 0.404 s (74x real-time), world hash d747a81be039c5f1
+actual time: 0.404 s (74x real-time), world hash eccd08f9a316bbbc
 ```
 
 The ego holds the centre lane at 30 m/s; traffic runs 16-22 m/s in the lanes
@@ -325,12 +325,21 @@ There are two distinct ways to watch a world, and the demo uses both:
   and must never feed data back into components.
 
 Each car is a composite of two components: a `PathFollowController` (100 ms
-period) that reads the car's pose and publishes a drive command, and a
-`UnicyclePhysics` (10 ms period) that integrates the latest command
-(sample-and-hold) and publishes the pose. The controller is declared first,
-so when both are due at the same instant its command reaches the physics in
-that same step; everything crossing actor boundaries (e.g. poses to the
-logger) is seen next step.
+period) that reads the car's pose and publishes how hard to steer, and a
+`UnicyclePhysics` (10 ms period) that integrates the commands it is holding
+(sample-and-hold) and publishes where that has put the car. The controller
+is declared first, so when both are due at the same instant its command
+reaches the physics in that same step; everything crossing actor boundaries
+(e.g. poses to the logger) is seen next step.
+
+Steering and acceleration arrive as separate messages, each normalized to
+[-1, 1] and carrying no unit: the rates behind them belong to the physics, so
+a controller asks for a fraction of a car it need not know anything about.
+The physics holds each command on its own, which is what lets the demo
+command no acceleration at all: every car keeps the speed its physics was
+built with, because a controller saying nothing about acceleration is not
+saying zero. The pose carries a speed because the plant owns it, so nothing
+else can report it.
 
 ## Writing a component
 

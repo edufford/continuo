@@ -29,15 +29,20 @@ pub struct PurePursuitParams {
 impl PurePursuitParams {
     /// The set this project steers cars with, taking the lane to hold.
     ///
-    /// The three beyond the lane are scenario tuning rather than anything
-    /// published: an aim point a car length or so ahead, turning toward
-    /// it briskly, inside a rate a car could be asked for.
+    /// The lookahead and the gain are scenario tuning: an aim point a car
+    /// length or so ahead, turned toward briskly. `max_yaw_rate` is not
+    /// tuning at all. A steer command is a fraction of the plant's
+    /// [`DriveLimits::yaw_rate_max`], so a follower dividing by any other
+    /// number asks for a turn it will not get, and the two are one
+    /// constant here for that reason.
+    ///
+    /// [`DriveLimits::yaw_rate_max`]: crate::DriveLimits::yaw_rate_max
     pub const fn highway_car(lateral_tgt: f64) -> Self {
         PurePursuitParams {
             lateral_tgt,
             lookahead: 6.0,
             gain_yaw_rate: 1.5,
-            max_yaw_rate: 1.2,
+            max_yaw_rate: crate::DriveLimits::highway_car().yaw_rate_max,
         }
     }
 }
