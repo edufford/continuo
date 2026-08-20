@@ -226,9 +226,7 @@ They agree by construction rather than by luck. IEEE 754 does not require
 correct rounding for the trigonometry a pose depends on, so every `sin`,
 `cos`, `asin` and `atan2` here goes through the `libm` crate, a pure-Rust
 port of MUSL's, and a `disallowed-methods` entry keeps the platform's own
-out. The demo's straight road never shows the difference, since every yaw
-rate in it is exactly zero; `continuo-actors`' ellipse does, and before
-this it fingerprinted three different ways across the four agents.
+out. DECISIONS.md records what that was measured against.
 
 Two observer details worth knowing: log lines carry the *message's* sim time
 (an observer is a world-level actor, so it receives time-T poses strictly
