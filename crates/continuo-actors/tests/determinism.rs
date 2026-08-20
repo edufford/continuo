@@ -4,11 +4,14 @@
 
 use std::sync::Arc;
 
-use continuo_actors::{PathFollowController, UnicyclePhysics, Waypoints};
+use continuo_actors::{CarState, PathFollowController, UnicyclePhysics, Waypoints};
 use continuo_conductor::record::LogEvent;
 use continuo_conductor::{Conductor, ConductorConfig, EventLog, Pacing, Recorder};
 use continuo_core::{Pose, Quat, SimDuration, SimTime};
 use continuo_transport::{InProcTransport, MonitorTransport};
+
+/// What every car here holds, nobody commanding an acceleration.
+const CAR_SPEED: f64 = 8.0;
 
 fn run_world(sim_seconds: i64, world_seed: u64) -> EventLog {
     let config = ConductorConfig {
@@ -48,7 +51,6 @@ fn run_world(sim_seconds: i64, world_seed: u64) -> EventLog {
                     path.clone(),
                     0.0,                           // lateral offset: on the path itself
                     SimDuration::from_millis(100), // control period
-                    8.0,                           // speed, m/s
                     6.0,                           // lookahead distance, m
                     1.5,                           // heading gain, 1/s
                     1.2,                           // max yaw rate, rad/s
@@ -62,7 +64,7 @@ fn run_world(sim_seconds: i64, world_seed: u64) -> EventLog {
                 Box::new(UnicyclePhysics::new(
                     car,
                     SimDuration::from_millis(10), // physics period
-                    initial_pose,
+                    CarState::new(initial_pose, CAR_SPEED),
                 )),
             )
             .expect("physics path is unique per car");
@@ -86,11 +88,12 @@ fn identical_runs_produce_identical_event_logs() {
     assert!(first.final_world_hash().is_some());
 }
 
-#[test]
-fn cars_actually_move_around_the_loop() {
-    let log = run_world(5, 42);
-    let car1_poses: Vec<Pose> = log
-        .events
+/// Every pose car1 published, in the order it published them.
+fn car1_poses(log: &EventLog) -> Vec<Pose> {
+    // Return the stream, read as poses because that is what the rest of
+    // the world reads off this key: the plant publishes its speed there
+    // too, and a `Pose` decode ignores it.
+    log.events
         .iter()
         .filter_map(|e| match e {
             LogEvent::Msg(m) if m.key.contains("/car1/pose") => Some(
@@ -98,7 +101,65 @@ fn cars_actually_move_around_the_loop() {
             ),
             _ => None,
         })
-        .collect();
+        .collect()
+}
+
+/// Where car1 is at five sampled steps of the run above.
+///
+/// A pinned trajectory, so a change meaning to leave the world alone has
+/// something to prove it with. It moves when the scenario or the model
+/// behind it moves, each a deliberate act, and anything else moving it is
+/// the bug it exists to catch.
+///
+/// The ellipse rather than a straight road is the point: here the steering
+/// law works the whole way round, so a difference in the integration
+/// shows. On a straight road every yaw rate is exactly zero and two quite
+/// different plants would agree.
+const BASELINE_CAR1_POSES: [(usize, f64, f64, f64); 5] = [
+    (0, 40.0, 0.0, 1.640_540_530_479_719_4),
+    (
+        125,
+        37.507_851_336_973_054,
+        9.601_746_584_654_9,
+        2.066_784_740_651_912,
+    ),
+    (
+        250,
+        30.781_464_445_016_912,
+        16.875_992_092_276_096,
+        2.533_986_377_490_154_3,
+    ),
+    (
+        375,
+        21.870_721_762_925_36,
+        21.355_526_274_873_89,
+        2.788_788_189_032_116,
+    ),
+    (
+        499,
+        12.320_909_025_749_636,
+        24.001_467_737_744_12,
+        2.948_859_999_559_971,
+    ),
+];
+
+#[test]
+fn a_constant_speed_car_traces_its_pinned_path() {
+    // To the bit. Nobody commands an acceleration here, so the held zero
+    // stands, the speed never moves off what the car was built with, and
+    // where it ends up is the geometry's decision alone.
+    let poses = car1_poses(&run_world(5, 42));
+    for (index, x, y, yaw) in BASELINE_CAR1_POSES {
+        let pose = poses[index];
+        assert_eq!(pose.position.x, x, "x at step {index}");
+        assert_eq!(pose.position.y, y, "y at step {index}");
+        assert_eq!(pose.orientation.yaw(), yaw, "yaw at step {index}");
+    }
+}
+
+#[test]
+fn cars_actually_move_around_the_loop() {
+    let car1_poses = car1_poses(&run_world(5, 42));
     assert!(
         car1_poses.len() > 100,
         "expected steady pose stream, got {}",
@@ -110,6 +171,6 @@ fn cars_actually_move_around_the_loop() {
     let dist = ((last.position.x - first.position.x).powi(2)
         + (last.position.y - first.position.y).powi(2))
     .sqrt();
-    // ~8 m/s for 5 s along an oval: it must have gone somewhere.
+    // At CAR_SPEED for 5 s along an oval: it must have gone somewhere.
     assert!(dist > 5.0, "car1 barely moved: {dist} m");
 }

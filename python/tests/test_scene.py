@@ -126,16 +126,37 @@ def test_commands_are_not_poses():
     scene.apply(
         Message(
             sim_time=1.0,
-            key="continuo/demo/actor/ego/cmd",
+            key="continuo/demo/actor/ego/steer_cmd",
             publisher="ego/controller",
             seq=0,
-            payload={"speed": 30.0, "yaw_rate": 0.0},
+            payload={"yaw_rate_cmd": 0.0},
         )
     )
 
     assert scene.actors == {}
     assert scene.messages_seen == 1
     assert scene.poses_applied == 0
+
+
+def test_a_pose_carrying_a_speed_is_still_a_pose():
+    # The plant owns speed and publishes it on the pose key, since nothing
+    # else can see it. The viewer has no use for the field and has to go on
+    # reading the pose it does use, which is what lets the two change apart.
+    payload = pose_payload(4.0)
+    payload["speed"] = 22.5
+    scene = Scene()
+    scene.apply(
+        Message(
+            sim_time=1.0,
+            key="continuo/demo/actor/ego/pose",
+            publisher="ego/physics",
+            seq=0,
+            payload=payload,
+        )
+    )
+
+    assert scene.actors["ego"].pose.x == 4.0
+    assert scene.poses_applied == 1
 
 
 def test_a_second_publisher_moves_an_actor_without_taking_ownership():
@@ -149,7 +170,10 @@ def test_a_second_publisher_moves_an_actor_without_taking_ownership():
 
 def test_parse_actor_key_only_matches_actor_keys():
     assert parse_actor_key("continuo/demo/actor/ego/pose") == ("ego", "pose")
-    assert parse_actor_key("continuo/demo/actor/ego/cmd") == ("ego", "cmd")
+    assert parse_actor_key("continuo/demo/actor/ego/steer_cmd") == (
+        "ego",
+        "steer_cmd",
+    )
     assert parse_actor_key("continuo/demo/conductor/membership/status") is None
     assert parse_actor_key("continuo/demo/actor/ego/pose/extra") is None
 

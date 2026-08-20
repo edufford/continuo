@@ -3,23 +3,17 @@ use std::sync::Arc;
 use continuo_core::{
     Component, ComponentId, CoreError, KeyExpr, Pose, SimDuration, SimTime, StepCtx,
 };
-use serde::{Deserialize, Serialize};
 
+use crate::commands::SteerCmd;
 use crate::control_laws::{PurePursuitParams, pure_pursuit_yaw_rate};
 use crate::path::Waypoints;
 
-/// Drive command from a controller to its physics sibling.
-#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
-pub struct Cmd {
-    /// Forward speed, m/s.
-    pub speed: f64,
-    /// Yaw rate, rad/s (positive = counter-clockwise).
-    pub yaw_rate: f64,
-}
-
 /// Path follower: reads the latest pose, asks
-/// [`pure_pursuit_yaw_rate`] where to steer, and publishes that with the
-/// speed it was built with.
+/// [`pure_pursuit_yaw_rate`] where to steer, and publishes that.
+///
+/// Lateral only. How fast a car goes is between its plant and whoever
+/// commands an acceleration, and a car with no such publisher holds the
+/// speed it was built at.
 ///
 /// Follows the road in **Frenet coordinates**: an arc length `s` found by
 /// projection, and a fixed lateral offset it holds. So every car on a road
@@ -32,7 +26,6 @@ pub struct PathFollowController {
     actor_name: String,
     road: Arc<Waypoints>,
     period: SimDuration,
-    speed: f64,
     pursuit_params: PurePursuitParams,
     last_pose: Pose,
 }
@@ -44,7 +37,6 @@ impl PathFollowController {
         road: Arc<Waypoints>,
         lateral_tgt: f64,
         period: SimDuration,
-        speed: f64,
         lookahead: f64,
         gain_yaw_rate: f64,
         max_yaw_rate: f64,
@@ -54,7 +46,6 @@ impl PathFollowController {
             actor_name: actor_name.into(),
             road,
             period,
-            speed,
             pursuit_params: PurePursuitParams {
                 lateral_tgt,
                 lookahead,
@@ -75,7 +66,7 @@ impl Component for PathFollowController {
         // World segment wildcarded: the world name is only known at step time.
         // TODO(PLAN "Scenario configuration"): once scenarios instantiate
         // components, pass the world name at construction and subscribe
-        // precisely (same in UnicyclePhysics).
+        // precisely (same in `UnicyclePhysics`).
         vec![KeyExpr::new_rooted(format!("*/actor/{}/pose", self.actor_name)).expect("valid key")]
     }
 
@@ -88,12 +79,11 @@ impl Component for PathFollowController {
             self.last_pose = message.decode::<Pose>()?;
         }
 
-        let cmd = Cmd {
-            speed: self.speed,
-            yaw_rate: pure_pursuit_yaw_rate(&self.road, self.last_pose, self.pursuit_params),
+        let cmd = SteerCmd {
+            yaw_rate_cmd: pure_pursuit_yaw_rate(&self.road, self.last_pose, self.pursuit_params),
         };
 
-        let key = crate::cmd_key(ctx.world_name(), &self.actor_name);
+        let key = crate::steer_cmd_key(ctx.world_name(), &self.actor_name);
         ctx.publish(key, &cmd)?;
 
         // Return the next due time, one control period from now.

@@ -131,7 +131,8 @@ Key expression conventions (draft):
 | Key expression | Payload | Status |
 | -------------- | ------- | ------ |
 | `continuo/{world}/actor/{id}/pose` | actor pose | built |
-| `continuo/{world}/actor/{id}/cmd` | drive command | built |
+| `continuo/{world}/actor/{id}/accel_cmd` | commanded acceleration | built |
+| `continuo/{world}/actor/{id}/steer_cmd` | commanded yaw rate | built |
 | `continuo/{world}/conductor/membership/status` | applied join or leave | built (M5) |
 | `continuo_viz/{world}/**` | observer side channel, mirroring `continuo/{world}/**` beneath it | built (M5) |
 | `continuo/{world}/tick` | `TickStart` | M7 |
