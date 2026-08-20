@@ -164,12 +164,12 @@ impl Component for UnicyclePhysics {
         Ok(ctx.now() + self.period)
     }
 
-    /// The integrator state and both held commands.
+    /// The integrator state, which is everything the plant carries that
+    /// the next step depends on.
     ///
-    /// The commands are in because they are state nothing publishes: a
-    /// car holding a brake and a car holding nothing publish the same
-    /// pose for one step and only then part. Hashing what is held catches
-    /// that at the step they diverge rather than the step it shows.
+    /// The held commands are not in it. They arrive as messages the
+    /// fingerprint already covers, so hashing them here would be counting
+    /// the same bytes twice.
     fn state_bytes(&self) -> Option<Vec<u8>> {
         #[derive(serde::Serialize)]
         struct State {
@@ -177,8 +177,6 @@ impl Component for UnicyclePhysics {
             y: f64,
             yaw: f64,
             speed: f64,
-            accel_cmd: f64,
-            yaw_rate_cmd: f64,
         }
 
         // Return the canonical state JSON for the tick fingerprint.
@@ -188,8 +186,6 @@ impl Component for UnicyclePhysics {
                 y: self.y,
                 yaw: self.yaw,
                 speed: self.speed,
-                accel_cmd: self.accel_cmd,
-                yaw_rate_cmd: self.yaw_rate_cmd,
             })
             .expect("state serializes"),
         )
