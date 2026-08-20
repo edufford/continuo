@@ -29,10 +29,27 @@ from continuo_viz.sources.log_source import read_log
 IDENTITY = {"w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0}
 
 
-def pose_payload(x: float, y: float = 0.0, orientation: dict | None = None) -> dict:
+# What every pose here carries, because the plant publishes its speed on
+# the pose key and a payload without one is not a message the simulation
+# sends.
+#
+# A speed a highway car would plausibly hold, rather than any number that
+# parses. Nothing reads the field yet, but it is what a speed arrow on a
+# car would be drawn from, and a fixture full of zeros or of nonsense
+# would make the first thing to draw one look broken.
+CRUISE_SPEED = 20.0
+
+
+def pose_payload(
+    x: float,
+    y: float = 0.0,
+    orientation: dict | None = None,
+    speed: float = CRUISE_SPEED,
+) -> dict:
     return {
         "position": {"x": x, "y": y, "z": 0.0},
         "orientation": orientation or IDENTITY,
+        "speed": speed,
     }
 
 
@@ -136,27 +153,6 @@ def test_commands_are_not_poses():
     assert scene.actors == {}
     assert scene.messages_seen == 1
     assert scene.poses_applied == 0
-
-
-def test_a_pose_carrying_a_speed_is_still_a_pose():
-    # The plant owns speed and publishes it on the pose key, since nothing
-    # else can see it. The viewer has no use for the field and must go on
-    # reading the pose it does use, so the two can change apart.
-    payload = pose_payload(4.0)
-    payload["speed"] = 22.5
-    scene = Scene()
-    scene.apply(
-        Message(
-            sim_time=1.0,
-            key="continuo/demo/actor/ego/pose",
-            publisher="ego/physics",
-            seq=0,
-            payload=payload,
-        )
-    )
-
-    assert scene.actors["ego"].pose.x == 4.0
-    assert scene.poses_applied == 1
 
 
 def test_a_second_publisher_moves_an_actor_without_taking_ownership():
