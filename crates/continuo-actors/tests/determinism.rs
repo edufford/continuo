@@ -7,7 +7,7 @@ use std::sync::Arc;
 use continuo_actors::{CarState, PathFollowController, UnicyclePhysics, Waypoints};
 use continuo_conductor::record::LogEvent;
 use continuo_conductor::{Conductor, ConductorConfig, EventLog, Pacing, Recorder};
-use continuo_core::{Pose, Quat, SimDuration, SimTime};
+use continuo_core::{HashFnv1a64, Pose, Quat, SimDuration, SimTime};
 use continuo_transport::{InProcTransport, MonitorTransport};
 
 /// What every car here holds, nobody commanding an acceleration.
@@ -104,56 +104,50 @@ fn car1_poses(log: &EventLog) -> Vec<Pose> {
         .collect()
 }
 
-/// Where car1 is at five sampled steps of the run above.
+/// A fingerprint of car1's whole trajectory, independent of how a pose
+/// happens to be written down.
 ///
-/// A pinned trajectory, so a change meaning to leave the world alone has
-/// something to prove it with. The scenario or the model moving it is a
-/// deliberate act; anything else moving it is the bug this catches.
+/// The world hash cannot do this job: it is taken over payload bytes, so
+/// reshaping a message moves it whether or not a car moved. This folds
+/// the decoded numbers, so it moves only when a car does.
 ///
-/// The ellipse rather than a straight road is the point: here the
-/// steering law works the whole way round, so a difference in the
-/// integration shows. On a straight road every yaw rate is exactly zero
-/// and two quite different plants would agree.
-const BASELINE_CAR1_POSES: [(usize, f64, f64, f64); 5] = [
-    (0, 40.0, 0.0, 1.640_540_530_479_719_4),
-    (
-        125,
-        37.507_851_336_973_054,
-        9.601_746_584_654_9,
-        2.066_784_740_651_912,
-    ),
-    (
-        250,
-        30.781_464_445_016_912,
-        16.875_992_092_276_096,
-        2.533_986_377_490_154_3,
-    ),
-    (
-        375,
-        21.870_721_762_925_36,
-        21.355_526_274_873_89,
-        2.788_788_189_032_116,
-    ),
-    (
-        499,
-        12.320_909_025_749_636,
-        24.001_467_737_744_12,
-        2.948_859_999_559_971,
-    ),
-];
+/// From the ellipse rather than a straight road: there the steering law
+/// works the whole way round, so a difference in the integration shows.
+/// On a straight road every yaw rate is exactly zero and two quite
+/// different plants would agree.
+const CAR1_TRAJECTORY: u64 = 0x1a32_628b_483a_869d;
+
+/// Every pose folded through [`HashFnv1a64`], which is the hash the world
+/// fingerprint is built from and is owned by the workspace for this
+/// reason: its constants are the same on every platform and toolchain,
+/// where `DefaultHasher` is explicitly not stable between Rust releases.
+///
+/// No length prefixes, because every field here is eight bytes and a run
+/// of fixed-width fields can only be read one way.
+fn trajectory_fingerprint(poses: &[Pose]) -> u64 {
+    let mut hash = HashFnv1a64::new();
+    for pose in poses {
+        for value in [pose.position.x, pose.position.y, pose.orientation.yaw()] {
+            hash.write_u64(value.to_bits());
+        }
+    }
+
+    // Return the fold.
+    hash.finish()
+}
 
 #[test]
 fn a_constant_speed_car_traces_its_pinned_path() {
-    // To the bit. Nobody commands an acceleration here, so the held zero
-    // stands, the speed never leaves what the car was built with, and the
-    // geometry alone decides where it ends up.
+    // Every step of it, not a sample: nobody commands an acceleration
+    // here, so the held zero stands, the speed never leaves what the car
+    // was built with, and the geometry alone decides where it ends up.
     let poses = car1_poses(&run_world(5, 42));
-    for (index, x, y, yaw) in BASELINE_CAR1_POSES {
-        let pose = poses[index];
-        assert_eq!(pose.position.x, x, "x at step {index}");
-        assert_eq!(pose.position.y, y, "y at step {index}");
-        assert_eq!(pose.orientation.yaw(), yaw, "yaw at step {index}");
-    }
+    assert_eq!(poses.len(), 501, "expected a steady pose stream");
+    assert_eq!(
+        format!("{:016x}", trajectory_fingerprint(&poses)),
+        format!("{CAR1_TRAJECTORY:016x}"),
+        "car1 drove a different path"
+    );
 }
 
 #[test]
