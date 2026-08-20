@@ -186,8 +186,8 @@ impl UnicyclePhysics {
         // Midpoint heading keeps arcs smooth at coarse steps while staying
         // a closed-form deterministic update.
         let mid_yaw = self.yaw + 0.5 * yaw_rate * dt;
-        self.x += self.speed * mid_yaw.cos() * dt;
-        self.y += self.speed * mid_yaw.sin() * dt;
+        self.x += self.speed * libm::cos(mid_yaw) * dt;
+        self.y += self.speed * libm::sin(mid_yaw) * dt;
         // TODO(PLAN "Determinism and correctness"): folding into
         // [0, TAU) rounds a negative angle where it leaves a positive one
         // alone, so two cars mirrored about the road do not stay mirrored.

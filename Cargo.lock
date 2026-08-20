@@ -424,6 +424,7 @@ dependencies = [
  "continuo-conductor",
  "continuo-core",
  "continuo-transport",
+ "libm",
  "serde",
  "serde_json",
  "tracing",
@@ -445,6 +446,7 @@ dependencies = [
 name = "continuo-core"
 version = "0.1.0"
 dependencies = [
+ "libm",
  "serde",
  "serde_json",
  "thiserror 2.0.18",

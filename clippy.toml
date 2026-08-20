@@ -17,3 +17,39 @@ disallowed-types = [
     { path = "std::collections::HashMap", reason = "iteration order is unspecified; use BTreeMap so runs stay reproducible" },
     { path = "std::collections::HashSet", reason = "iteration order is unspecified; use BTreeSet so runs stay reproducible" },
 ]
+
+# Transcendentals go through `libm`, never through the platform's.
+#
+# IEEE 754 pins add, multiply, divide and sqrt, and requires nothing of
+# `sin` and its neighbours, so each platform's C library rounds them
+# differently. `libm` is a pure-Rust port of MUSL's, so the same bits come
+# out everywhere and a world hash is portable by construction. DECISIONS.md
+# carries what was measured.
+#
+# Banning the inherent methods is what keeps that true. No compile error
+# would report reaching for one, and the hash would report it only from
+# whichever agent disagreed, long after and far from the line.
+#
+# `sqrt`, `powi`, `rem_euclid` and the rounding family stay: those are
+# exact, so the platform has no freedom to differ.
+disallowed-methods = [
+    { path = "f64::sin", reason = "platforms round this differently; use libm::sin" },
+    { path = "f64::cos", reason = "platforms round this differently; use libm::cos" },
+    { path = "f64::tan", reason = "platforms round this differently; use libm::tan" },
+    { path = "f64::sin_cos", reason = "platforms round this differently; use libm::sincos" },
+    { path = "f64::asin", reason = "platforms round this differently; use libm::asin" },
+    { path = "f64::acos", reason = "platforms round this differently; use libm::acos" },
+    { path = "f64::atan", reason = "platforms round this differently; use libm::atan" },
+    { path = "f64::atan2", reason = "platforms round this differently; use libm::atan2" },
+    { path = "f64::exp", reason = "platforms round this differently; use libm::exp" },
+    { path = "f64::ln", reason = "platforms round this differently; use libm::log" },
+    { path = "f64::log", reason = "platforms round this differently; use libm::log" },
+    { path = "f64::log2", reason = "platforms round this differently; use libm::log2" },
+    { path = "f64::log10", reason = "platforms round this differently; use libm::log10" },
+    { path = "f64::powf", reason = "platforms round this differently; use libm::pow" },
+    { path = "f64::hypot", reason = "platforms round this differently; use libm::hypot" },
+    { path = "f64::cbrt", reason = "platforms round this differently; use libm::cbrt" },
+    { path = "f64::sinh", reason = "platforms round this differently; use libm::sinh" },
+    { path = "f64::cosh", reason = "platforms round this differently; use libm::cosh" },
+    { path = "f64::tanh", reason = "platforms round this differently; use libm::tanh" },
+]

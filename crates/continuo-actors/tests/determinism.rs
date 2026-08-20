@@ -110,23 +110,31 @@ fn car1_poses(log: &EventLog) -> Vec<Pose> {
         .collect()
 }
 
-/// A fingerprint of car1's whole trajectory, independent of how a pose
-/// happens to be written down.
+/// A fingerprint of car1's whole trajectory around the ellipse.
 ///
-/// The world hash cannot do this job: it is taken over payload bytes, so
-/// reshaping a message moves it whether or not a car moved. This folds
-/// the decoded numbers, so it moves only when a car does.
+/// **This is the first check in the project that a curved world is
+/// portable.** `DEMO_WORLD_HASH` cannot be: the demo drives a straight
+/// road, so every yaw rate in it is exactly zero and every transcendental
+/// is evaluated where all implementations agree anyway. Routing this
+/// workspace through `libm` moves that hash not at all, which is the
+/// proof it was never testing this.
 ///
-/// From the ellipse rather than a straight road: there the steering law
-/// works the whole way round, so a difference in the integration shows.
-/// On a straight road every yaw rate is exactly zero and two quite
-/// different plants would agree.
-const CAR1_TRAJECTORY: u64 = 0x1a32_628b_483a_869d;
+/// An ellipse steers the whole way round, so it evaluates `sin`, `cos`
+/// and `atan2` at arguments where implementations are free to differ.
+/// Before `libm` it fingerprinted three ways across the four CI agents,
+/// the two glibc ones agreeing with each other across architectures while
+/// the MSVC CRT and Apple's each differed. This value is what all four
+/// produce now.
+///
+/// It answers a second question the world hash also cannot. That hash is
+/// taken over payload bytes, so reshaping a message moves it whether or
+/// not a car moved; this folds the decoded numbers, so it moves only when
+/// a car does.
+const CAR1_TRAJECTORY: u64 = 0xd53c_ae9c_9360_d41d;
 
-/// Every pose folded through [`HashFnv1a64`], which is the hash the world
-/// fingerprint is built from and is owned by the workspace for this
-/// reason: its constants are the same on every platform and toolchain,
-/// where `DefaultHasher` is explicitly not stable between Rust releases.
+/// Every pose folded through [`HashFnv1a64`], the hash the world
+/// fingerprint is already built from, rather than `DefaultHasher`, which
+/// is explicitly not stable between Rust releases.
 ///
 /// No length prefixes, because every field here is eight bytes and a run
 /// of fixed-width fields can only be read one way.
@@ -143,10 +151,10 @@ fn trajectory_fingerprint(poses: &[Pose]) -> u64 {
 }
 
 #[test]
-fn a_constant_speed_car_traces_its_pinned_path() {
-    // Every step of it, not a sample: nobody commands an acceleration
-    // here, so the held zero stands, the speed never leaves what the car
-    // was built with, and the geometry alone decides where it ends up.
+fn a_curved_world_traces_the_same_path_on_every_platform() {
+    // Every step of the run, not a sample. Nobody commands an
+    // acceleration here, so the held zero stands and the geometry alone
+    // decides where the car ends up.
     let poses = car1_poses(&run_world(5, 42));
     assert_eq!(poses.len(), 501, "expected a steady pose stream");
     assert_eq!(

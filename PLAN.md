@@ -168,6 +168,14 @@ Baked in from the start, because they are hard to retrofit:
   a composite, same-instant delivery follows the declared child order, which
   is explicit and therefore deterministic.
 - Inboxes delivered sorted by `(publisher_id, sequence)`, never arrival order.
+- **Transcendentals go through `libm`, never through the platform's.** IEEE
+  754 pins add, multiply, divide and sqrt and requires nothing of `sin` and
+  its neighbours, so each C library rounds them as it likes. `libm` is a
+  pure-Rust port of MUSL's, so the same bits come out everywhere and the
+  world hash is portable by construction rather than by measurement, which
+  is the reasoning that already made the hash and the RNG owned. A
+  `disallowed-methods` entry per function keeps the inherent methods out,
+  since nothing else would report reaching for one.
 - Per-component RNG seeded from `(world_seed, component_id)`. No OS entropy or
   wall clock in sim logic; wall clock exists only in the conductor's pacing.
 - Join/leave applied **only at tick boundaries**, and every request **names the
@@ -564,37 +572,10 @@ what the system *is* rather than the history of how it got there.
 
 ### Determinism and correctness
 
-These are about the numbers a run produces rather than about what it is
+Both are about the numbers a run produces rather than about what it is
 computing, and each changes the world hash when fixed, which invalidates
 recorded logs. They want landing together, and alongside the binary mode
 under "Wire format", rather than churning the fingerprint once apiece.
-
-- **Transcendental math is not required to be portable, and CI now checks
-  whether it is.** The world hash depends on `sin`, `cos`, `sin_cos`, `asin`,
-  and `atan2`, most directly in the unicycle integration that feeds every pose,
-  and again in the quaternion and Euler conversions. IEEE 754 requires correct
-  rounding for `sqrt` but not for any of those, so glibc, the MSVC CRT, macOS
-  libm, and different architectures may each return different last bits.
-  `powi` and `rem_euclid` are exact, though the next item is about a fold
-  built on `rem_euclid` that is exact and still not even-handed.
-
-  The first two steps are done. `DEMO_WORLD_HASH` in the highway tests pins
-  what a full demo run hashes to, and CI runs on four agents covering two
-  architectures and three libm implementations: x86_64 and arm64, with glibc,
-  the MSVC CRT, and Apple's. All four agree. `ubuntu-24.04-arm` is what makes
-  that diagnostic rather than lucky, since it varies the architecture while
-  holding the libm family constant, so architecture alone is known not to move
-  the hash. A pinned value also replaces the artifact-and-compare job sketched
-  here earlier, and is stronger: comparing agents to each other passes when
-  they all move together, comparing each to a written-down value does not.
-
-  Routing the transcendentals through the `libm` crate is therefore deferred
-  on evidence rather than on hope. It would make the hash bit-stable by
-  construction instead of by measurement, which is the reasoning that already
-  made the hash and the RNG owned implementations, and it costs one hash
-  change, so it belongs with the other hash-moving items here. Nothing forces
-  it meanwhile: a target that disagreed would fail `DEMO_WORLD_HASH` in the
-  run that produced it.
 
 - **Folding yaw into [0, TAU) breaks mirror symmetry.** `rem_euclid` is exact,
   but the fold it performs is not even-handed: it leaves a positive angle

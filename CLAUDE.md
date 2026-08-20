@@ -29,11 +29,18 @@ left to be discovered.
   still passing is the proof, and the commit message should say so.
 - `HashMap` and `HashSet` are banned by `clippy.toml`. Use `BTreeMap` and
   `BTreeSet`, which iterate in key order.
-- CI runs four agents (Ubuntu x86_64, Ubuntu arm64, Windows, macOS arm64)
-  because `sin`, `cos`, `asin` and `atan2` are not required to be correctly
-  rounded, so each platform's libm is free to differ in the last bits. Where
-  there is a choice, prefer the operations IEEE 754 does pin: add, multiply,
-  divide, sqrt.
+- **Transcendentals go through `libm`**, a pure-Rust port of MUSL's, because
+  `sin`, `cos`, `asin` and `atan2` are not required to be correctly rounded
+  and each platform's C library differs in the last bits. `clippy.toml` bans
+  the inherent methods, since nothing else would report reaching for one.
+  Where there is still a choice, prefer what IEEE 754 pins outright: add,
+  multiply, divide, sqrt.
+- CI runs four agents (Ubuntu x86_64, Ubuntu arm64, Windows, macOS arm64),
+  which is what measured that difference and what keeps it measured.
+  `DEMO_WORLD_HASH` cannot see it: the demo's road is straight, so every yaw
+  rate in it is exactly zero and every transcendental is evaluated where all
+  implementations agree anyway. The ellipse in `continuo-actors`' determinism
+  test is the one that steers, and it is pinned for that reason.
 - The workspace contains no `unsafe`.
 
 ## Scale and churn are design constraints
