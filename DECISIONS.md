@@ -1054,11 +1054,12 @@ it got there, including the roads not taken.
     architectures, and the MSVC CRT and Apple's libm each differed. That is
     a libm signature rather than an architecture one, which is what
     `ubuntu-24.04-arm` is in the matrix for.
-  - **So the fix ships with a check that would fail without it.**
+  - **So the fix ships with the check that would fail without it.**
     `a_curved_world_traces_the_same_path_on_every_platform` pins that
-    ellipse trajectory. It is the first check here that exercises a
-    transcendental at an argument implementations may round differently,
-    and a straight-road hash cannot replace it.
+    ellipse trajectory, and all four agents produce the one value. It is
+    the first check here that exercises a transcendental at an argument
+    implementations may round differently, and a straight-road hash cannot
+    replace it.
   - **`disallowed-methods` keeps the inherent methods out**, one entry per
     function, in the same file and for the same reason `HashMap` is banned:
     no compile error would report `x.sin()`, and the world hash would

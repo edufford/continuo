@@ -111,9 +111,11 @@ fn car1_poses(log: &EventLog) -> Vec<Pose> {
 /// proof it was never testing this.
 ///
 /// An ellipse steers the whole way round, so it evaluates `sin`, `cos`
-/// and `atan2` at arguments where implementations are free to differ, and
-/// before `libm` it fingerprinted three ways across the four CI agents.
-/// If this value holds on all four, the portability is by construction.
+/// and `atan2` at arguments where implementations are free to differ.
+/// Before `libm` it fingerprinted three ways across the four CI agents,
+/// the two glibc ones agreeing with each other across architectures while
+/// the MSVC CRT and Apple's each differed. This value is what all four
+/// produce now.
 const CAR1_TRAJECTORY: u64 = 0xd53c_ae9c_9360_d41d;
 
 /// Every pose folded through [`HashFnv1a64`], the hash the world

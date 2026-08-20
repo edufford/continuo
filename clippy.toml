@@ -22,17 +22,17 @@ disallowed-types = [
 #
 # IEEE 754 pins add, multiply, divide and sqrt, and requires nothing of
 # `sin` and its neighbours, so each platform's C library is free to round
-# them differently. Measured rather than assumed: an ellipse run
-# fingerprints three ways across this project's four CI agents, where the
-# two glibc agents agree with each other and the MSVC CRT and Apple's libm
-# each differ. The demo's straight road hides it, since every yaw rate
-# there is exactly zero.
+# them differently, and they do. Measured rather than assumed: one ellipse
+# run fingerprinted three ways across this project's four CI agents, the
+# two glibc agents agreeing with each other across architectures while the
+# MSVC CRT and Apple's libm each differed. The demo's straight road cannot
+# show it, since every yaw rate there is exactly zero.
 #
 # `libm` is a pure-Rust port of MUSL's, so the same bits come out
-# everywhere and the world hash is portable by construction rather than by
-# measurement. That only holds while nothing reaches for the inherent
-# method instead, which no compile error would report and which the hash
-# would only report from whichever agent disagreed.
+# everywhere and all four agents produce the one value. That holds only
+# while nothing reaches for the inherent method instead, which no compile
+# error would report and which the hash would report only from whichever
+# agent disagreed.
 #
 # `sqrt`, `powi`, `rem_euclid` and the rounding family stay: those are
 # exact, so the platform has no freedom to differ.
