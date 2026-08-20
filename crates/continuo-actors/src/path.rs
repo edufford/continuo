@@ -94,8 +94,8 @@ impl Waypoints {
             .map(|i| {
                 let angle = std::f64::consts::TAU * i as f64 / samples as f64;
                 (
-                    center.0 + semi_x * angle.cos(),
-                    center.1 + semi_y * angle.sin(),
+                    center.0 + semi_x * libm::cos(angle),
+                    center.1 + semi_y * libm::sin(angle),
                 )
             })
             .collect();
@@ -195,8 +195,8 @@ impl Waypoints {
         // Return the point displaced along the left normal, which is the
         // heading turned a quarter circle counter-clockwise.
         Vec3::new(
-            base.x - lateral * heading.sin(),
-            base.y + lateral * heading.cos(),
+            base.x - lateral * libm::sin(heading),
+            base.y + lateral * libm::cos(heading),
             0.0,
         )
     }
@@ -208,7 +208,7 @@ impl Waypoints {
         let b = self.points[(i + 1) % self.points.len()];
 
         // Return the segment's direction as a yaw angle.
-        f64::atan2(b.1 - a.1, b.0 - a.0)
+        libm::atan2(b.1 - a.1, b.0 - a.0)
     }
 
     /// Arc length of the closest point on the path to `(x, y)`.

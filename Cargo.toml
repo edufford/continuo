@@ -24,6 +24,11 @@ fmi = { version = "0.8", default-features = false, features = ["fmi3"] }
 # Authoring side of the same upstream workspace. It depends on `fmi` in turn,
 # so an FMU crate pays for bindgen exactly as the importer does.
 fmi-export = "0.3"
+# A pure-Rust port of MUSL's libm, so `sin` and its neighbours are the same
+# bits on every platform rather than whatever that platform's C library
+# rounds to. Pinned through Cargo.lock, since a different version of it is
+# a different fingerprint.
+libm = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["arbitrary_precision", "raw_value"] }
 thiserror = "2"

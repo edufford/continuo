@@ -17,3 +17,43 @@ disallowed-types = [
     { path = "std::collections::HashMap", reason = "iteration order is unspecified; use BTreeMap so runs stay reproducible" },
     { path = "std::collections::HashSet", reason = "iteration order is unspecified; use BTreeSet so runs stay reproducible" },
 ]
+
+# Transcendentals go through `libm`, never through the platform's.
+#
+# IEEE 754 pins add, multiply, divide and sqrt, and requires nothing of
+# `sin` and its neighbours, so each platform's C library is free to round
+# them differently. Measured rather than assumed: an ellipse run
+# fingerprints three ways across this project's four CI agents, where the
+# two glibc agents agree with each other and the MSVC CRT and Apple's libm
+# each differ. The demo's straight road hides it, since every yaw rate
+# there is exactly zero.
+#
+# `libm` is a pure-Rust port of MUSL's, so the same bits come out
+# everywhere and the world hash is portable by construction rather than by
+# measurement. That only holds while nothing reaches for the inherent
+# method instead, which no compile error would report and which the hash
+# would only report from whichever agent disagreed.
+#
+# `sqrt`, `powi`, `rem_euclid` and the rounding family stay: those are
+# exact, so the platform has no freedom to differ.
+disallowed-methods = [
+    { path = "f64::sin", reason = "not correctly rounded; use libm::sin" },
+    { path = "f64::cos", reason = "not correctly rounded; use libm::cos" },
+    { path = "f64::tan", reason = "not correctly rounded; use libm::tan" },
+    { path = "f64::sin_cos", reason = "not correctly rounded; use libm::sincos" },
+    { path = "f64::asin", reason = "not correctly rounded; use libm::asin" },
+    { path = "f64::acos", reason = "not correctly rounded; use libm::acos" },
+    { path = "f64::atan", reason = "not correctly rounded; use libm::atan" },
+    { path = "f64::atan2", reason = "not correctly rounded; use libm::atan2" },
+    { path = "f64::exp", reason = "not correctly rounded; use libm::exp" },
+    { path = "f64::ln", reason = "not correctly rounded; use libm::log" },
+    { path = "f64::log", reason = "not correctly rounded; use libm::log" },
+    { path = "f64::log2", reason = "not correctly rounded; use libm::log2" },
+    { path = "f64::log10", reason = "not correctly rounded; use libm::log10" },
+    { path = "f64::powf", reason = "not correctly rounded; use libm::pow" },
+    { path = "f64::hypot", reason = "not correctly rounded; use libm::hypot" },
+    { path = "f64::cbrt", reason = "not correctly rounded; use libm::cbrt" },
+    { path = "f64::sinh", reason = "not correctly rounded; use libm::sinh" },
+    { path = "f64::cosh", reason = "not correctly rounded; use libm::cosh" },
+    { path = "f64::tanh", reason = "not correctly rounded; use libm::tanh" },
+]
