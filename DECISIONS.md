@@ -1010,6 +1010,31 @@ it got there, including the roads not taken.
   `[future-incompat-report] frequency = "never"` was tried and dropped: it
   is workspace wide, so it would hide every other dependency's warnings to
   quiet one, and the hard error would still be coming.
+  - **The patch cannot reach `cargo install`, so CI still prints that
+    warning when it installs `cargo-fmi`.** A patch is taken from the root
+    manifest being built, and for that command the root is cargo-fmi's, so
+    the build resolves its tree from the registry and takes
+    `proc-macro-error2` unpatched. Putting the patch in
+    `.cargo/config.toml`, which cargo does read from the working directory
+    upward, was measured rather than assumed and does not work either,
+    with or without `--locked`: the install compiles 2.0.1 from crates.io
+    and does not object. The workspace's own builds take the patched
+    revision, which their output shows by printing the source URL beside
+    the crate name.
+  - **When rustc makes it an error, that install stops working and CI
+    stops with it.** Our own builds are fine, the patch being the fix
+    rustc's help suggests, so what breaks is the tool rather than the
+    workspace. It will not break everywhere at once: an agent holding a
+    warm `cargo-fmi` cache skips the install and passes, so this arrives
+    as some agents failing without a change, which is the shape of the
+    bug `--force` was added for and is worth recognizing quickly.
+    - Nothing upstream to move to when it happens. 0.3.0 is the latest
+      cargo-fmi and `proc-macro-error2` is archived, so the routes are
+      forking or vendoring cargo-fmi with the patch in its own manifest,
+      or `fmi-export-derive` dropping the dependency.
+    - Which is why the warning is left alone. Suppressing the report on
+      that step is a one-line change and would work, and it would also
+      remove the only notice that this is coming.
 
 - **2026-08-16**: **Each situation in the packaged-FMU comparison is a run
   of its own, with a reset between them.** The sweeps drive situations

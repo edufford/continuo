@@ -64,9 +64,15 @@ jobs:
             ~/.cargo/bin/cargo-fmi.exe
           key: cargo-fmi-0.3.0-${{ runner.os }}-${{ runner.arch }}
 
+      # `--force` because two caches can own this path. `rust-cache` above
+      # keeps `~/.cargo/bin`, so a run that restores it and misses the key
+      # here arrives with the binary already in place and a plain install
+      # refuses. The keys expire independently, so which of them is warm is
+      # not something this step can know: installing the pinned version
+      # over whatever is there is what makes it right in every case.
       - name: "Install: cargo-fmi (on a cache miss)"
         if: steps.cargo-fmi-cache.outputs.cache-hit != 'true'
-        run: cargo install cargo-fmi --version 0.3.0 --locked
+        run: cargo install cargo-fmi --version 0.3.0 --locked --force
 
       # The viewer installs with plain `pip`, not `uv`. `uv.lock` is committed
       # as a convenience and nothing requires it, so installing the ordinary
