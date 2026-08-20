@@ -19,11 +19,11 @@ use crate::commands::{AccelCmd, SteerCmd};
 /// has grown fields.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub struct CarState {
-    /// Where the car is, meters, `z` always zero for a planar model.
+    /// Where the car is, in meters.
     pub position: Vec3,
-    /// Which way it points, a yaw-only unit quaternion.
+    /// Which way it points, a unit quaternion.
     pub orientation: Quat,
-    /// How fast it is going, m/s, never negative.
+    /// How fast it is going along its heading, m/s.
     pub speed: f64,
 }
 
@@ -290,6 +290,10 @@ mod tests {
     /// Where a car starts where the test is not about where it starts:
     /// off the origin and pointing along `+x`, so a plant that lost the
     /// pose it was built with fails rather than passing.
+    ///
+    /// Short decimals on purpose, and the same goes for [`CRUISE_SPD`].
+    /// `an_initial_state_round_trips_through_json` compares a serde round
+    /// trip exactly, which a realistic value would fail.
     fn start_pose() -> Pose {
         Pose {
             position: Vec3::new(12.5, -3.5, 0.0),
@@ -375,25 +379,14 @@ mod tests {
 
     #[test]
     fn an_initial_state_round_trips_through_json() {
-        // Short decimals throughout, so this checks that serde maps the
-        // fields the way it says it does rather than checking a parser.
+        // This checks that serde maps the fields the way it says it
+        // does, not that a float parser is exact, which is why
+        // [`start_pose`] and [`CRUISE_SPD`] are short decimals.
         //
         // TODO(PLAN "Determinism and correctness"): `from_str` into an
         // `f64` misses what `to_string` produced by an ulp for about one
-        // number in eight, so a realistic value here would fail. Every
-        // component decoding a pose has the same gap.
-        let state = CarState::new(
-            Pose {
-                position: Vec3::new(3.0, -4.0, 0.0),
-                orientation: Quat {
-                    w: 0.6,
-                    x: 0.0,
-                    y: 0.0,
-                    z: 0.8,
-                },
-            },
-            CRUISE_SPD,
-        );
+        // number in eight. Every component decoding a pose has that gap.
+        let state = CarState::new(start_pose(), CRUISE_SPD);
         let text = serde_json::to_string(&state).expect("a state serializes");
         assert_eq!(
             serde_json::from_str::<CarState>(&text).expect("and deserializes"),

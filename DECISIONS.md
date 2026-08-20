@@ -1069,11 +1069,11 @@ it got there, including the roads not taken.
       match.
     - Braking gets a limit of its own, because a car brakes harder than
       it accelerates. One number for both would get one of them wrong.
-  - **Silence is hold, which makes the demo cheaper rather than poorer.**
-    Nothing in it commands an acceleration, so every car keeps the speed its
-    plant was built with and the constant-speed car needs no longitudinal
-    publisher to exist. That is why a held zero is the right start: a
-    controller saying nothing about acceleration is not saying zero.
+  - **A plant holds its last command rather than clearing it.** Nothing in
+    the demo commands an acceleration, so every car keeps the speed its
+    plant was built with and needs no longitudinal publisher at all. A
+    controller saying nothing about acceleration is not saying zero, which
+    is why a held zero is the right start.
   - **The plant's state hash is the integrator state alone.** The held
     commands are copies of what reached the plant, and every published
     command is in the fingerprint already, so hashing them counted the same
@@ -1123,8 +1123,9 @@ it got there, including the roads not taken.
     would be renamed by the first plant that is not a unicycle, and renamed
     for nothing, since where a car is and how fast it is going is what any
     of them integrate.
-  - **One struct for the constructor and for the wire**, because they are
-    the same four numbers. That is also what fixes its layout: the fields
+  - **One struct for the constructor and for the wire**, because they
+    carry the same thing: a position, an orientation and a speed. That is
+    also what fixes its layout: the fields
     are flat and `position` and `orientation` sit where `Pose` puts them, so
     what the plant publishes is a pose with a speed after it rather than a
     new shape. A nested `pose` field would read better in Rust and be
