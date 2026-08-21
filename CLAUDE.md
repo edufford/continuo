@@ -100,7 +100,7 @@ An elapsed time says a command ran, never that it found anything to do.
 
 CI splits the test step in two, `--lib --bins` then `--test '*'`, so neither
 reruns the other's tests. Between them they have to name every target that
-runs, since one neither names runs nowhere. One `cargo test --workspace`
+runs, because anything they miss runs nowhere. One `cargo test --workspace`
 covers the lot locally.
 
 A change reaching an FMU crate or the laws it links needs more than that,

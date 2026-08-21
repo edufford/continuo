@@ -1197,14 +1197,15 @@ it got there, including the roads not taken.
     in: the deferred item budgeted one. Recorded logs stay valid, and the
     two pinned values on main are untouched.
 
-- **2026-08-20**: **The checking tasks say how many tests ran, and a step
-  that ran none fails.** A table of elapsed times says a command ran, never
-  that it found anything to do, so a filter resolving no targets reads
-  exactly like a full pass. `verify-fmus` raised it, its output ending in
-  "running 0 tests" from doc-test targets with no examples, and nothing in
-  the summary telling that apart from the packaged-FMU tests having been
-  skipped. Zero being a failure rather than a small number is what that task
-  already says about validating no FMUs.
+- **2026-08-20**: **`cargo xtask verify` and `cargo xtask verify-fmus` say
+  how many tests ran, and a step that ran none fails.** A table of elapsed
+  times says a command ran, never that it found anything to do, so a filter
+  resolving no targets reads exactly like a full pass. `verify-fmus` raised
+  it, its output ending in "running 0 tests" from doc-test targets with no
+  examples, and nothing in the summary telling that apart from the
+  packaged-FMU tests having been skipped. Zero being a failure rather than
+  a small number is what `verify-fmus` already says about validating no
+  FMUs.
   - **Counted by reading the output**, since `cargo test` offers the number
     no other way on stable: `--format json`, `--format junit` and
     `--report-time` are all nightly-only, `--list` says what would run
@@ -1221,4 +1222,6 @@ it got there, including the roads not taken.
     reported as fact.
   - **CI's split had to learn `--bins`.** `--lib` and `--test '*'` named
     every target that existed until `xtask` grew unit tests, and a binary's
-    are in neither, so they would have run nowhere.
+    are in neither, so they would have run nowhere. The rule those two
+    flags have to follow is now written beside them: together they name
+    every target that runs.
