@@ -1,5 +1,5 @@
-//! What the checking tasks do alike: run something, say what it cost, say
-//! how many tests were in it, and say what was left out.
+//! What `verify` and `verify-fmus` do alike: run something, say what it
+//! cost, say how many tests were in it, and say what was left out.
 //!
 //! Both of them are a list of work with a timing table under it, and the
 //! difference is only what is on the list, so the running and the reporting
@@ -14,7 +14,7 @@ use std::time::Instant;
 /// testing.
 pub(crate) struct Progress {
     took_sec: Vec<(String, f64)>,
-    tests: usize,
+    num_tests: usize,
     skipped: bool,
 }
 
@@ -22,7 +22,7 @@ impl Progress {
     pub(crate) fn new() -> Self {
         Progress {
             took_sec: Vec::new(),
-            tests: 0,
+            num_tests: 0,
             skipped: false,
         }
     }
@@ -48,7 +48,7 @@ impl Progress {
         let started = Instant::now();
         match work()? {
             Some(0) => return Err(format!("`{work_label}` ran no tests")),
-            Some(tests) => self.tests += tests,
+            Some(num_tests) => self.num_tests += num_tests,
             None => {}
         }
         self.took_sec
@@ -84,12 +84,11 @@ impl Progress {
         println!("{total:>7.1} s   in total");
 
         println!();
-        let plural = if self.tests == 1 { "" } else { "s" };
-        let ran = format!("{} test{plural} ran.", self.tests);
+        let num_tests = self.num_tests;
         if self.skipped {
-            println!("Everything that could run passed. {ran} {when_skipped}");
+            println!("Everything that could run passed. {num_tests} tests ran. {when_skipped}");
         } else {
-            println!("Everything passed. {ran}");
+            println!("Everything passed. {num_tests} tests ran.");
         }
     }
 }
@@ -130,10 +129,10 @@ pub(crate) fn run_command(
         _ => format!("cannot run {}: {error}", argv[0]),
     })?;
     let reading = child.stdout.take().expect("stdout was piped just above");
-    let mut tests = 0;
+    let mut num_passed = 0;
     for line in BufReader::new(reading).lines().map_while(Result::ok) {
         println!("{line}");
-        tests += passed_in(&line).unwrap_or(0);
+        num_passed += parse_num_passed(&line).unwrap_or(0);
     }
     let status = child
         .wait()
@@ -143,7 +142,7 @@ pub(crate) fn run_command(
     }
 
     // Return what the run said it had checked.
-    Ok(tests)
+    Ok(num_passed)
 }
 
 /// The count in `12 passed`, which is how both tools write one: cargo once
@@ -152,7 +151,7 @@ pub(crate) fn run_command(
 /// The last run of digits rather than the last word, so an escape sequence
 /// sitting against the number does not matter and neither tool has to be
 /// asked about color.
-fn passed_in(line: &str) -> Option<usize> {
+fn parse_num_passed(line: &str) -> Option<usize> {
     line.split_once(" passed")?
         .0
         .rsplit(|c: char| !c.is_ascii_digit())
@@ -188,28 +187,28 @@ pub(crate) fn workspace_root() -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::passed_in;
+    use super::parse_num_passed;
 
     #[test]
     fn a_cargo_summary_counts_what_passed() {
         let line = "test result: ok. 12 passed; 0 failed; 0 ignored";
-        assert_eq!(passed_in(line), Some(12));
+        assert_eq!(parse_num_passed(line), Some(12));
     }
 
     #[test]
     fn a_pytest_summary_counts_what_passed() {
         let line = "===== 21 passed, 1 skipped in 0.53s =====";
-        assert_eq!(passed_in(line), Some(21));
+        assert_eq!(parse_num_passed(line), Some(21));
     }
 
     #[test]
     fn a_colored_summary_counts_the_same() {
         let line = "==== \u{1b}[1m21 passed\u{1b}[0m in 0.53s ====";
-        assert_eq!(passed_in(line), Some(21));
+        assert_eq!(parse_num_passed(line), Some(21));
     }
 
     #[test]
     fn a_line_saying_nothing_about_tests_counts_nothing() {
-        assert_eq!(passed_in("   Compiling continuo-core v0.1.0"), None);
+        assert_eq!(parse_num_passed("   Compiling continuo-core v0.1.0"), None);
     }
 }
