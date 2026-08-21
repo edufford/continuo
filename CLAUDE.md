@@ -95,8 +95,10 @@ fast enough to sit in an editing loop is what matters most about it.
 The doc build is not optional. The crates cross-reference each other heavily,
 and a renamed item leaves a broken intra-doc link that still compiles.
 
-CI splits the test step in two, `--lib` then `--test '*'`, so neither reruns
-the other's tests. One `cargo test --workspace` covers both locally.
+CI splits the test step in two, `--lib --bins` then `--test '*'`, so neither
+reruns the other's tests. Between them they have to name every target that
+runs, since one neither names runs nowhere. One `cargo test --workspace`
+covers the lot locally.
 
 A change reaching an FMU crate or the laws it links needs more than that,
 because a `.fmu` carries its own compiled copy of everything it links and the
