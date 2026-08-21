@@ -173,7 +173,8 @@ cargo run --release -p continuo-examples --example traffic_scale
 
 Cargo has no user-defined commands and its aliases cannot chain them, so
 anything that runs several lives in [`xtask`](xtask/), reached as
-`cargo xtask <task>`. Each says what every step cost when it finishes.
+`cargo xtask <task>`. Each says what every step cost when it finishes, and
+how many tests ran.
 
 ```sh
 # What to run before a commit: format, lint, docs, tests and the demo, in

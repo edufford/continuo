@@ -1196,3 +1196,32 @@ it got there, including the roads not taken.
   - **It cost no hash move at all**, which was not the expectation going
     in: the deferred item budgeted one. Recorded logs stay valid, and the
     two pinned values on main are untouched.
+
+- **2026-08-20**: **`cargo xtask verify` and `cargo xtask verify-fmus` say
+  how many tests ran, and a step that ran none fails.** A table of elapsed
+  times says a command ran, never that it found anything to do, so a filter
+  resolving no targets reads exactly like a full pass. `verify-fmus` raised
+  it, its output ending in "running 0 tests" from doc-test targets with no
+  examples, and nothing in the summary telling that apart from the
+  packaged-FMU tests having been skipped. Zero being a failure rather than
+  a small number is what `verify-fmus` already says about validating no
+  FMUs.
+  - **Counted by reading the output**, since `cargo test` offers the number
+    no other way on stable: `--format json`, `--format junit` and
+    `--report-time` are all nightly-only, `--list` says what would run
+    rather than what did, and `--message-format json` reports build
+    artifacts. `cargo-nextest` does write JUnit XML, and runs no doc-tests.
+  - **One rule reads both tools**, the last run of digits before the word
+    `passed`, which cargo writes once per test binary and pytest once per
+    run. Reading digits rather than the last word is what makes color
+    irrelevant, and that is the whole reason there is one rule rather than a
+    parser per tool: an earlier attempt asked each tool to keep coloring
+    through the pipe and needed to see through escape sequences to do it.
+  - **A format that changes reads as zero**, and zero already fails naming
+    the step, so the worst case is a loud failure rather than a wrong number
+    reported as fact.
+  - **CI's split had to learn `--bins`.** `--lib` and `--test '*'` named
+    every target that existed until `xtask` grew unit tests, and a binary's
+    are in neither, so they would have run nowhere. The rule those two
+    flags have to follow is now written beside them: together they name
+    every target that runs.

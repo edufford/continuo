@@ -166,8 +166,12 @@ jobs:
             "$FMPY_PYTHON" -m fmpy validate "$fmu"
           done
 
-      # `--lib` and `--test '*'` partition the suite: the first runs the unit
-      # tests inside each lib, the second the integration targets in tests/.
+      # `--lib --bins` and `--test '*'` partition the suite: the first runs
+      # the unit tests inside each lib and each binary, the second the
+      # integration targets in tests/. Together they have to name every
+      # target that runs, because anything they miss runs nowhere. `--bins`
+      # is here for `xtask`, a binary with no lib; examples are the only
+      # other kind and carry `test = false`.
       # Note `--tests` would *not* work as the second half, because it
       # includes lib unit tests too, so the two steps would re-run them.
       #
@@ -176,7 +180,7 @@ jobs:
       # It is also what runs the packaged-FMU comparison, one of the
       # integration targets.
       - name: "Test: unit"
-        run: cargo test --workspace --all-features --lib
+        run: cargo test --workspace --all-features --lib --bins
 
       - name: "Test: integration"
         run: cargo test --workspace --all-features --test '*'
