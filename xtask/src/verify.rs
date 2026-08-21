@@ -17,7 +17,7 @@
 //! and the tests it feeds say nothing without it, so the two belong with a
 //! change that reaches a law rather than in an editing loop.
 
-use crate::task::{Progress, answers, run_command, run_counting_command, workspace_root};
+use crate::task::{Progress, answers, run_command, workspace_root};
 
 /// One command `verify` runs, fixed at compile time.
 struct VerifyCommand {
@@ -178,13 +178,13 @@ pub fn run() -> Result<(), String> {
             Dir::Root => root.clone(),
             Dir::Python => root.join("python"),
         };
-        if command.runs_tests {
-            progress.run_tests(&work_label, || {
-                run_counting_command(command.argv, &dir, command.env)
-            })?;
-        } else {
-            progress.run(&work_label, || run_command(command.argv, &dir, command.env))?;
-        }
+        progress.run(&work_label, || {
+            let num_tests = run_command(command.argv, &dir, command.env)?;
+
+            // Return the count only where tests were the point, so a stray
+            // line in some other command's output cannot reach the total.
+            Ok(command.runs_tests.then_some(num_tests))
+        })?;
     }
 
     progress.report(&format!(

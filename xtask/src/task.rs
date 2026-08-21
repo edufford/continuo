@@ -27,45 +27,32 @@ impl Progress {
         }
     }
 
-    /// Announces a piece of work, runs it, and records what it cost.
+    /// Announces a piece of work, runs it, and records what it cost and how
+    /// many tests were in it.
     ///
-    /// Takes the work as a closure rather than a command, since one of them
-    /// is a call into another task's module rather than a process to spawn,
-    /// and both belong in the same table.
+    /// The work answers `None` where running tests was never the point, and
+    /// `Some` where it was. `Some(0)` fails, which is the argument
+    /// `verify_fmus` already makes about validating no FMUs: a filter that
+    /// resolves no targets costs no time and reads in a table of times
+    /// exactly like a full run.
+    ///
+    /// Takes the work as a closure rather than a command, since one piece of
+    /// it is a call into another task's module rather than a process to
+    /// spawn, and both belong in the same table.
     pub(crate) fn run(
         &mut self,
         work_label: &str,
-        work: impl FnOnce() -> Result<(), String>,
+        work: impl FnOnce() -> Result<Option<usize>, String>,
     ) -> Result<(), String> {
         println!("--- {work_label}");
         let started = Instant::now();
-        work()?;
+        match work()? {
+            Some(0) => return Err(format!("`{work_label}` ran no tests")),
+            Some(tests) => self.tests += tests,
+            None => {}
+        }
         self.took_sec
             .push((work_label.to_string(), started.elapsed().as_secs_f64()));
-
-        Ok(())
-    }
-
-    /// The same for work that runs tests, adding what it ran to the total.
-    ///
-    /// A step that ran none fails, which is the argument `verify_fmus`
-    /// already makes about validating no FMUs: a filter that resolves no
-    /// targets costs no time and reads in a table of times exactly like a
-    /// full run.
-    pub(crate) fn run_tests(
-        &mut self,
-        work_label: &str,
-        work: impl FnOnce() -> Result<usize, String>,
-    ) -> Result<(), String> {
-        let mut ran = 0;
-        self.run(work_label, || {
-            ran = work()?;
-            Ok(())
-        })?;
-        if ran == 0 {
-            return Err(format!("`{work_label}` ran no tests"));
-        }
-        self.tests += ran;
 
         Ok(())
     }
@@ -107,35 +94,41 @@ impl Progress {
     }
 }
 
-/// Runs one command, failing with what it was and what it returned.
-pub(crate) fn run_command(argv: &[&str], dir: &Path, env: &[(&str, &str)]) -> Result<(), String> {
-    let status = command_for(argv, dir, env)
-        .status()
-        .map_err(|error| cannot_run(argv, &error))?;
-    if !status.success() {
-        return Err(format!("`{}` failed ({status})", argv.join(" ")));
-    }
-
-    Ok(())
-}
-
-/// Runs one command and returns how many tests its output says passed.
+/// Runs one command, returning how many tests its output says passed.
 ///
-/// Piped rather than inherited, since counting means reading it, and echoed
-/// back a line at a time so a long run still says where it has got to. Only
-/// stdout is taken: compile progress goes to stderr, so leaving that alone
-/// keeps it live and leaves no second pipe to drain. Piping is also what
-/// turns a tool's own color off, which costs color on the test output and
-/// nothing else.
-pub(crate) fn run_counting_command(
+/// The output is piped rather than inherited, since counting means reading
+/// it, and echoed back a line at a time so a long run still says where it
+/// has got to. Only stdout is taken, so cargo's progress and the compiler's
+/// diagnostics, which both go to stderr, stay live and stay colored.
+///
+/// A command that runs no tests answers zero, which is why one runner serves
+/// every step: what makes zero a failure is the caller asking for the count,
+/// not this.
+pub(crate) fn run_command(
     argv: &[&str],
     dir: &Path,
     env: &[(&str, &str)],
 ) -> Result<usize, String> {
-    let mut child = command_for(argv, dir, env)
-        .stdout(Stdio::piped())
-        .spawn()
-        .map_err(|error| cannot_run(argv, &error))?;
+    // A first word of `cargo` is the cargo that invoked this, so a toolchain
+    // chosen by `+toolchain` holds for everything a task runs.
+    let mut command = Command::new(if argv[0] == "cargo" {
+        crate::cargo_path()
+    } else {
+        argv[0].to_string()
+    });
+    command
+        .args(&argv[1..])
+        .current_dir(dir)
+        .stdout(Stdio::piped());
+    for (name, value) in env {
+        command.env(name, value);
+    }
+    let mut child = command.spawn().map_err(|error| match error.kind() {
+        // The missing case on its own, since it is the one a person fixes by
+        // installing something rather than by reading an errno.
+        io::ErrorKind::NotFound => format!("cannot find {} on the path", argv[0]),
+        _ => format!("cannot run {}: {error}", argv[0]),
+    })?;
     let reading = child.stdout.take().expect("stdout was piped just above");
     let mut tests = 0;
     for line in BufReader::new(reading).lines().map_while(Result::ok) {
@@ -166,36 +159,6 @@ fn passed_in(line: &str) -> Option<usize> {
         .next()?
         .parse()
         .ok()
-}
-
-/// One command, ready to spawn, with nothing decided about its output.
-///
-/// A first word of `cargo` is the cargo that invoked this, so a toolchain
-/// chosen by `+toolchain` holds for everything a task runs.
-fn command_for(argv: &[&str], dir: &Path, env: &[(&str, &str)]) -> Command {
-    let mut command = Command::new(if argv[0] == "cargo" {
-        crate::cargo_path()
-    } else {
-        argv[0].to_string()
-    });
-    command.args(&argv[1..]);
-    command.current_dir(dir);
-    for (name, value) in env {
-        command.env(name, value);
-    }
-
-    // Return it for the caller to decide the rest.
-    command
-}
-
-/// Why a command never started.
-fn cannot_run(argv: &[&str], error: &io::Error) -> String {
-    // Return the missing case on its own, since it is the one a person fixes
-    // by installing something rather than by reading an errno.
-    match error.kind() {
-        io::ErrorKind::NotFound => format!("cannot find {} on the path", argv[0]),
-        _ => format!("cannot run {}: {error}", argv[0]),
-    }
 }
 
 /// Whether a probe answers, which is what decides that a step can run.

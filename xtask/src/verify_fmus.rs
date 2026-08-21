@@ -15,7 +15,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::task::{Progress, answers, run_command, run_counting_command, workspace_root};
+use crate::task::{Progress, answers, run_command, workspace_root};
 
 /// Where packaging leaves its archives, under the workspace root.
 const PACKAGED_INTO: &str = "target/fmu";
@@ -34,17 +34,24 @@ pub fn run() -> Result<(), String> {
     let root = workspace_root();
     let mut progress = Progress::new();
 
-    progress.run("cargo xtask package-fmus", crate::package_fmus::run)?;
+    progress.run("cargo xtask package-fmus", || {
+        crate::package_fmus::run()?;
+
+        // Return no count rather than zero, since packaging runs no tests
+        // and zero is what a test step that found none reports.
+        Ok(None)
+    })?;
     validate(&packaged_fmus(&root)?, &root, &mut progress)?;
     let features = fmu_test_features()?;
-    progress.run_tests(
+    progress.run(
         &format!("cargo test --workspace --features {features}"),
         || {
-            run_counting_command(
+            run_command(
                 &["cargo", "test", "--workspace", "--features", &features],
                 &root,
                 &[],
             )
+            .map(Some)
         },
     )?;
 
@@ -112,7 +119,10 @@ fn validate(packaged: &[PathBuf], root: &Path, progress: &mut Progress) -> Resul
         let name = fmu.file_name().unwrap_or(fmu.as_os_str()).to_string_lossy();
         let path = fmu.to_string_lossy();
         progress.run(&format!("python -m fmpy validate {name}"), || {
-            run_command(&["python", "-m", "fmpy", "validate", &path], root, &[])
+            run_command(&["python", "-m", "fmpy", "validate", &path], root, &[])?;
+
+            // Return no count: validating is not testing.
+            Ok(None)
         })?;
     }
 
