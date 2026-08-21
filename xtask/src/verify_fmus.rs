@@ -15,7 +15,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::task::{Progress, answers, run_command, workspace_root};
+use crate::task::{Progress, answers, run_command, run_counting_command, workspace_root};
 
 /// Where packaging leaves its archives, under the workspace root.
 const PACKAGED_INTO: &str = "target/fmu";
@@ -37,10 +37,10 @@ pub fn run() -> Result<(), String> {
     progress.run("cargo xtask package-fmus", crate::package_fmus::run)?;
     validate(&packaged_fmus(&root)?, &root, &mut progress)?;
     let features = fmu_test_features()?;
-    progress.run(
+    progress.run_tests(
         &format!("cargo test --workspace --features {features}"),
         || {
-            run_command(
+            run_counting_command(
                 &["cargo", "test", "--workspace", "--features", &features],
                 &root,
                 &[],

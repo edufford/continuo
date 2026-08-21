@@ -17,9 +17,7 @@
 //! and the tests it feeds say nothing without it, so the two belong with a
 //! change that reaches a law rather than in an editing loop.
 
-use std::path::Path;
-
-use crate::task::{Progress, answers, run_command, workspace_root};
+use crate::task::{Progress, answers, run_command, run_counting_command, workspace_root};
 
 /// One command `verify` runs, fixed at compile time.
 struct VerifyCommand {
@@ -34,6 +32,9 @@ struct VerifyCommand {
     /// What must answer before this is worth running, or `None` where
     /// nothing may excuse it. A failing probe skips it and says so.
     skip_unless: Option<&'static [&'static str]>,
+    /// Whether this one runs tests, so its output is worth counting and a
+    /// run of it that finds none is worth failing.
+    runs_tests: bool,
 }
 
 /// Where a command runs.
@@ -85,6 +86,7 @@ const VERIFY_COMMANDS: &[VerifyCommand] = &[
         dir: Dir::Root,
         env: &[],
         skip_unless: None,
+        runs_tests: false,
     },
     // `--all-features` here but not on the tests below, because linting a
     // target held behind a feature costs only the lint, where testing one
@@ -103,6 +105,7 @@ const VERIFY_COMMANDS: &[VerifyCommand] = &[
         dir: Dir::Root,
         env: &[],
         skip_unless: None,
+        runs_tests: false,
     },
     // Not optional. The crates cross-reference each other heavily, and a
     // renamed item leaves a broken intra-doc link that still compiles.
@@ -111,30 +114,35 @@ const VERIFY_COMMANDS: &[VerifyCommand] = &[
         dir: Dir::Root,
         env: &[("RUSTDOCFLAGS", "-D warnings")],
         skip_unless: None,
+        runs_tests: false,
     },
     VerifyCommand {
         argv: &["ruff", "check", "."],
         dir: Dir::Python,
         env: &[],
         skip_unless: Some(RUFF_IS_INSTALLED),
+        runs_tests: false,
     },
     VerifyCommand {
         argv: &["ruff", "format", "--check", "."],
         dir: Dir::Python,
         env: &[],
         skip_unless: Some(RUFF_IS_INSTALLED),
+        runs_tests: false,
     },
     VerifyCommand {
         argv: &["cargo", "test", "--workspace"],
         dir: Dir::Root,
         env: &[],
         skip_unless: None,
+        runs_tests: true,
     },
     VerifyCommand {
         argv: &["python", "-m", "pytest", "-v"],
         dir: Dir::Python,
         env: &[],
         skip_unless: Some(VIEWER_AND_PYTEST_IS_INSTALLED),
+        runs_tests: true,
     },
     VerifyCommand {
         argv: &[
@@ -148,6 +156,7 @@ const VERIFY_COMMANDS: &[VerifyCommand] = &[
         dir: Dir::Root,
         env: &[],
         skip_unless: None,
+        runs_tests: false,
     },
 ];
 
@@ -165,7 +174,17 @@ pub fn run() -> Result<(), String> {
             progress.skip(&work_label);
             continue;
         }
-        progress.run(&work_label, || run_one(command, &root))?;
+        let dir = match command.dir {
+            Dir::Root => root.clone(),
+            Dir::Python => root.join("python"),
+        };
+        if command.runs_tests {
+            progress.run_tests(&work_label, || {
+                run_counting_command(command.argv, &dir, command.env)
+            })?;
+        } else {
+            progress.run(&work_label, || run_command(command.argv, &dir, command.env))?;
+        }
     }
 
     progress.report(&format!(
@@ -176,16 +195,6 @@ pub fn run() -> Result<(), String> {
     // Return once every command that could run has passed, which is as much as
     // this claims: CI is what says the commit is good.
     Ok(())
-}
-
-/// Runs a command in the directory it belongs to.
-fn run_one(command: &VerifyCommand, root: &Path) -> Result<(), String> {
-    let dir = match command.dir {
-        Dir::Root => root.to_path_buf(),
-        Dir::Python => root.join("python"),
-    };
-
-    run_command(command.argv, &dir, command.env)
 }
 
 /// The label a command is announced and timed under, which is what a person
