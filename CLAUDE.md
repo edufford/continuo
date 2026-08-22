@@ -122,7 +122,7 @@ skipped, and says so, when fmpy is not installed.
 `continuo-actors` is the one to watch, since editing a control law there
 leaves the packaged FMU a build behind and `cargo test --workspace` stays
 green. Packaging needs `cargo install cargo-fmi` once, and validating needs
-`python -m pip install fmpy`.
+fmpy in the environment the viewer's checks run in.
 
 ## Turn a mistake into a check
 
@@ -292,6 +292,13 @@ A session opened on a worktree still needs its memory pinned back to the
 repository root's pool, since auto-memory is keyed to the working directory
 and a worktree gets an empty one of its own. Set `autoMemoryDirectory` in the
 worktree's own `.claude/settings.local.json` to the root's memory directory.
+
+It needs a Python environment of its own too, since `python/.venv` is git
+ignored and so no worktree gets one with the checkout. Make one under the
+worktree's own `python/` and install `-e . pytest ruff fmpy` into it.
+Sharing the main checkout's would run that checkout's viewer instead, since
+`pip install -e .` records one source tree, and `fmpy` is on the line
+because `verify-fmus` validates nothing without it.
 
 Never put one in a sibling directory such as `../continuo-<name>`. A session
 rooted at the repository root cannot reach it with file tools at all, and that

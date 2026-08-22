@@ -76,7 +76,8 @@ const VIEWER_AND_PYTEST_IS_INSTALLED: &[&str] = &[
 const RUFF_IS_INSTALLED: &[&str] = &["ruff", "--version"];
 
 /// What to type to turn the skipped commands on.
-const INSTALL_THE_VIEWER: &str = "python -m pip install -e . pytest ruff   (in python/)";
+const INSTALL_THE_VIEWER: &str =
+    "python -m pip install -e . pytest ruff   (in python/ with a venv active)";
 
 /// Every command, cheapest first, which is what stopping at the first failure
 /// is for.

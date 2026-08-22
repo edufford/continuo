@@ -24,7 +24,7 @@ const PACKAGED_INTO: &str = "target/fmu";
 const FMPY_IS_INSTALLED: &[&str] = &["python", "-c", "import fmpy"];
 
 /// What to type to turn the skipped validation on.
-const INSTALL_FMPY: &str = "python -m pip install fmpy";
+const INSTALL_FMPY: &str = "python -m pip install fmpy   (with a venv active)";
 
 /// The feature each FMU crate holds its packaged-FMU tests behind.
 const PACKAGED_FMU: &str = "packaged-fmu";
