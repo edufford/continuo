@@ -260,12 +260,21 @@ messages, PR descriptions, console strings.
   heading reading `## Draft notes (deleted before merge)`. Everything above
   that marker is the commit message throughout, and the marker and all
   beneath it are deleted when the PR is marked ready.
-- `pr-description.yml` holds a PR that is out of draft to all three of those:
-  no `## Draft notes` heading, no line past 72 columns, and no code span the
+- `pr-description.yml` holds every PR to all three of those: no
+  `## Draft notes` heading, no line past 72 columns, and no code span the
   wrap has broken. The first is anchored to the start of a line, so a
   description explaining this convention can still name the marker in prose,
   as this one does. The last skips fenced blocks, so it stays exact and can
   sit in the required checks rather than needing a workflow of its own.
+  - **A draft carrying its notes reports red**, and is meant to. Excusing a
+    draft would leave the last completed run of a required check having
+    passed without reading anything, and GitHub counts a pass however it was
+    reached, so the merge box is green for the seconds between marking ready
+    and the real check reporting. Red here says the description is not a
+    commit message yet, which is exactly what a draft is admitting.
+  - It cannot hold an edit made between the last run and the merge. The
+    description is mutable and the check is pinned to a commit, while the
+    squash message is read at merge time.
 - Comments posted through `gh` authenticate as the repository owner. Every one
   Claude writes is italicized throughout and ends with a footer line reading
   "Posted by Claude Code" behind a robot-face emoji, italic like the rest, so

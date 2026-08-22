@@ -1,9 +1,23 @@
 name: PR description
 
 # This repository squash-merges using the PR title and description, so the
-# description is the commit message that lands on main. This holds a PR that
-# is out of draft to what such a message needs: no review notes still
-# attached, and no line wider than the commit will keep.
+# description is the commit message that lands on main. This holds every pull
+# request to what such a message needs: no review notes still attached, no
+# line wider than the commit will keep, and no code span the wrap has broken.
+#
+# Every rule is asked of a draft too, which is why nothing here reads
+# `draft`. Deferring one would leave the last completed run of this check
+# having passed without looking, and a required check counts a pass however
+# it was reached, so there is a window after a draft is marked ready where
+# the description has not been read and the merge box is already green. It is
+# seconds wide and auto-merge would take it. A draft carrying its notes
+# therefore reports red for as long as it carries them, which is what a
+# description that is not yet a commit message should say.
+#
+# What no arrangement here can hold is an edit made between the last run and
+# the merge. The description is mutable and this check is pinned to a commit,
+# while the squash message is read at merge time, so a body changed in that
+# gap lands unread.
 #
 # Its own workflow rather than a job in CI, because the events that matter
 # here are `edited` and `ready_for_review`, which fire on every touch of a
@@ -19,8 +33,6 @@ permissions:
 jobs:
   ready_to_be_a_commit_message:
     name: The description is ready to be a commit message
-    # A draft is where those notes belong, so only a PR out of draft is asked.
-    if: github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     steps:
       # The description reaches the script through the environment rather than
@@ -38,12 +50,18 @@ jobs:
         run: |
           # Check the description for a '## Draft notes' heading.
           if printf '%s\n' "$BODY" | grep -q '^## Draft notes'; then
-            echo "ERROR: this PR is out of draft and its description still"
-            echo "has a '## Draft notes' section."
+            echo "ERROR: the description still has a '## Draft notes'"
+            echo "section."
             echo
             echo "That description is the squash commit message, so the"
             echo "section would land on main. Delete the marker and"
-            echo "everything below it, then mark the PR ready again."
+            echo "everything below it before marking the PR ready."
+            echo
+            echo "A draft is where those notes belong, so this is expected"
+            echo "to fail for as long as they are there. It is asked of a"
+            echo "draft anyway: a run that passed without looking would"
+            echo "leave the merge box green for the seconds between marking"
+            echo "ready and the real check reporting."
             exit 1
           fi
           echo "No draft notes in the description."
