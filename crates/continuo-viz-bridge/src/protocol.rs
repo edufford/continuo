@@ -27,7 +27,7 @@ use serde::{Deserialize, Serialize};
 pub enum MessageType {
     /// A component publishing what it simulated, such as a pose or a command.
     SimData,
-    /// The conductor announcing a membership change it has applied.
+    /// The conductor announcing a membership change it has processed.
     MembershipStatus,
 }
 

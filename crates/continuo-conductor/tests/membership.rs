@@ -337,7 +337,7 @@ fn the_event_log_records_who_joined_and_left() {
         joins[1].first_due,
         t_sim_ms(25),
         "what the log keeps is the declared first step, not when the join \
-         happened to be applied"
+         happened to be processed"
     );
 
     assert_eq!(leaves.len(), 1);
@@ -346,7 +346,7 @@ fn the_event_log_records_who_joined_and_left() {
 
 #[test]
 fn a_membership_event_sits_between_the_ticks_it_falls_between() {
-    // Nothing records *when* a join was applied, because its position in the
+    // Nothing records *when* a join was processed, because its position in the
     // stream already says so: `b` joins after the t=10 ms tick and before
     // the next one. That is also the part that may vary once joins arrive
     // over the transport, which is why it is position rather than a field.

@@ -136,7 +136,7 @@ impl<T: Transport> Conductor<T> {
         self.observation_callbacks.push(Box::new(callback));
     }
 
-    /// Reports an applied membership change to every observer.
+    /// Reports a processed membership change to every observer.
     fn emit_membership(&mut self, change: MembershipChange) {
         for callback in self.membership_callbacks.iter_mut() {
             callback(&change);

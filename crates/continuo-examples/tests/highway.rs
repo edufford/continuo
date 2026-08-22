@@ -199,7 +199,7 @@ fn verify_highway(recorded: EventLog, seconds: i64) -> (SimTime, Result<usize, D
 fn a_recorded_highway_run_verifies_against_a_re_run() {
     // Verification drives the same `run_live_traffic_scenario` every other
     // example does, so this also pins that a re-run of a *dynamic* world
-    // rebuilds the same traffic: the spawner's requests are applied
+    // rebuilds the same traffic: the spawner's requests are processed
     // identically, or the joins would not line up.
     let seconds = 10;
     let recorded = record_highway(seconds);

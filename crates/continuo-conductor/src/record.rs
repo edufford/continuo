@@ -71,13 +71,13 @@ pub struct RecordedMessage {
 
 /// A component admitted to the world, as recorded.
 ///
-/// Deliberately *not* recorded: the sim time the join was applied at. It is
-/// already implied by where this event sits between tick fingerprints, and
-/// it is the part that may legitimately vary. Once joins arrive over the
+/// Deliberately *not* recorded: the sim time the join was processed at. It
+/// is already implied by where this event sits between tick fingerprints,
+/// and it is the part that may legitimately vary. Once joins arrive over the
 /// transport (milestone 7) the boundary that admits one depends on
 /// delivery. What shapes the run is `first_due`, which the joiner declares,
-/// so a run stays deterministically reproducible as long as that is
-/// processed the same, whichever boundary the request landed on.
+/// so a run stays deterministically reproducible as long as that instant is
+/// the same, whichever boundary the request landed on.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RecordedJoin {
     pub path: String,
@@ -91,7 +91,7 @@ pub struct RecordedJoin {
 /// `first_due`: it is chosen by whoever asked, so it is stable however
 /// early or late the request was made, and it is what decides where this
 /// component's output stops. What is *not* recorded, here as on a join,
-/// is the moment the request was applied, which says nothing extra and is
+/// is the moment the request was processed, which says nothing extra and is
 /// the part that varies with delivery.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RecordedLeave {
@@ -112,7 +112,7 @@ pub enum MembershipChange {
     Left(RecordedLeave),
 }
 
-/// Key expression an applied [`MembershipChange`] is published on, for
+/// Key expression a processed [`MembershipChange`] is published on, for
 /// observers outside the process.
 ///
 /// **Status, not request.** This one is the conductor saying a join or leave
@@ -138,7 +138,7 @@ pub enum MembershipChange {
 // same time, since nothing sends a request until there is a transport to
 // send it over.
 pub fn membership_key(world_name: &str) -> KeyExpr {
-    // Return the world's applied-membership status key.
+    // Return the world's membership status key.
     KeyExpr::new_rooted(format!("{world_name}/conductor/membership/status"))
         .expect("valid membership key")
 }
@@ -208,7 +208,7 @@ pub enum RecordedObservation {
 
 /// One line of the log body, in emission order (messages of a tick precede
 /// its fingerprint, since publishes happen during the steps; membership
-/// changes sit between ticks, where they are applied).
+/// changes sit between ticks, where they are processed).
 ///
 /// Every observation nests under the one [`LogEvent::Observed`] variant
 /// rather than getting a variant of its own, so that being an observation is

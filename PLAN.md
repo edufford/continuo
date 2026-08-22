@@ -133,7 +133,7 @@ Key expression conventions (draft):
 | `continuo/{world}/actor/{id}/pose` | actor pose | built |
 | `continuo/{world}/actor/{id}/accel_cmd` | commanded acceleration, [-1, 1] | built |
 | `continuo/{world}/actor/{id}/steer_cmd` | commanded steering, [-1, 1], +1 full left | built |
-| `continuo/{world}/conductor/membership/status` | applied join or leave | built (M5) |
+| `continuo/{world}/conductor/membership/status` | processed join or leave | built (M5) |
 | `continuo_viz/{world}/**` | observer side channel, mirroring `continuo/{world}/**` beneath it | built (M5) |
 | `continuo/{world}/tick` | `TickStart` | M7 |
 | `continuo/{world}/tick/done` | `TickDone` | M7 |
@@ -178,12 +178,12 @@ Baked in from the start, because they are hard to retrofit:
   since nothing else would report reaching for one.
 - Per-component RNG seeded from `(world_seed, component_id)`. No OS entropy or
   wall clock in sim logic; wall clock exists only in the conductor's pacing.
-- Join/leave applied **only at tick boundaries**, and every request **names the
-  sim time it takes effect** (a join its first step, a leave its first
-  *non*-step) rather than taking effect on arrival. A dynamic run then
-  reproduces however early or late the request was made, which is what keeps
-  it replayable once requests travel over a transport and delivery timing
-  stops being fixed. Both are recorded in the event log.
+- Join/leave are processed **only at tick boundaries**, and every request
+  **names the sim time it takes effect** (a join its first step, a leave
+  its first *non*-step) rather than taking effect on arrival. A dynamic run
+  then reproduces however early or late the request was made, which is what
+  keeps it replayable once requests travel over a transport and delivery
+  timing stops being fixed. Both are recorded in the event log.
 - Per-tick canonical **state hash** (e.g. xxhash over serialized state) as the
   determinism check. Two runs with the same seed must produce identical hash
   streams; this becomes a CI test.
@@ -637,15 +637,6 @@ under "Wire format", rather than churning the fingerprint once apiece.
      subscription state, which is worse. If it is ever wanted, the scenario
      should declare which outputs are optional, so the decision is static and
      reproducible rather than dependent on who happened to connect.
-
-- **Membership "applied" should say "received" or "processed".** The word does
-  two jobs. The conductor has taken a change in and acted on it, which is what
-  the key table means by "applied join or leave", and a join also takes effect
-  at an instant the change names, which can be later. Both readings are
-  natural, so a reader works out which is meant from context every time.
-  "Received" or "processed" says the conductor's half and leaves "takes effect"
-  to mean only the instant. Prose, field names, and the table's status column
-  move together.
 
 - **A compact binary mode alongside JSON, chosen like debug versus release.**
   JSON stays the readable mode for development, inspection, and the event log;
