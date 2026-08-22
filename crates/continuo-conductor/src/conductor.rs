@@ -13,8 +13,8 @@ use crate::error::ConductorError;
 use crate::membership::{JoinMetadata, LeaveMetadata};
 use crate::pacing::{Pacer, Pacing, SystemClock};
 use crate::record::{
-    MembershipChange, RecordedBudgetMiss, RecordedJoin, RecordedLeave, RecordedObservation,
-    RecordedTimeout, TickFingerprint,
+    MembershipChange, RecordedBudgetMiss, RecordedJoin, RecordedJoinRequest, RecordedLeave,
+    RecordedLeaveRequest, RecordedObservation, RecordedTimeout, TickFingerprint,
 };
 use crate::registry::Registry;
 use crate::schedule::Schedule;
@@ -38,6 +38,12 @@ pub struct Conductor<T: Transport> {
     /// boundary before that instant is stepped. Sorted by `leaves_at`, so
     /// draining the front is enough to find the ones that have come due.
     pending_leaves: BTreeMap<SimTime, Vec<ComponentPath>>,
+    /// Joins declared for a future instant, announced at the tick boundary
+    /// before that instant is stepped. The component is registered as soon
+    /// as it is admitted, so what waits here is only the announcement, held
+    /// back so an observer hears about a newcomer where it first steps
+    /// rather than wherever its request landed.
+    pending_joins: BTreeMap<SimTime, Vec<RecordedJoin>>,
     sim_time: SimTime,
     tick: u64,
     /// Running determinism fingerprint: seeded from the world config, then
@@ -77,6 +83,7 @@ impl<T: Transport> Conductor<T> {
             schedule: Schedule::default(),
             pacer,
             pending_leaves: BTreeMap::new(),
+            pending_joins: BTreeMap::new(),
             sim_time: SimTime::ZERO,
             tick: 0,
             world_hash,
@@ -121,9 +128,9 @@ impl<T: Transport> Conductor<T> {
     }
 
     /// Adds a callback invoked for everything the *machine* did rather
-    /// than the run: steps over their budget, and the timeouts that say why
-    /// a component left or a run stopped (see
-    /// [`crate::Recorder::observation_callback`]).
+    /// than the run: steps over their budget, the timeouts that say why a
+    /// component left or a run stopped, and where each membership request
+    /// landed (see [`crate::Recorder::observation_callback`]).
     ///
     /// The fourth observation point, and the one whose reports a re-run is
     /// free to differ on. See [`RecordedObservation`].
@@ -136,7 +143,12 @@ impl<T: Transport> Conductor<T> {
         self.observation_callbacks.push(Box::new(callback));
     }
 
-    /// Reports an applied membership change to every observer.
+    /// Reports a membership change that has taken effect to every observer.
+    ///
+    /// Taken effect, never merely accepted: both halves are announced at
+    /// the boundary the change names, so an observer can treat the arrival
+    /// as the moment. Where the request landed is an observation instead,
+    /// which is the stream a re-run is free to differ on.
     fn emit_membership(&mut self, change: MembershipChange) {
         for callback in self.membership_callbacks.iter_mut() {
             callback(&change);
@@ -293,10 +305,31 @@ impl<T: Transport> Conductor<T> {
             self.transport.subscribe(path.clone(), key);
         }
         self.schedule.insert(join.first_due, index);
-        self.emit_membership(MembershipChange::Joined(RecordedJoin {
+
+        // Where the request landed, before anything says it took effect.
+        self.emit_observation(RecordedObservation::JoinRequested(RecordedJoinRequest {
             path: path.to_string(),
             first_due: join.first_due,
         }));
+        let joined = RecordedJoin {
+            path: path.to_string(),
+            first_due: join.first_due,
+        };
+        if join.first_due <= earliest_open {
+            // It takes effect at the earliest instant still open, which is
+            // here, so there is nothing to hold back. This is the same
+            // bargain an unnamed leave gets, which stops its component on
+            // the spot for the same reason.
+            self.emit_membership(MembershipChange::Joined(joined));
+        } else {
+            // Queued in declaration order, and `announce_due_joins` drains
+            // the vector in order, so the log's joins come out in the order
+            // those components will step.
+            self.pending_joins
+                .entry(join.first_due)
+                .or_default()
+                .push(joined);
+        }
 
         // Return the registered component's full path.
         Ok(path)
@@ -321,6 +354,48 @@ impl<T: Transport> Conductor<T> {
         }
     }
 
+    /// Announces every join whose declared instant has come, in declaration
+    /// order. Called at the tick boundary beside [`Self::apply_due_leaves`],
+    /// and after it, so a boundary that both retires and admits reads in the
+    /// order the world changed.
+    fn announce_due_joins(&mut self, instant: SimTime) {
+        while let Some(entry) = self.pending_joins.first_entry() {
+            if *entry.key() > instant {
+                break;
+            }
+            for joined in entry.remove() {
+                self.emit_membership(MembershipChange::Joined(joined));
+            }
+        }
+    }
+
+    /// Drops the announcement a component was waiting on, saying whether
+    /// there was one.
+    ///
+    /// A leave can come due before the join it cancels, which leaves a
+    /// component that was admitted and never stepped. Announcing its
+    /// departure would hand an observer a leave for something it never saw
+    /// arrive, so the pair is dropped and the two request observations are
+    /// the whole trace.
+    ///
+    /// The scan covers only joins declared ahead and not yet due, which is
+    /// a scenario's look-ahead rather than the population.
+    fn cancel_pending_join(&mut self, path: &ComponentPath) -> bool {
+        let wanted = path.to_string();
+        let mut cancelled = false;
+        for queued in self.pending_joins.values_mut() {
+            queued.retain(|joined| {
+                let keep = joined.path != wanted;
+                cancelled |= !keep;
+                keep
+            });
+        }
+
+        // Return whether one was waiting. An instant left with an empty
+        // vector is drained without announcing anything.
+        cancelled
+    }
+
     /// Deregisters a component and tells observers. The one place a
     /// leave is applied, whichever route asked for it.
     ///
@@ -333,6 +408,9 @@ impl<T: Transport> Conductor<T> {
         };
         self.schedule.remove_index(index);
         self.transport.unsubscribe(path);
+        if self.cancel_pending_join(path) {
+            return;
+        }
         self.emit_membership(MembershipChange::Left(RecordedLeave {
             path: path.to_string(),
             leaves_at,
@@ -396,6 +474,28 @@ impl<T: Transport> Conductor<T> {
             subtree
         };
         let earliest_open = self.earliest_open_instant();
+        if let Some(leaves_at) = leave.leaves_at {
+            if leaves_at < earliest_open {
+                // The instant it would stop at has already been stepped, so
+                // the component has already done work this leave claims it
+                // did not. Refuse rather than silently apply it late.
+                let path = departing.into_iter().next().expect("non-empty above");
+                return Err(ConductorError::LeaveInThePast {
+                    path,
+                    leaves_at,
+                    earliest_open,
+                });
+            }
+        }
+
+        // Where the request landed, naming the path as asked for: one line
+        // for a composite, against the leaf leaves it goes on to produce.
+        // Recorded past the validation above, so the log carries requests
+        // the conductor took in rather than ones it refused.
+        self.emit_observation(RecordedObservation::LeaveRequested(RecordedLeaveRequest {
+            path: leave.path.clone(),
+            leaves_at: leave.leaves_at,
+        }));
 
         let Some(leaves_at) = leave.leaves_at else {
             // Unnamed: stop them at the earliest instant still open, which
@@ -405,17 +505,6 @@ impl<T: Transport> Conductor<T> {
             }
             return Ok(());
         };
-        if leaves_at < earliest_open {
-            // The instant it would stop at has already been stepped, so the
-            // component has already done work this leave claims it did
-            // not. Refuse rather than silently apply it late.
-            let path = departing.into_iter().next().expect("non-empty above");
-            return Err(ConductorError::LeaveInThePast {
-                path,
-                leaves_at,
-                earliest_open,
-            });
-        }
         // Queued in declaration order, and `apply_due_leaves` drains the
         // vector in order, so the log's leaves come out in the order the
         // components would have stepped.
@@ -432,10 +521,12 @@ impl<T: Transport> Conductor<T> {
     /// Advances to the earliest due instant and steps every component due at
     /// it, in declaration order. Returns `false` when nothing is scheduled.
     pub fn step_once(&mut self) -> Result<bool, ConductorError> {
-        // Remove anyone whose declared leave has come due before the
-        // instant is entered, so a component that leaves at T takes no part
-        // in T. This is the tick boundary: membership settles here, and is
-        // frozen for the rest of the tick.
+        // Settle membership before the instant is entered, so a component
+        // that leaves at T takes no part in T and one that joins at T is
+        // announced before it first steps. This is the tick boundary:
+        // membership settles here, and is frozen for the rest of the tick.
+        // Leaves first, so a boundary doing both reads in the order the
+        // world changed.
         //
         // Peek rather than pop, because popping takes the due set *and*
         // the instant with it, leaving the leave nothing to affect: the due
@@ -445,6 +536,7 @@ impl<T: Transport> Conductor<T> {
         // into the world hash for an instant where nobody stepped.
         if let Some(next) = self.schedule.earliest() {
             self.apply_due_leaves(next);
+            self.announce_due_joins(next);
         }
         let Some((now, due)) = self.schedule.pop_earliest() else {
             return Ok(false);

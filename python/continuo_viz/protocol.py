@@ -88,7 +88,7 @@ class MessageType(str, Enum):
     """
 
     MEMBERSHIP_STATUS = "membership_status"
-    """The conductor announcing a membership change it has applied.
+    """The conductor announcing a membership change that has taken effect.
 
     Rust: ``MessageType::MembershipStatus``.
     """

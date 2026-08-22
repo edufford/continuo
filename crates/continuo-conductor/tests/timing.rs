@@ -373,14 +373,19 @@ fn a_re_run_that_misses_different_budgets_still_verifies() {
     // legitimately records none, and comparing them would report two runs
     // that behaved identically as divergent.
     let recorded = record_a_run_costing(SLOW);
-    let observations = budget_misses_in(&recorded).len();
-    let lines = recorded.events.len();
-    assert_eq!(observations, 3);
+    assert_eq!(budget_misses_in(&recorded).len(), 3);
+    // Every observation, not just the misses: the log carries where the
+    // join request landed as well, and it is skipped for the same reason.
+    let expectations = recorded
+        .events
+        .iter()
+        .filter(|event| !matches!(event, LogEvent::Observed(_)))
+        .count();
 
     // Re-run live, fast enough to miss nothing, checking against that log.
     // No observation callback is attached: the verifier has nothing to
-    // compare a miss against, and skips the recorded ones as it walks the
-    // log.
+    // compare an observation against, and skips the recorded ones as it
+    // walks the log.
     let config = timing_config();
     let steps: StepLog = Default::default();
     let verifier = Verifier::new(recorded, &config);
@@ -401,8 +406,7 @@ fn a_re_run_that_misses_different_budgets_still_verifies() {
         .finish()
         .expect("the run is the same run; only the machine differed");
     assert_eq!(
-        verified,
-        lines - observations,
+        verified, expectations,
         "the verdict counts expectations matched, not log lines walked past"
     );
 }

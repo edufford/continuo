@@ -45,7 +45,7 @@ pub struct SpawnTrafficRequest {
     /// bending.
     pub start_s: f64,
     /// The instant the car should first step. Declared here, so the run is
-    /// the same whenever the driver gets round to applying the request,
+    /// the same whenever the driver gets round to processing the request,
     /// as long as it lands before this arrives.
     pub first_due: SimTime,
 }
@@ -102,7 +102,7 @@ pub struct TrafficSpawner {
     speed_range: (f64, f64),
     /// Latest known position of each live car, by actor name. Holds what
     /// this spawner has *asked for*, which is why a car is struck off when
-    /// its removal is requested rather than when it is applied: otherwise
+    /// its removal is requested rather than when it is processed: otherwise
     /// it would ask twice while the first request was still in flight.
     live_traffic: BTreeMap<String, f64>,
     /// Latest known position of the ego, the reference every decision here
