@@ -3,8 +3,8 @@
 //!
 //! Recording taps the conductor's observation points: a `MonitorTransport`
 //! callback for messages, and conductor callbacks for tick fingerprints,
-//! membership changes, and over-budget steps. The sim itself is untouched
-//! by being recorded.
+//! membership changes, and what the machine noticed while it ran. The sim
+//! itself is untouched by being recorded.
 //!
 //! Lines come in two categories: **expectations** are what the run did, and
 //! a faithful re-run must produce them again; **observations** are what the
@@ -71,13 +71,14 @@ pub struct RecordedMessage {
 
 /// A component admitted to the world, as recorded.
 ///
-/// Deliberately *not* recorded: the sim time the join was processed at. It
-/// is already implied by where this event sits between tick fingerprints,
-/// and it is the part that may legitimately vary. Once joins arrive over the
-/// transport (milestone 7) the boundary that admits one depends on
-/// delivery. What shapes the run is `first_due`, which the joiner declares,
-/// so a run stays deterministically reproducible as long as that instant is
-/// the same, whichever boundary the request landed on.
+/// This line sits where the join *took effect*: the boundary before
+/// `first_due`, which is the instant the newcomer first steps. Where the
+/// conductor took the request in is a line of its own,
+/// [`RecordedJoinRequest`], and an observation rather than an expectation,
+/// because that is the part delivery decides once joins arrive over the
+/// transport (milestone 7). Splitting the two is what keeps this stream
+/// comparable: a re-run must reproduce the declared instant, never the
+/// boundary a request happened to land on.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RecordedJoin {
     pub path: String,
@@ -90,9 +91,9 @@ pub struct RecordedJoin {
 /// Carries the declared instant for the same reason a join carries
 /// `first_due`: it is chosen by whoever asked, so it is stable however
 /// early or late the request was made, and it is what decides where this
-/// component's output stops. What is *not* recorded, here as on a join,
-/// is the moment the request was processed, which says nothing extra and is
-/// the part that varies with delivery.
+/// component's output stops. This line sits where the leave took effect,
+/// and [`RecordedLeaveRequest`] records where the request landed, for the
+/// reason [`RecordedJoin`] gives.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RecordedLeave {
     pub path: String,
@@ -112,12 +113,13 @@ pub enum MembershipChange {
     Left(RecordedLeave),
 }
 
-/// Key expression a processed [`MembershipChange`] is published on, for
-/// observers outside the process.
+/// Key expression a [`MembershipChange`] that has taken effect is published
+/// on, for observers outside the process.
 ///
 /// **Status, not request.** This one is the conductor saying a join or leave
-/// already happened, which is what an observer subscribes to: a viewer needs
-/// it to stop drawing a component that has retired.
+/// has taken effect, which is what an observer subscribes to: a viewer needs
+/// it to stop drawing a component that has retired, and to start drawing one
+/// when it joins rather than whenever its request landed.
 ///
 /// It is nested under `membership/` to leave room for the other direction.
 /// Requests still arrive as direct calls, so no request key exists yet, but
@@ -141,6 +143,38 @@ pub fn membership_key(world_name: &str) -> KeyExpr {
     // Return the world's membership status key.
     KeyExpr::new_rooted(format!("{world_name}/conductor/membership/status"))
         .expect("valid membership key")
+}
+
+/// A join the conductor took in, recorded where the request landed.
+///
+/// The [`RecordedJoin`] it leads to sits later, at the boundary before
+/// `first_due`. This line is the only record of the gap between the two, and
+/// it is an observation because that gap is delivery's to decide: a run
+/// re-run must produce the same joins at the same instants, never the same
+/// arrival boundaries.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecordedJoinRequest {
+    pub path: String,
+    /// The instant the newcomer will first step, as declared.
+    pub first_due: SimTime,
+}
+
+/// A leave the conductor took in, recorded where the request landed.
+///
+/// The counterpart to [`RecordedJoinRequest`], and recorded for the same
+/// reason. `leaves_at` is `None` where the request named no instant, which
+/// stops the component at the earliest one still open: that is the request
+/// as made, and the [`RecordedLeave`] says where it landed.
+///
+/// One line per request, naming the path the caller passed, so a composite
+/// removed whole is one request against the several leaves it produces.
+/// [`RecordedLeave`] keeps the leaf discipline; this says what was asked
+/// for.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecordedLeaveRequest {
+    pub path: String,
+    /// The instant the component was asked to stop at, where one was named.
+    pub leaves_at: Option<SimTime>,
 }
 
 /// A step that ran over the wall-clock budget its component declared.
@@ -192,14 +226,21 @@ pub struct RecordedTimeout {
 /// things, and treating that as a divergence would report two runs that
 /// behaved identically as different.
 ///
-/// Both members so far are wall-clock facts, because that is what milestones
-/// 3 and 4 measure. Anything else of the same character belongs here rather
-/// than as a new top-level event: the pacing overruns counted by
+/// Two kinds live here. The wall-clock facts milestones 3 and 4 measure,
+/// which another machine notices differently, and where a membership request
+/// landed, which delivery decides once requests cross a transport. Both are
+/// the same thing said twice: worth writing down, and never worth comparing.
+/// Anything else of that character belongs here rather than as a new
+/// top-level event: the pacing overruns counted by
 /// [`Conductor::overrun_reanchor_count`](crate::Conductor::overrun_reanchor_count)
 /// are the obvious next one, being a run-level measurement that today exists
 /// only as a counter that dies with the process.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum RecordedObservation {
+    #[serde(rename = "join_request")]
+    JoinRequested(RecordedJoinRequest),
+    #[serde(rename = "leave_request")]
+    LeaveRequested(RecordedLeaveRequest),
     #[serde(rename = "budget")]
     BudgetMissed(RecordedBudgetMiss),
     #[serde(rename = "timeout")]
@@ -208,7 +249,7 @@ pub enum RecordedObservation {
 
 /// One line of the log body, in emission order (messages of a tick precede
 /// its fingerprint, since publishes happen during the steps; membership
-/// changes sit between ticks, where they are processed).
+/// changes sit between ticks, where they take effect).
 ///
 /// Every observation nests under the one [`LogEvent::Observed`] variant
 /// rather than getting a variant of its own, so that being an observation is
@@ -241,6 +282,8 @@ impl LogEvent {
             LogEvent::Tick(_) => "tick",
             LogEvent::Join(_) => "join",
             LogEvent::Leave(_) => "leave",
+            LogEvent::Observed(RecordedObservation::JoinRequested(_)) => "observed/join_request",
+            LogEvent::Observed(RecordedObservation::LeaveRequested(_)) => "observed/leave_request",
             LogEvent::Observed(RecordedObservation::BudgetMissed(_)) => "observed/budget",
             LogEvent::Observed(RecordedObservation::TimedOut(_)) => "observed/timeout",
         }

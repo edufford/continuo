@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use continuo_conductor::record::LogEvent;
 use continuo_conductor::{
     Conductor, ConductorConfig, ConductorError, JoinMetadata, LeaveMetadata, MembershipChange,
-    Pacing, RecordedJoin, RecordedLeave, Recorder, Verifier, WORLD_LEVEL,
+    Pacing, RecordedJoin, RecordedLeave, RecordedObservation, Recorder, Verifier, WORLD_LEVEL,
 };
 use continuo_core::{Component, ComponentId, CoreError, KeyExpr, SimDuration, SimTime, StepCtx};
 use continuo_transport::{InProcTransport, MonitorTransport};
@@ -289,6 +289,7 @@ fn record_a_dynamic_run(config: &ConductorConfig) -> continuo_conductor::EventLo
         Conductor::new(config.clone(), transport).expect("free-run config is always accepted");
     conductor.add_tick_callback(recorder.tick_callback());
     conductor.add_membership_callback(recorder.membership_callback());
+    conductor.add_observation_callback(recorder.observation_callback());
 
     conductor
         .add_component(WORLD_LEVEL, ticker("a", &steps))
@@ -337,7 +338,7 @@ fn the_event_log_records_who_joined_and_left() {
         joins[1].first_due,
         t_sim_ms(25),
         "what the log keeps is the declared first step, not when the join \
-         happened to be processed"
+         happened to be asked for"
     );
 
     assert_eq!(leaves.len(), 1);
@@ -345,32 +346,126 @@ fn the_event_log_records_who_joined_and_left() {
 }
 
 #[test]
-fn a_membership_event_sits_between_the_ticks_it_falls_between() {
-    // Nothing records *when* a join was processed, because its position in the
-    // stream already says so: `b` joins after the t=10 ms tick and before
-    // the next one. That is also the part that may vary once joins arrive
-    // over the transport, which is why it is position rather than a field.
+fn a_join_is_recorded_where_it_takes_effect_not_where_it_was_requested() {
+    // `b` is asked for after the t=10 ms tick and declares t=25 ms. The two
+    // lines it produces sit in different places, which is the whole point of
+    // there being two: the request lands where the caller happened to be,
+    // and the join lands at the boundary before `b` first steps.
     let log = record_a_dynamic_run(&membership_config());
 
-    let join_at = log
+    let requested_at = log
+        .events
+        .iter()
+        .position(|e| {
+            matches!(
+                e,
+                LogEvent::Observed(RecordedObservation::JoinRequested(request))
+                    if request.path == "b"
+            )
+        })
+        .expect("`b`'s join was requested");
+    let joined_at = log
         .events
         .iter()
         .position(|e| matches!(e, LogEvent::Join(join) if join.path == "b"))
         .expect("`b` joined");
-    let ticks_before = log.events[..join_at]
-        .iter()
-        .filter(|e| matches!(e, LogEvent::Tick(_)))
-        .count();
+    let ticks_before = |index: usize| {
+        log.events[..index]
+            .iter()
+            .filter(|e| matches!(e, LogEvent::Tick(_)))
+            .count()
+    };
 
-    // Ticks at 0 and 10 ms precede it; the 20 ms tick does not.
-    assert_eq!(ticks_before, 2);
+    // The request sits after the ticks at 0 and 10 ms, where the caller
+    // made it. The join sits after the 20 ms tick as well, immediately
+    // before the 25 ms one it declared.
+    assert_eq!(ticks_before(requested_at), 2, "where the request landed");
+    assert_eq!(ticks_before(joined_at), 3, "where the join took effect");
+}
+
+#[test]
+fn a_component_removed_before_its_join_takes_effect_is_never_announced() {
+    // A join declared for 25 ms, withdrawn at 10 ms. It was admitted and
+    // never stepped, so no observer ever heard of it: announcing the leave
+    // alone would report a departure for something that never arrived.
+    // The two requests are the only trace, which is what they are for.
+    let steps: StepLog = Default::default();
+    let config = membership_config();
+    let recorder = Recorder::new(&config);
+    let transport = MonitorTransport::new(InProcTransport::new(), recorder.message_callback());
+    let mut conductor =
+        Conductor::new(config.clone(), transport).expect("free-run config is always accepted");
+    conductor.add_tick_callback(recorder.tick_callback());
+    conductor.add_membership_callback(recorder.membership_callback());
+    conductor.add_observation_callback(recorder.observation_callback());
+
+    conductor
+        .add_component(WORLD_LEVEL, ticker("a", &steps))
+        .expect("registration succeeds");
+    conductor.run_until(t_sim_ms(10)).expect("steps succeed");
+    conductor
+        .add_component(
+            JoinMetadata::at(WORLD_LEVEL, t_sim_ms(25)),
+            ticker("b", &steps),
+        )
+        .expect("25 ms is still ahead");
+    conductor.remove_component("b").expect("`b` is registered");
+    conductor.run_until(t_sim_ms(50)).expect("steps succeed");
+    let log = recorder.finish();
+
+    let mentions_b = |event: &LogEvent| match event {
+        LogEvent::Join(join) => join.path == "b",
+        LogEvent::Leave(leave) => leave.path == "b",
+        _ => false,
+    };
+    assert!(
+        !log.events.iter().any(mentions_b),
+        "`b` never took effect, so neither half of its membership is recorded"
+    );
+    assert!(
+        log.events.iter().any(|e| matches!(
+            e,
+            LogEvent::Observed(RecordedObservation::JoinRequested(request))
+                if request.path == "b"
+        )),
+        "the join was still asked for"
+    );
+    assert!(
+        log.events.iter().any(|e| matches!(
+            e,
+            LogEvent::Observed(RecordedObservation::LeaveRequested(request))
+                if request.path == "b" && request.leaves_at.is_none()
+        )),
+        "and so was the withdrawal, naming no instant"
+    );
+    assert!(
+        !steps
+            .lock()
+            .expect("step log mutex")
+            .iter()
+            .any(|(path, _)| path == "b"),
+        "`b` never stepped either"
+    );
 }
 
 #[test]
 fn a_recorded_dynamic_run_verifies_against_a_faithful_re_run() {
     let config = membership_config();
     let expected = record_a_dynamic_run(&config);
-    let total_events = expected.events.len();
+    // Expectations rather than lines, because the log also carries the
+    // membership requests, and those are observations: the re-run is not
+    // asked to land them in the same places, and does not report them at
+    // all. A count of lines would demand what verification deliberately
+    // does not check.
+    let total_expectations = expected
+        .events
+        .iter()
+        .filter(|event| !matches!(event, LogEvent::Observed(_)))
+        .count();
+    assert!(
+        total_expectations < expected.events.len(),
+        "the log has observations in it, or this proves nothing"
+    );
 
     // Re-run the same scenario live, checking every event as it happens:
     // messages, tick fingerprints, and membership changes alike.
@@ -396,7 +491,10 @@ fn a_recorded_dynamic_run_verifies_against_a_faithful_re_run() {
     conductor.remove_component("a").expect("`a` is registered");
     conductor.run_until(t_sim_ms(50)).expect("steps succeed");
 
-    assert_eq!(verifier.finish().expect("the re-run matches"), total_events);
+    assert_eq!(
+        verifier.finish().expect("the re-run matches"),
+        total_expectations
+    );
 }
 
 #[test]
@@ -682,6 +780,53 @@ fn removing_a_composite_takes_every_leaf_under_it() {
         })
         .collect();
     assert_eq!(left, vec!["car1/controller", "car1/physics"]);
+}
+
+#[test]
+fn removing_a_composite_is_one_request_against_a_leave_each() {
+    // The leaves keep the leaf discipline, because a leaf is what joins and
+    // what leaves. The request says what was actually asked for, which was
+    // the composite, so the two lines answer different questions and the
+    // counts do not match on purpose.
+    let steps: StepLog = Default::default();
+    let observations: Arc<Mutex<Vec<RecordedObservation>>> = Default::default();
+    let mut conductor = new_conductor();
+    let observed = observations.clone();
+    conductor.add_observation_callback(move |observation| {
+        observed
+            .lock()
+            .expect("observation log mutex is never poisoned")
+            .push(observation.clone());
+    });
+
+    for id in ["controller", "physics"] {
+        conductor
+            .add_component("car1", ticker(id, &steps))
+            .expect("registration succeeds");
+    }
+    conductor.run_until(t_sim_ms(10)).expect("steps succeed");
+    conductor
+        .remove_component(LeaveMetadata::at("car1", t_sim_ms(20)))
+        .expect("20 ms is still ahead");
+    conductor.run_until(t_sim_ms(30)).expect("steps succeed");
+
+    let observations = observations
+        .lock()
+        .expect("observation log mutex is never poisoned");
+    let requested: Vec<(&str, Option<SimTime>)> = observations
+        .iter()
+        .filter_map(|observation| match observation {
+            RecordedObservation::LeaveRequested(request) => {
+                Some((request.path.as_str(), request.leaves_at))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        requested,
+        vec![("car1", Some(t_sim_ms(20)))],
+        "one request, naming the composite and the instant it asked for"
+    );
 }
 
 #[test]
