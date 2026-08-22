@@ -20,16 +20,18 @@ permissions:
 jobs:
   ready_to_be_a_commit_message:
     # A draft reports under a name of its own, because the job's name is the
-    # check's name and the ruleset requires by that name. Skipping under the
-    # required one leaves the draft's result sitting in the checks list after
-    # the PR is marked ready, where it reads as the verdict on a description
-    # nothing has read. It also satisfies the requirement, since GitHub counts
-    # a skipped run as a pass. Under its own name the skip says what it is,
-    # and the required check has simply not reported yet, which is what a
-    # draft should look like.
+    # check's name and the ruleset requires by that name. Reporting under the
+    # required one leaves the draft's result in the checks list after the PR
+    # is marked ready, where it reads as a verdict on a description nothing
+    # has read, and it satisfies the requirement, since GitHub counts a
+    # skipped run as a pass. Under its own name it says what it is, and the
+    # required check has simply not reported yet, which is what a draft
+    # should look like.
+    #
+    # The job runs either way and the steps are what defer, rather than an
+    # `if` on the job: a skipped job does not evaluate this expression, and
+    # the raw text becomes the check's name.
     name: ${{ github.event.pull_request.draft && 'The description is checked once this PR is ready' || 'The description is ready to be a commit message' }}
-    # A draft is where those notes belong, so only a PR out of draft is asked.
-    if: github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     steps:
       # The description reaches the script through the environment rather than
@@ -41,6 +43,7 @@ jobs:
       # between a section and a mention: a description explaining this
       # convention names the marker in prose, and `4a3f309` is one that does.
       - name: "Check: no draft notes survive into the description"
+        if: github.event.pull_request.draft == false
         env:
           BODY: ${{ github.event.pull_request.body }}
         shell: bash
@@ -61,6 +64,7 @@ jobs:
       # CRLF endings, and counting the `\r` would report every line at its
       # width plus one and fail a description that is exactly right.
       - name: "Check: no line is too wide for the commit message"
+        if: github.event.pull_request.draft == false
         env:
           BODY: ${{ github.event.pull_request.body }}
         shell: bash
@@ -90,6 +94,7 @@ jobs:
       # are not read as spans that never close, which is what keeps this exact
       # rather than a guess about correct text.
       - name: "Check: no code span is broken across the wrap"
+        if: github.event.pull_request.draft == false
         env:
           BODY: ${{ github.event.pull_request.body }}
         shell: bash
@@ -111,3 +116,10 @@ jobs:
             exit 1
           fi
           echo "Every code span survives the wrap."
+
+      - name: "Deferred: this PR is still a draft"
+        if: github.event.pull_request.draft
+        shell: bash
+        run: |
+          echo "Still a draft, so the description has not been read yet."
+          echo "The review notes belong there until it is marked ready."
