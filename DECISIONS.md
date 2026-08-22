@@ -1226,11 +1226,44 @@ it got there, including the roads not taken.
     flags have to follow is now written beside them: together they name
     every target that runs.
 
-- **2026-08-21**: **Membership says "processed" for the conductor's half and
-  "takes effect" for the instant.** "Applied" did both jobs, so a reader
-  worked out which was meant from context every time. "Received" lost to
-  "processed" because it says only that a request arrived, where the status
-  key exists to say the conductor acted on it.
-  - **`apply_due_leaves` and `apply_leave` keep their names.** Deregistering
-    at a tick boundary is the leave taking effect, not the conductor
-    processing the request, which it did when the leave was queued.
+- **2026-08-21**: **A membership change is announced where it takes
+  effect, and where its request landed is an observation.** Renaming the
+  ambiguous "applied" is what turned this up. The word did two jobs, the
+  conductor taking a request in and the change taking effect, and picking
+  the right one per site meant asking which the code did. A leave was
+  announced from `apply_leave`, at the boundary where it takes effect. A
+  join was announced from `add_component`, at the request. So the two
+  halves disagreed, and no single word was true of both.
+  - **The asymmetry was the bug, not the vocabulary.** A `Leave` sat at
+    `leaves_at`, so its place in the log was determined by the scenario. A
+    `Join` sat wherever the caller happened to be, which is the part
+    `RecordedJoin` already admitted "may legitimately vary" once joins
+    cross a transport at M7. Half the membership stream was replay-stable
+    and half was not, in a stream verification compares line by line.
+  - **Joins now queue like leaves.** `pending_joins` holds the
+    announcement, not the component, which is registered and scheduled at
+    once as before. Nothing observable happens in between: the conductor's
+    own `subscribe` is invisible and a component cannot publish before its
+    first step. A join taking effect at the earliest instant still open is
+    announced on the spot, exactly as an unnamed leave stops its component
+    on the spot.
+  - **The request becomes a `RecordedObservation`**, the log's existing
+    category for what the machine did rather than what the run did, which
+    verification skips. That is the whole reason the move is safe: the
+    delivery-dependent half leaves the compared stream instead of being
+    argued about inside it. Leaves get one too, since a dated leave had
+    the same gap and nobody had missed it.
+  - **A component withdrawn before its join takes effect produces
+    neither line.** It was admitted and never stepped, so no observer saw
+    it arrive, and a `Leave` on its own would report a departure for
+    something that was never there. The two requests are the whole trace.
+  - **What it cost.** Only the demo and one test moved, since a world that
+    registers everything then runs still announces at the first boundary,
+    ahead of tick 1. `DEMO_WORLD_HASH` does not move at all: membership
+    reaches callbacks, never the transport or the tick fingerprint. Two
+    tests that counted log lines had to count expectations instead, which
+    is what they meant.
+  - **"Received" lost to "processed"** for the conductor's half, where a
+    word is still needed: received says only that a request arrived.
+    `apply_due_leaves` and `apply_leave` keep their names, since
+    deregistering at a boundary is the leave taking effect.

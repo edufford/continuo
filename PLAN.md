@@ -133,7 +133,7 @@ Key expression conventions (draft):
 | `continuo/{world}/actor/{id}/pose` | actor pose | built |
 | `continuo/{world}/actor/{id}/accel_cmd` | commanded acceleration, [-1, 1] | built |
 | `continuo/{world}/actor/{id}/steer_cmd` | commanded steering, [-1, 1], +1 full left | built |
-| `continuo/{world}/conductor/membership/status` | processed join or leave | built (M5) |
+| `continuo/{world}/conductor/membership/status` | join or leave that took effect | built (M5) |
 | `continuo_viz/{world}/**` | observer side channel, mirroring `continuo/{world}/**` beneath it | built (M5) |
 | `continuo/{world}/tick` | `TickStart` | M7 |
 | `continuo/{world}/tick/done` | `TickDone` | M7 |
@@ -178,12 +178,14 @@ Baked in from the start, because they are hard to retrofit:
   since nothing else would report reaching for one.
 - Per-component RNG seeded from `(world_seed, component_id)`. No OS entropy or
   wall clock in sim logic; wall clock exists only in the conductor's pacing.
-- Join/leave are processed **only at tick boundaries**, and every request
+- Membership changes **only at tick boundaries**, and every request
   **names the sim time it takes effect** (a join its first step, a leave
   its first *non*-step) rather than taking effect on arrival. A dynamic run
   then reproduces however early or late the request was made, which is what
   keeps it replayable once requests travel over a transport and delivery
-  timing stops being fixed. Both are recorded in the event log.
+  timing stops being fixed. Each is recorded twice: where it took effect,
+  which a re-run must reproduce, and where the request landed, which is an
+  observation because delivery is what decides it.
 - Per-tick canonical **state hash** (e.g. xxhash over serialized state) as the
   determinism check. Two runs with the same seed must produce identical hash
   streams; this becomes a CI test.
@@ -364,6 +366,17 @@ run by asking for that leave at that instant still matches. What says the
 removal was a timeout is the observation recorded beside it, which is also
 the only trace a *halt* leaves: without it, a halted run's log simply stops
 without saying why.
+
+Where a membership request landed is an observation too, and splits the same
+way. A join or leave that has taken effect is an ordinary `Join` or `Leave`,
+sitting at the instant it names, and a re-run must reproduce it. Where the
+conductor took the request in is a line of its own, because that boundary is
+delivery's to decide once requests cross a transport, and a run that behaved
+identically must not read as divergent for having taken a request in a tick
+earlier. It is also the only trace left by a component admitted and then
+withdrawn before its join took effect, which produces no `Join` and no
+`Leave`: it never stepped, so nothing ever saw it arrive, and announcing its
+departure alone would be a leave for something that was never there.
 
 Whichever level a step passes, **the verdict never edits the tick it was
 measured in**: the step has already run, so its outputs stand and its tick
