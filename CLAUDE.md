@@ -243,6 +243,11 @@ messages, PR descriptions, console strings.
     builds that commit, breaking each line on its own rather than reflowing
     the paragraph, so a 78-column line lands as 72 characters and an orphan
     fragment on the line below. `2540aed` is what that looks like.
+  - **Keep every code span whole.** The same wrap, biting a second way. It
+    does not know prose from code, and the backticks land in the commit as
+    written, so a span it breaks arrives as a command or an identifier cut in
+    half. `4c69fb7` carries a test name split mid-word, which is then a name
+    nobody can grep for.
   - Nothing in it can be a branch SHA, a checkbox, or a link into the diff,
     since none of those mean anything against main once the branch is gone.
     The `Co-authored-by:` trailers are GitHub's to append, so the description
@@ -255,10 +260,12 @@ messages, PR descriptions, console strings.
   heading reading `## Draft notes (deleted before merge)`. Everything above
   that marker is the commit message throughout, and the marker and all
   beneath it are deleted when the PR is marked ready.
-- `pr-description.yml` holds a PR that is out of draft to both halves of
-  that: no `## Draft notes` heading, and no line past 72 columns. The first
-  is anchored to the start of a line, so a description explaining this
-  convention can still name the marker in prose, as this one does.
+- `pr-description.yml` holds a PR that is out of draft to all three of those:
+  no `## Draft notes` heading, no line past 72 columns, and no code span the
+  wrap has broken. The first is anchored to the start of a line, so a
+  description explaining this convention can still name the marker in prose,
+  as this one does. The last skips fenced blocks, so it stays exact and can
+  sit in the required checks rather than needing a workflow of its own.
 - Comments posted through `gh` authenticate as the repository owner. Every one
   Claude writes is italicized throughout and ends with a footer line reading
   "Posted by Claude Code" behind a robot-face emoji, italic like the rest, so

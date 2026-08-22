@@ -70,3 +70,35 @@ jobs:
             exit 1
           fi
           echo "Every line fits the commit message."
+
+      # The same wrap, biting a second way. A description is prose with code
+      # in it, and the wrap does not know the difference: a span broken across
+      # it keeps its backticks and arrives as a command or an identifier cut
+      # in half, and a name split mid-word is one nobody can grep for.
+      #
+      # An odd number of backticks on a line is what a machine can see of
+      # that. Fenced blocks are skipped, so a delimiter and the lines under it
+      # are not read as spans that never close, which is what keeps this exact
+      # rather than a guess about correct text.
+      - name: "Check: no code span is broken across the wrap"
+        env:
+          BODY: ${{ github.event.pull_request.body }}
+        shell: bash
+        run: |
+          # Find lines carrying an odd number of backticks.
+          unterminated=$(printf '%s\n' "$BODY" | tr -d '\r' \
+            | awk '
+                /^[[:space:]]*```/ { fenced = !fenced; next }
+                fenced { next }
+                gsub(/`/, "`") % 2 { print "  line " NR ": " $0 }
+              ')
+          if [ -n "$unterminated" ]; then
+            echo "ERROR: the description breaks a code span across lines:"
+            printf '%s\n' "$unterminated"
+            echo
+            echo "Backticks land in the squash commit as written, so whatever"
+            echo "is inside them arrives cut in half and nobody can grep for"
+            echo "it. Rewrap the paragraph so each span stays on one line."
+            exit 1
+          fi
+          echo "Every code span survives the wrap."
