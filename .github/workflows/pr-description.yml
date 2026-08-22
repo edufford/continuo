@@ -27,10 +27,7 @@ jobs:
     # a skipped run as a pass. Under its own name the skip says what it is,
     # and the required check has simply not reported yet, which is what a
     # draft should look like.
-    name: >-
-      ${{ github.event.pull_request.draft
-      && 'The description is checked once this PR is ready'
-      || 'The description is ready to be a commit message' }}
+    name: ${{ github.event.pull_request.draft && 'The description is checked once this PR is ready' || 'The description is ready to be a commit message' }}
     # A draft is where those notes belong, so only a PR out of draft is asked.
     if: github.event.pull_request.draft == false
     runs-on: ubuntu-latest
