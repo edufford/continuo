@@ -259,12 +259,12 @@ messages, PR descriptions, console strings.
   heading reading `## Draft notes (deleted before merge)`. Everything above
   that marker is the commit message throughout, and the marker and all
   beneath it are deleted when the PR is marked ready.
-- `pr-description.yml` holds every PR to all three of those: no
-  `## Draft notes` heading, no line past 72 columns, and no code span the
+- `pr-description.yml` holds a PR that is out of draft to all three of those:
+  no `## Draft notes` heading, no line past 72 columns, and no code span the
   wrap has broken. The first is anchored to the start of a line, so a
   description explaining this convention can still name the marker in prose,
-  as this one does. A draft is asked too, so one carrying its notes reports
-  red until they go, and the workflow says why.
+  as this one does. A draft skips under a name of its own, so the required
+  check reads as not yet reported rather than as a stale pass.
 - Comments posted through `gh` authenticate as the repository owner. Every one
   Claude writes is italicized throughout and ends with a footer line reading
   "Posted by Claude Code" behind a robot-face emoji, italic like the rest, so
