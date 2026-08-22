@@ -1227,21 +1227,10 @@ it got there, including the roads not taken.
     every target that runs.
 
 - **2026-08-21**: **Membership says "processed" for the conductor's half and
-  "takes effect" for the instant.** "Applied" did both jobs. The conductor
-  had taken a request in and acted on it, which is what the key table meant
-  by "applied join or leave", and a change also takes effect at an instant
-  it names, which can be later. Both readings are natural, so a reader
-  worked out which was meant from context every time. Prose, the tests and
-  the key table's status column move together, a word each; no identifier
-  changes, because none carried it.
-  - **"Processed" rather than "received"**, the other candidate. Received
-    says a request arrived, where the status key exists to say the conductor
-    acted on it, which is the stronger claim and the one an observer
-    subscribes for.
+  "takes effect" for the instant.** "Applied" did both jobs, so a reader
+  worked out which was meant from context every time. "Received" lost to
+  "processed" because it says only that a request arrived, where the status
+  key exists to say the conductor acted on it.
   - **`apply_due_leaves` and `apply_leave` keep their names.** Deregistering
     at a tick boundary is the leave taking effect, not the conductor
-    processing the request, which it did when the leave was queued, so
-    renaming them would put the wrong half of the split on them. Having two
-    words is what makes that difference visible at all.
-  - **The 2026-07-28 entry keeps its wording**, since this log keeps every
-    entry as written. Read "the applied one" there as the processed one.
+    processing the request, which it did when the leave was queued.
