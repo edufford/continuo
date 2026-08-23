@@ -184,8 +184,15 @@ Baked in from the start, because they are hard to retrofit:
   then reproduces however early or late the request was made, which is what
   keeps it replayable once requests travel over a transport and delivery
   timing stops being fixed. Each is recorded twice: where it took effect,
-  which a re-run must reproduce, and where the request landed, which is an
-  observation because delivery is what decides it.
+  which a re-run must reproduce, and when the request was processed, which
+  is an observation because delivery is what decides it.
+  - **The whole join waits** for the boundary before its `first_due`, not
+    only its announcement: registry slot, subscriptions, execution order
+    and schedule entry happen there too. Registering a newcomer when its
+    request was processed would subscribe it then, so its first inbox
+    would hold whatever was published while it waited, and its place among
+    its siblings would say when it was asked for rather than when it
+    arrived.
 - Per-tick canonical **state hash** (e.g. xxhash over serialized state) as the
   determinism check. Two runs with the same seed must produce identical hash
   streams; this becomes a CI test.
@@ -367,16 +374,17 @@ removal was a timeout is the observation recorded beside it, which is also
 the only trace a *halt* leaves: without it, a halted run's log simply stops
 without saying why.
 
-Where a membership request landed is an observation too, and splits the same
-way. A join or leave that has taken effect is an ordinary `Join` or `Leave`,
-sitting at the instant it names, and a re-run must reproduce it. Where the
-conductor took the request in is a line of its own, because that boundary is
-delivery's to decide once requests cross a transport, and a run that behaved
-identically must not read as divergent for having taken a request in a tick
-earlier. It is also the only trace left by a component admitted and then
-withdrawn before its join took effect, which produces no `Join` and no
-`Leave`: it never stepped, so nothing ever saw it arrive, and announcing its
-departure alone would be a leave for something that was never there.
+When a membership request was processed is an observation too, and splits
+the same way. A join or leave that has taken effect is an ordinary `Join`
+or `Leave`, sitting at the instant it names, and a re-run must reproduce
+it. Where the conductor took the request in is a line of its own, because
+that boundary is delivery's to decide once requests cross a transport, and
+a run that behaved identically must not read as divergent for having taken
+a request in a tick earlier. It is also the only trace left by a component
+asked for and then withdrawn before its join took effect, which produces
+no `Join` and no `Leave`: it was never admitted, so nothing ever saw it
+arrive, and announcing its departure alone would be a leave for something
+that was never there.
 
 Whichever level a step passes, **the verdict never edits the tick it was
 measured in**: the step has already run, so its outputs stand and its tick
