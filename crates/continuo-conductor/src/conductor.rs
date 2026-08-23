@@ -13,8 +13,8 @@ use crate::error::ConductorError;
 use crate::membership::{JoinMetadata, LeaveMetadata};
 use crate::pacing::{Pacer, Pacing, SystemClock};
 use crate::record::{
-    MembershipChange, RecordedBudgetMiss, RecordedJoin, RecordedLeave, RecordedObservation,
-    RecordedTimeout, TickFingerprint,
+    MembershipChange, RecordedBudgetMiss, RecordedJoin, RecordedJoinRequest, RecordedLeave,
+    RecordedLeaveRequest, RecordedObservation, RecordedTimeout, TickFingerprint,
 };
 use crate::registry::Registry;
 use crate::schedule::Schedule;
@@ -23,6 +23,31 @@ use crate::timing::{OnTimeout, StepTiming, diagnostic_millis};
 type TickCallback = Box<dyn FnMut(&TickFingerprint) + Send>;
 type MembershipCallback = Box<dyn FnMut(&MembershipChange) + Send>;
 type ObservationCallback = Box<dyn FnMut(&RecordedObservation) + Send>;
+
+/// A join waiting for the instant it declared.
+///
+/// It holds the component, so nothing about the newcomer exists in the world
+/// until the boundary before `first_due`: no registry slot, no subscriptions,
+/// and no place in the execution order. Each of those would otherwise carry
+/// the instant its request was processed into its first step.
+///
+/// There is no `PendingLeave` beside it: a leave waits as a bare path, for
+/// the reason `pending_leaves` gives below.
+struct PendingJoin {
+    parent_path: ComponentPath,
+    /// The path the registry will put it at, which is where a leave asking
+    /// for it by name has to look while it waits.
+    component_path: ComponentPath,
+    // TODO(M7): the box is the local half and the queue is what survives. A
+    // remote join cannot take effect when its request is processed either,
+    // since the host has to construct the component first and that round
+    // trip must not reach sim time, so waiting for a boundary is what
+    // distribution wants too. What changes is this field: a recipe and the
+    // host to build it on, in place of a box only this process can hold.
+    component: Box<dyn Component>,
+    step_timing: StepTiming,
+    first_due: SimTime,
+}
 
 /// Owns simulation time and drives the discrete-event loop over a
 /// [`Transport`].
@@ -34,9 +59,22 @@ pub struct Conductor<T: Transport> {
     /// `Some` in 1x real-time mode, gating each instant to wall time;
     /// `None` in free-run. Pacing never affects `world_hash`.
     pacer: Option<Pacer<SystemClock>>,
+    /// Joins declared for a future instant, admitted at the tick boundary
+    /// before that instant is stepped. The whole join waits here, component
+    /// and all: registering one when its request was processed would start
+    /// its subscriptions then, and its first inbox would hold whatever was
+    /// published while it waited, which is a fact about when the driver got
+    /// round to asking rather than about the run.
+    pending_joins: BTreeMap<SimTime, Vec<PendingJoin>>,
     /// Leaves declared for a future instant, applied at the tick
     /// boundary before that instant is stepped. Sorted by `leaves_at`, so
     /// draining the front is enough to find the ones that have come due.
+    ///
+    /// A path rather than a struct like [`PendingJoin`], because that is
+    /// the whole of a leave: the instant is the key, and there is no
+    /// component to keep alive in the meantime. The two converge only if a
+    /// request has to carry its own ordering metadata, which both queues
+    /// would want at once.
     pending_leaves: BTreeMap<SimTime, Vec<ComponentPath>>,
     sim_time: SimTime,
     tick: u64,
@@ -76,6 +114,7 @@ impl<T: Transport> Conductor<T> {
             registry: Registry::default(),
             schedule: Schedule::default(),
             pacer,
+            pending_joins: BTreeMap::new(),
             pending_leaves: BTreeMap::new(),
             sim_time: SimTime::ZERO,
             tick: 0,
@@ -121,12 +160,11 @@ impl<T: Transport> Conductor<T> {
     }
 
     /// Adds a callback invoked for everything the *machine* did rather
-    /// than the run: steps over their budget, and the timeouts that say why
-    /// a component left or a run stopped (see
-    /// [`crate::Recorder::observation_callback`]).
+    /// than the run. See [`RecordedObservation`] for what that covers, and
+    /// [`crate::Recorder::observation_callback`] for recording it.
     ///
     /// The fourth observation point, and the one whose reports a re-run is
-    /// free to differ on. See [`RecordedObservation`].
+    /// free to differ on.
     ///
     /// Accumulates, in the order added, like [`Self::add_tick_callback`].
     pub fn add_observation_callback(
@@ -136,7 +174,7 @@ impl<T: Transport> Conductor<T> {
         self.observation_callbacks.push(Box::new(callback));
     }
 
-    /// Reports an applied membership change to every observer.
+    /// Reports a membership change that has taken effect to every observer.
     fn emit_membership(&mut self, change: MembershipChange) {
         for callback in self.membership_callbacks.iter_mut() {
             callback(&change);
@@ -166,11 +204,24 @@ impl<T: Transport> Conductor<T> {
         self.sim_time
     }
 
-    /// The earliest scheduled due time, if anything remains scheduled. This
+    /// The earliest instant anything is due at, if anything still is. This
     /// lets callers drive `step_once` themselves (e.g. live replay checking
     /// that stops at the first divergence).
-    pub fn next_scheduled(&self) -> Option<SimTime> {
-        self.schedule.earliest()
+    ///
+    /// It counts joins still waiting for the instant they declared, and is
+    /// named for that rather than for the schedule: a waiting join has no
+    /// registry slot to schedule, but the instant it declared is one the run
+    /// has to reach, since that is where it is admitted and takes its first
+    /// step.
+    pub fn next_due_instant(&self) -> Option<SimTime> {
+        let scheduled = self.schedule.earliest();
+        let waiting = self.pending_joins.keys().next().copied();
+
+        // Return whichever comes first, or the only one there is.
+        match (scheduled, waiting) {
+            (Some(scheduled), Some(waiting)) => Some(scheduled.min(waiting)),
+            (found, None) | (None, found) => found,
+        }
     }
 
     /// Total steps executed so far (each instant with due components is one
@@ -237,21 +288,22 @@ impl<T: Transport> Conductor<T> {
         }
     }
 
-    /// Admits a component. Pass a [`JoinMetadata`] to say when a newcomer to
-    /// a running world first steps, or, before the run starts, just the
-    /// parent path ([`WORLD_LEVEL`](crate::WORLD_LEVEL) for a world-level
-    /// actor, `"car1"` to join that composite), which is shorthand for first
-    /// stepping at sim time zero.
+    /// Takes in a request to add a component. Pass a [`JoinMetadata`] to
+    /// say when a newcomer to a running world first steps, or, before the
+    /// run starts, just the parent path
+    /// ([`WORLD_LEVEL`](crate::WORLD_LEVEL) for a world-level actor,
+    /// `"car1"` to join that composite), which means first stepping at sim
+    /// time zero.
     ///
-    /// Sibling order is arrival order, which fixes both the execution order
-    /// within an instant and the "earlier sibling" of the visibility rule.
-    /// A component admitted mid-run is therefore the newest sibling of
+    /// The component is admitted at the tick boundary before that instant,
+    /// or in this call when that instant is the one in hand. Nothing about
+    /// the newcomer exists until then, so the path returned is the one it
+    /// will occupy, and a path already taken is reported from `step_once`.
+    ///
+    /// Sibling order is admission order, which fixes both the execution
+    /// order within an instant and the "earlier sibling" of the visibility
+    /// rule. A component admitted mid-run is therefore the newest sibling of
     /// whatever it joins.
-    ///
-    /// The first step is scheduled here, as the component is admitted,
-    /// rather than discovered when the instant arrives, so the barrier at
-    /// `first_due` already counts the newcomer among the components it
-    /// waits for.
     ///
     /// Joining is also where a component says what its steps may cost in
     /// wall time, if anything: see [`JoinMetadata::with_timing`] and
@@ -285,20 +337,46 @@ impl<T: Transport> Conductor<T> {
             });
         }
 
-        let subscriptions = component.subscriptions();
-        let (index, path) =
-            self.registry
-                .add(&parent_path, component, self.config.world_seed, join.timing)?;
-        for key in subscriptions {
-            self.transport.subscribe(path.clone(), key);
-        }
-        self.schedule.insert(join.first_due, index);
-        self.emit_membership(MembershipChange::Joined(RecordedJoin {
+        let path = parent_path.join(component.id());
+
+        // When the request was processed, before it takes effect.
+        self.emit_observation(RecordedObservation::JoinRequested(RecordedJoinRequest {
             path: path.to_string(),
             first_due: join.first_due,
         }));
+        let pending = PendingJoin {
+            parent_path,
+            component_path: path.clone(),
+            component,
+            step_timing: join.timing,
+            first_due: join.first_due,
+        };
+        if join.first_due == earliest_open {
+            // It takes effect at the earliest instant still open, which is
+            // here, so there is nothing to hold back; anything earlier was
+            // refused above. This is the same bargain an unnamed leave gets,
+            // which stops its component on the spot for the same reason, and
+            // it is what keeps a path already taken an error the caller is
+            // handed rather than one a boundary discovers.
+            self.admit(pending)?;
+        } else {
+            // Queued in the order the requests were processed, and
+            // `admit_due_joins` drains the vector in order, so joins take
+            // effect in the order those components will step.
+            //
+            // TODO(M7): that order is the order the requests arrived in,
+            // which is deterministic only while one process makes them all.
+            // Sibling order is execution order and the visibility rule's
+            // earlier sibling, so this is the last thing about a newcomer
+            // that still depends on when it was asked for. PLAN.md,
+            // "Distribution", says what replaces it.
+            self.pending_joins
+                .entry(join.first_due)
+                .or_default()
+                .push(pending);
+        }
 
-        // Return the registered component's full path.
+        // Return the path the newcomer will occupy.
         Ok(path)
     }
 
@@ -312,23 +390,131 @@ impl<T: Transport> Conductor<T> {
             }
             let leaves_at = *entry.key();
             for path in entry.remove() {
-                // A path may have been removed directly in the meantime;
-                // a leave that finds nothing to remove is already satisfied.
-                if self.registry.index_of(&path).is_some() {
-                    self.apply_leave(&path, leaves_at);
-                }
+                self.apply_leave(&path, leaves_at);
             }
         }
     }
 
-    /// Deregisters a component and tells observers. The one place a
-    /// leave is applied, whichever route asked for it.
+    /// Admits every join whose declared instant has come, in declaration
+    /// order. Called at the tick boundary beside [`Self::apply_due_leaves`],
+    /// and after it, so a boundary that both retires and admits reads in the
+    /// order the world changed, and so a path a leave has just freed is there
+    /// for whoever is taking it.
+    fn admit_due_joins(&mut self, instant: SimTime) -> Result<(), ConductorError> {
+        while let Some(entry) = self.pending_joins.first_entry() {
+            if *entry.key() > instant {
+                break;
+            }
+            for pending in entry.remove() {
+                self.admit(pending)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Registers a component, subscribes it, schedules it, and publishes
+    /// the membership change.
+    ///
+    /// The one place a join takes effect, whether it was declared for the
+    /// instant in hand or waited in [`Self::pending_joins`] for a later one.
+    /// Everything the registry checks is checked here rather than when the
+    /// request was processed, because a path is only free or taken at the
+    /// instant the newcomer would occupy it: one a leave frees in between is
+    /// available, and one another join takes in between is not.
+    fn admit(&mut self, pending: PendingJoin) -> Result<(), ConductorError> {
+        // `component_path` is the queue's lookup key, and the registry
+        // derives the same path from the component's own id and hands it
+        // back, so nothing here needs a second source for it.
+        let PendingJoin {
+            parent_path,
+            component_path: _,
+            component,
+            step_timing,
+            first_due,
+        } = pending;
+        let subscriptions = component.subscriptions();
+        let (index, path) =
+            self.registry
+                .add(&parent_path, component, self.config.world_seed, step_timing)?;
+        for key in subscriptions {
+            self.transport.subscribe(path.clone(), key);
+        }
+        self.schedule.insert(first_due, index);
+        self.emit_membership(MembershipChange::Joined(RecordedJoin {
+            path: path.to_string(),
+            first_due,
+        }));
+
+        Ok(())
+    }
+
+    /// Drops a join still waiting for its instant, saying whether there was
+    /// one.
+    ///
+    /// A leave can come due before the join it cancels, which leaves a
+    /// component asked for and never admitted. It never stepped and nothing
+    /// saw it arrive, so announcing its departure would hand an observer a
+    /// leave for something that was never there: the pair is dropped, and the
+    /// two request observations are the whole trace.
+    ///
+    /// The scan covers only joins declared ahead and not yet due, which is
+    /// a scenario's look-ahead rather than the population.
+    fn cancel_pending_join(&mut self, path: &ComponentPath) -> bool {
+        let mut cancelled = false;
+        // An instant emptied by the inner filter loses its key too, so it
+        // stops being an instant `next_due_instant` reports as due when
+        // nothing would be admitted there.
+        self.pending_joins.retain(|_, queued| {
+            queued.retain(|pending| {
+                let keep = pending.component_path != *path;
+                cancelled |= !keep;
+                keep
+            });
+            !queued.is_empty()
+        });
+
+        // Return whether one was waiting.
+        cancelled
+    }
+
+    /// Every join still waiting whose path is `path` or sits under it, in
+    /// the order they were asked for, so a composite removed whole takes the
+    /// newcomers promised to it as well as the ones already there.
+    fn pending_joins_under(&self, path: &ComponentPath) -> Vec<ComponentPath> {
+        let depth = path.segments().len();
+
+        // Return the paths those joins would have occupied.
+        self.pending_joins
+            .values()
+            .flatten()
+            .map(|pending| pending.component_path.clone())
+            .filter(|candidate| {
+                *candidate == *path
+                    || (candidate.segments().len() > depth && candidate.prefix(depth) == *path)
+            })
+            .collect()
+    }
+
+    /// Retires whatever holds `path`, and tells observers when something
+    /// was there to retire. The one place a leave takes effect, whichever
+    /// route asked for it.
+    ///
+    /// A registered component wins over a join still waiting for the same
+    /// path, so a leave and a join naming one instant hand the path over
+    /// rather than cancel each other: leaves apply first at a boundary, and
+    /// the newcomer is then admitted into what was freed. Only where nothing
+    /// is registered does a leave withdraw the waiting join instead.
     ///
     /// `leaves_at` is the instant recorded as the component's last: the
     /// declared one for a scheduled leave, or the earliest still-open
     /// instant for an immediate removal, which is when it stops either way.
     fn apply_leave(&mut self, path: &ComponentPath, leaves_at: SimTime) {
         let Some(index) = self.registry.remove(path) else {
+            // Nothing is registered there, so the leave means one of two
+            // things: a join still waiting for its instant, which this
+            // withdraws, or a component already gone, which satisfies it.
+            self.cancel_pending_join(path);
             return;
         };
         self.schedule.remove_index(index);
@@ -345,31 +531,24 @@ impl<T: Transport> Conductor<T> {
     ///
     /// Prefer naming the instant for anything a run must reproduce: the
     /// bare-path form stops the component wherever the caller happens to
-    /// be, which is deterministic only because the caller is. A named
-    /// instant gives the same run whenever the request was made.
+    /// be, which is deterministic only if the caller is.
     ///
     /// The component stops being scheduled, stops receiving messages, and
-    /// is dropped. Everything it published stays published, because
-    /// departing is not a rollback.
+    /// is dropped, though everything it published stays published, because
+    /// departing is not a rollback. If the path matches a pending join and
+    /// no registered component, that join is withdrawn instead.
     ///
-    /// Survivors are untouched. Their declaration indexes do not shift, so
-    /// execution order within an instant and every "earlier sibling"
-    /// relationship the visibility rule depends on are exactly as they were.
-    ///
-    /// The path becomes free again; a later component may take it and
-    /// arrives as a new sibling, ordered by its arrival like any other.
+    /// Survivors keep their declaration indexes, so execution order within
+    /// an instant and every "earlier sibling" the visibility rule depends
+    /// on are exactly as they were. The path becomes free, and whoever
+    /// takes it next arrives as the newest sibling.
     ///
     /// **A composite's path takes its whole subtree.** `"car1"` removes
-    /// every leaf under it (`car1/controller`, `car1/physics`, and anything
-    /// nested below), because an actor leaving a world leaves whole, and
-    /// removing only some of its parts would leave a controller publishing
-    /// at a physics model that is gone.
-    ///
-    /// The log records **one leave per leaf**, never one for the composite.
-    /// Every join names a leaf, because a leaf is what joins, so departures
-    /// stay symmetrical with arrivals and nothing reading the log needs to
-    /// know the shape of the tree. They go out in declaration order, which
-    /// is the order those components step in.
+    /// every leaf under it, nested ones included, because an actor leaving
+    /// a world leaves whole, and removing only some of its parts would
+    /// leave a controller publishing at a physics model that is gone. The
+    /// log records **one leave per leaf**, never one for the composite, in
+    /// the order those components step in.
     // TODO(M7): departure over the transport
     // (`continuo/{world}/conductor/leave`) waits on distribution too, though
     // for a weaker reason than the join above: `LeaveMetadata` is a path and
@@ -389,13 +568,39 @@ impl<T: Transport> Conductor<T> {
         let departing = if self.registry.index_of(&path).is_some() {
             vec![path]
         } else {
-            let subtree = self.registry.components_under(&path);
-            if subtree.is_empty() {
+            // A join still waiting for its instant counts as present: it was
+            // asked for, so withdrawing it is a removal rather than a path
+            // nobody has heard of.
+            let mut found = self.registry.components_under(&path);
+            found.extend(self.pending_joins_under(&path));
+            if found.is_empty() {
                 return Err(ConductorError::UnknownPath(path));
             }
-            subtree
+            found
         };
         let earliest_open = self.earliest_open_instant();
+        if let Some(leaves_at) = leave.leaves_at {
+            if leaves_at < earliest_open {
+                // The instant it would stop at has already been stepped, so
+                // the component has already done work this leave claims it
+                // did not. Refuse rather than silently apply it late.
+                let path = departing.into_iter().next().expect("non-empty above");
+                return Err(ConductorError::LeaveInThePast {
+                    path,
+                    leaves_at,
+                    earliest_open,
+                });
+            }
+        }
+
+        // When the request was processed, naming the path as asked for:
+        // one line for a composite, against the leaf leaves it goes on to
+        // produce. Recorded past the validation above, so the log carries
+        // requests the conductor took in rather than ones it refused.
+        self.emit_observation(RecordedObservation::LeaveRequested(RecordedLeaveRequest {
+            path: leave.path.clone(),
+            leaves_at: leave.leaves_at,
+        }));
 
         let Some(leaves_at) = leave.leaves_at else {
             // Unnamed: stop them at the earliest instant still open, which
@@ -405,17 +610,6 @@ impl<T: Transport> Conductor<T> {
             }
             return Ok(());
         };
-        if leaves_at < earliest_open {
-            // The instant it would stop at has already been stepped, so the
-            // component has already done work this leave claims it did
-            // not. Refuse rather than silently apply it late.
-            let path = departing.into_iter().next().expect("non-empty above");
-            return Err(ConductorError::LeaveInThePast {
-                path,
-                leaves_at,
-                earliest_open,
-            });
-        }
         // Queued in declaration order, and `apply_due_leaves` drains the
         // vector in order, so the log's leaves come out in the order the
         // components would have stepped.
@@ -432,10 +626,12 @@ impl<T: Transport> Conductor<T> {
     /// Advances to the earliest due instant and steps every component due at
     /// it, in declaration order. Returns `false` when nothing is scheduled.
     pub fn step_once(&mut self) -> Result<bool, ConductorError> {
-        // Remove anyone whose declared leave has come due before the
-        // instant is entered, so a component that leaves at T takes no part
-        // in T. This is the tick boundary: membership settles here, and is
-        // frozen for the rest of the tick.
+        // Settle membership before the instant is entered, so a component
+        // that leaves at T takes no part in T and one that joins at T is
+        // announced before it first steps. This is the tick boundary:
+        // membership settles here, and is frozen for the rest of the tick.
+        // Leaves first, so a boundary doing both reads in the order the
+        // world changed.
         //
         // Peek rather than pop, because popping takes the due set *and*
         // the instant with it, leaving the leave nothing to affect: the due
@@ -443,8 +639,9 @@ impl<T: Transport> Conductor<T> {
         // holding only that component could no longer be pruned, so it
         // would still become a tick, numbered and fingerprinted and chained
         // into the world hash for an instant where nobody stepped.
-        if let Some(next) = self.schedule.earliest() {
+        if let Some(next) = self.next_due_instant() {
             self.apply_due_leaves(next);
+            self.admit_due_joins(next)?;
         }
         let Some((now, due)) = self.schedule.pop_earliest() else {
             return Ok(false);
@@ -765,7 +962,7 @@ impl<T: Transport> Conductor<T> {
     /// Runs until the earliest scheduled instant would exceed `end`
     /// (inclusive: an instant exactly at `end` is executed).
     pub fn run_until(&mut self, end: SimTime) -> Result<(), ConductorError> {
-        while let Some(earliest) = self.schedule.earliest() {
+        while let Some(earliest) = self.next_due_instant() {
             if earliest > end {
                 break;
             }

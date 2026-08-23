@@ -197,7 +197,7 @@ fn live_verification_stops_at_the_first_divergence() {
         .expect("registration succeeds");
 
     let end = SimTime::from_millis(100);
-    while !checker.diverged() && conductor.next_scheduled().is_some_and(|t| t <= end) {
+    while !checker.diverged() && conductor.next_due_instant().is_some_and(|t| t <= end) {
         conductor.step_once().expect("steps succeed");
     }
 

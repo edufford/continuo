@@ -133,7 +133,7 @@ Key expression conventions (draft):
 | `continuo/{world}/actor/{id}/pose` | actor pose | built |
 | `continuo/{world}/actor/{id}/accel_cmd` | commanded acceleration, [-1, 1] | built |
 | `continuo/{world}/actor/{id}/steer_cmd` | commanded steering, [-1, 1], +1 full left | built |
-| `continuo/{world}/conductor/membership/status` | applied join or leave | built (M5) |
+| `continuo/{world}/conductor/membership/status` | join or leave that took effect | built (M5) |
 | `continuo_viz/{world}/**` | observer side channel, mirroring `continuo/{world}/**` beneath it | built (M5) |
 | `continuo/{world}/tick` | `TickStart` | M7 |
 | `continuo/{world}/tick/done` | `TickDone` | M7 |
@@ -178,12 +178,21 @@ Baked in from the start, because they are hard to retrofit:
   since nothing else would report reaching for one.
 - Per-component RNG seeded from `(world_seed, component_id)`. No OS entropy or
   wall clock in sim logic; wall clock exists only in the conductor's pacing.
-- Join/leave applied **only at tick boundaries**, and every request **names the
-  sim time it takes effect** (a join its first step, a leave its first
-  *non*-step) rather than taking effect on arrival. A dynamic run then
-  reproduces however early or late the request was made, which is what keeps
-  it replayable once requests travel over a transport and delivery timing
-  stops being fixed. Both are recorded in the event log.
+- Membership changes **only at tick boundaries**, and every request
+  **names the sim time it takes effect** (a join its first step, a leave
+  its first *non*-step) rather than taking effect on arrival. A dynamic run
+  then reproduces however early or late the request was made, which is what
+  keeps it replayable once requests travel over a transport and delivery
+  timing stops being fixed. Each is recorded twice: where it took effect,
+  which a re-run must reproduce, and when the request was processed, which
+  is an observation because delivery is what decides it.
+  - **The whole join waits** for the boundary before its `first_due`, not
+    only its announcement: registry slot, subscriptions, execution order
+    and schedule entry happen there too. Registering a newcomer when its
+    request was processed would subscribe it then, so its first inbox
+    would hold whatever was published while it waited, and its place among
+    its siblings would say when it was asked for rather than when it
+    arrived.
 - Per-tick canonical **state hash** (e.g. xxhash over serialized state) as the
   determinism check. Two runs with the same seed must produce identical hash
   streams; this becomes a CI test.
@@ -365,6 +374,18 @@ removal was a timeout is the observation recorded beside it, which is also
 the only trace a *halt* leaves: without it, a halted run's log simply stops
 without saying why.
 
+When a membership request was processed is an observation too, and splits
+the same way. A join or leave that has taken effect is an ordinary `Join`
+or `Leave`, sitting at the instant it names, and a re-run must reproduce
+it. Where the conductor took the request in is a line of its own, because
+that boundary is delivery's to decide once requests cross a transport, and
+a run that behaved identically must not read as divergent for having taken
+a request in a tick earlier. It is also the only trace left by a component
+asked for and then withdrawn before its join took effect, which produces
+no `Join` and no `Leave`: it was never admitted, so nothing ever saw it
+arrive, and announcing its departure alone would be a leave for something
+that was never there.
+
 Whichever level a step passes, **the verdict never edits the tick it was
 measured in**: the step has already run, so its outputs stand and its tick
 fingerprints exactly as it would have anyway. Halting ends the run after that
@@ -445,6 +466,19 @@ component in particular.
   same tick protocol.
 - Note: the per-tick gather must stay deterministic (sort by publisher/sequence,
   not arrival), which the determinism rules above already guarantee.
+- **Joins declared for one instant need an order that is not arrival
+  order**, for the same reason and by much the same means. Sibling order is
+  the execution order within an instant and the visibility rule's earlier
+  sibling, so letting delivery decide it lets delivery decide the run.
+  There are two parts. A request should be able to carry several components
+  in a stated order, which settles the case that matters, a composite
+  admitted whole by one requester, and gives admission the unit
+  `remove_component` already has. What is left is two requesters declaring
+  one instant, ordered by the sim time of the request and then by requester
+  and its own sequence number. Never by a wall clock: a re-run stamps
+  differently, two hosts have two clocks, and every wall-clock quantity
+  here is deliberately an observation, which is the stream a re-run is free
+  to differ on.
 - One conductor per world; remote processes run **hosts** (component
   container + transport bridge + publish stamping). Data flows host↔host
   over pub/sub without routing through the conductor. Because same-instant
@@ -637,15 +671,6 @@ under "Wire format", rather than churning the fingerprint once apiece.
      subscription state, which is worse. If it is ever wanted, the scenario
      should declare which outputs are optional, so the decision is static and
      reproducible rather than dependent on who happened to connect.
-
-- **Membership "applied" should say "received" or "processed".** The word does
-  two jobs. The conductor has taken a change in and acted on it, which is what
-  the key table means by "applied join or leave", and a join also takes effect
-  at an instant the change names, which can be later. Both readings are
-  natural, so a reader works out which is meant from context every time.
-  "Received" or "processed" says the conductor's half and leaves "takes effect"
-  to mean only the instant. Prose, field names, and the table's status column
-  move together.
 
 - **A compact binary mode alongside JSON, chosen like debug versus release.**
   JSON stays the readable mode for development, inspection, and the event log;

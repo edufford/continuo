@@ -287,6 +287,11 @@ messages, PR descriptions, console strings.
   `write_text` and plain `open(..., "w")` translate to CRLF, which
   `.gitattributes` then warns about on every commit touching the file, and
   `git checkout -- <file>` will not undo it.
+- Splitting finished work into a commit per topic by resetting the tree and
+  re-applying each topic drops whatever no topic claimed, and nothing fails
+  when it does: the build is green and the tests pass on a tree missing the
+  edits. Copy the finished tree aside first and diff the reconstruction
+  against it before pushing.
 
 ## Worktrees
 

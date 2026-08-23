@@ -341,11 +341,10 @@ fn try_queue(tx: &SyncSender<VizFrame>, dropped_frames: &AtomicU64, frame: VizFr
 /// The instant a membership change takes effect, which is what its metadata
 /// reports as the sim time.
 ///
-/// The *declared* instant, and deliberately not the one the change was
-/// applied at. "Applied" is the moment the conductor processed the request,
-/// which `RecordedJoin` and `RecordedLeave` refuse to record because it varies
-/// with delivery. The declared instant is chosen by whoever asked, so it is
-/// stable however early or late the request arrived.
+/// Read from the payload rather than taken from the conductor's clock,
+/// which at a tick boundary still holds the previous instant. The value is
+/// the declared one either way, chosen by whoever asked, so a viewer sees
+/// the same instant however early or late the request arrived.
 fn membership_takes_effect_at(change: &MembershipChange) -> SimTime {
     // Return the instant the newcomer first steps, or the first instant the
     // departing component does not.
