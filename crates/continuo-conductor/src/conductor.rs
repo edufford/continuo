@@ -28,22 +28,22 @@ type ObservationCallback = Box<dyn FnMut(&RecordedObservation) + Send>;
 ///
 /// It holds the component, so nothing about the newcomer exists in the world
 /// until the boundary before `first_due`: no registry slot, no subscriptions,
-/// and no place in the execution order. Everything that would make its first
-/// step depend on when the request was processed is therefore not yet done.
+/// and no place in the execution order. Each of those would otherwise carry
+/// the instant its request was processed into its first step.
 struct PendingJoin {
     parent_path: ComponentPath,
+    /// The path the registry will put it at, which is where a leave asking
+    /// for it by name has to look while it waits.
+    component_path: ComponentPath,
+    // TODO(M7): the box is the local half and the queue is what survives. A
+    // remote join cannot take effect when its request is processed either,
+    // since the host has to construct the component first and that round
+    // trip must not reach sim time, so waiting for a boundary is what
+    // distribution wants too. What changes is this field: a recipe and the
+    // host to build it on, in place of a box only this process can hold.
     component: Box<dyn Component>,
-    timing: StepTiming,
+    step_timing: StepTiming,
     first_due: SimTime,
-}
-
-impl PendingJoin {
-    /// The path this join will occupy once it is admitted.
-    fn path_would_be(&self) -> ComponentPath {
-        // Return where the registry will put it, which is where a leave
-        // asking for it by name has to look while it waits.
-        self.parent_path.join(self.component.id())
-    }
 }
 
 /// Owns simulation time and drives the discrete-event loop over a
@@ -346,8 +346,9 @@ impl<T: Transport> Conductor<T> {
         }));
         let pending = PendingJoin {
             parent_path,
+            component_path: path.clone(),
             component,
-            timing: join.timing,
+            step_timing: join.timing,
             first_due: join.first_due,
         };
         if join.first_due <= earliest_open {
@@ -417,16 +418,20 @@ impl<T: Transport> Conductor<T> {
     /// instant the newcomer would occupy it: one a leave frees in between is
     /// available, and one another join takes in between is not.
     fn admit(&mut self, pending: PendingJoin) -> Result<(), ConductorError> {
+        // `component_path` is the queue's lookup key, and the registry
+        // derives the same path from the component's own id and hands it
+        // back, so nothing here needs a second source for it.
         let PendingJoin {
             parent_path,
+            component_path: _,
             component,
-            timing,
+            step_timing,
             first_due,
         } = pending;
         let subscriptions = component.subscriptions();
         let (index, path) =
             self.registry
-                .add(&parent_path, component, self.config.world_seed, timing)?;
+                .add(&parent_path, component, self.config.world_seed, step_timing)?;
         for key in subscriptions {
             self.transport.subscribe(path.clone(), key);
         }
@@ -454,7 +459,7 @@ impl<T: Transport> Conductor<T> {
         let mut cancelled = false;
         for queued in self.pending_joins.values_mut() {
             queued.retain(|pending| {
-                let keep = pending.path_would_be() != *path;
+                let keep = pending.component_path != *path;
                 cancelled |= !keep;
                 keep
             });
@@ -475,7 +480,7 @@ impl<T: Transport> Conductor<T> {
         self.pending_joins
             .values()
             .flatten()
-            .map(PendingJoin::path_would_be)
+            .map(|pending| pending.component_path.clone())
             .filter(|candidate| {
                 *candidate == *path
                     || (candidate.segments().len() > depth && candidate.prefix(depth) == *path)
