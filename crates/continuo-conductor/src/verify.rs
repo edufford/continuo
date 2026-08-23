@@ -133,7 +133,7 @@ impl EventLog {
 ///
 /// ```text
 /// while !verifier.diverged()
-///     && conductor.next_scheduled().is_some_and(|t| t <= end)
+///     && conductor.next_due_instant().is_some_and(|t| t <= end)
 /// {
 ///     conductor.step_once()?;
 /// }

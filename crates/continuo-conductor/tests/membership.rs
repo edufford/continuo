@@ -184,11 +184,12 @@ fn a_component_admitted_mid_run_first_steps_at_its_declared_time() {
 }
 
 #[test]
-fn a_joining_component_is_scheduled_before_its_instant_arrives() {
+fn a_joining_component_is_counted_due_before_its_instant_arrives() {
     // The point of declaring `first_due` up front: the conductor knows the
     // newcomer is due at that instant while the instant is still in the
-    // future, so the barrier there waits for it instead of discovering it
-    // late.
+    // future, so the run reaches it rather than stepping past it. The join
+    // is not in the schedule, having no registry slot yet, which is why the
+    // count has to look at both.
     let steps: StepLog = Default::default();
     let mut conductor = new_conductor();
     conductor
@@ -196,7 +197,7 @@ fn a_joining_component_is_scheduled_before_its_instant_arrives() {
         .expect("registration succeeds");
     conductor.run_until(t_sim_ms(10)).expect("steps succeed");
     assert_eq!(
-        conductor.next_scheduled(),
+        conductor.next_due_instant(),
         Some(t_sim_ms(20)),
         "only `a` is due, at its next period"
     );
@@ -209,10 +210,10 @@ fn a_joining_component_is_scheduled_before_its_instant_arrives() {
         .expect("15 ms is still ahead");
 
     assert_eq!(
-        conductor.next_scheduled(),
+        conductor.next_due_instant(),
         Some(t_sim_ms(15)),
-        "admitting the newcomer scheduled it immediately, making it the \
-         earliest thing due"
+        "a join waiting for 15 ms is an instant the run has to reach, so it \
+         is now the earliest thing due"
     );
 }
 
@@ -523,7 +524,7 @@ fn a_re_run_that_skips_a_departure_is_caught() {
         .expect("25 ms is still ahead");
 
     let end = t_sim_ms(50);
-    while !verifier.diverged() && conductor.next_scheduled().is_some_and(|t| t <= end) {
+    while !verifier.diverged() && conductor.next_due_instant().is_some_and(|t| t <= end) {
         conductor.step_once().expect("steps succeed");
     }
 

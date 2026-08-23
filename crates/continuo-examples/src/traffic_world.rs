@@ -548,7 +548,7 @@ pub fn run_live_traffic_scenario<T: Transport>(
     // worth reporting.
     while verifier.is_none_or(|verifier| !verifier.diverged())
         && conductor
-            .next_scheduled()
+            .next_due_instant()
             .is_some_and(|instant| instant <= end)
     {
         conductor.step_once()?;

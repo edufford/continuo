@@ -201,20 +201,16 @@ impl<T: Transport> Conductor<T> {
         self.sim_time
     }
 
-    /// The earliest scheduled due time, if anything remains scheduled. This
+    /// The earliest instant anything is due at, if anything still is. This
     /// lets callers drive `step_once` themselves (e.g. live replay checking
     /// that stops at the first divergence).
-    pub fn next_scheduled(&self) -> Option<SimTime> {
-        self.next_due_instant()
-    }
-
-    /// The earliest instant anything is due at, counting joins still waiting
-    /// for theirs.
     ///
-    /// A waiting join is deliberately not in the schedule, since it has no
+    /// It counts joins still waiting for the instant they declared, and is
+    /// named for that rather than for the schedule: a waiting join has no
     /// registry slot to schedule, but the instant it declared is one the run
-    /// has to reach: that is where it is admitted and takes its first step.
-    fn next_due_instant(&self) -> Option<SimTime> {
+    /// has to reach, since that is where it is admitted and takes its first
+    /// step.
+    pub fn next_due_instant(&self) -> Option<SimTime> {
         let scheduled = self.schedule.earliest();
         let waiting = self.pending_joins.keys().next().copied();
 

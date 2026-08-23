@@ -123,7 +123,7 @@ it got there, including the roads not taken.
 - **2026-07-23**: Milestone 3 (pacing) implementation choices:
   - Pacing gates each instant at the **top of `step_once`**, before any
     component runs, so every driver (`run_until` and the manual
-    `next_scheduled` loops alike) gets it for free and it delays entry to an
+    `next_due_instant` loops alike) gets it for free and it delays entry to an
     instant without ever touching its content. Consequence: a paced run and
     a free run of the same seeded world produce the **identical world
     hash**, the milestone's headline test.
