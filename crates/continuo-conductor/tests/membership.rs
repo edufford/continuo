@@ -734,9 +734,9 @@ fn removing_a_composite_takes_every_leaf_under_it() {
     let steps: StepLog = Default::default();
     let changes: Arc<Mutex<Vec<MembershipChange>>> = Default::default();
     let mut conductor = new_conductor();
-    let observed = changes.clone();
+    let announced = changes.clone();
     conductor.add_membership_callback(move |change| {
-        observed
+        announced
             .lock()
             .expect("membership log mutex is never poisoned")
             .push(change.clone());
@@ -907,6 +907,174 @@ fn an_emptied_composite_rejoins_as_the_newest_sibling() {
         steps_of(&steps, "physics").len(),
         4,
         "two live cars, two instants each"
+    );
+}
+
+/// Taps the conductor's membership callback, returning the log it fills:
+/// every change announced, in order, as `(path, kind)`.
+fn record_membership_changes(
+    conductor: &mut Conductor<InProcTransport>,
+) -> Arc<Mutex<Vec<(String, &'static str)>>> {
+    let changes: Arc<Mutex<Vec<(String, &'static str)>>> = Default::default();
+    let announced = changes.clone();
+    conductor.add_membership_callback(move |change| {
+        let (path, kind) = match change {
+            MembershipChange::Joined(join) => (join.path.clone(), "joined"),
+            MembershipChange::Left(leave) => (leave.path.clone(), "left"),
+        };
+        announced
+            .lock()
+            .expect("membership log mutex is never poisoned")
+            .push((path, kind));
+    });
+
+    // Return the log the callback fills.
+    changes
+}
+
+#[test]
+fn a_leave_retires_the_component_at_a_path_rather_than_the_join_waiting_for_it() {
+    // Two components claim `a`: the one registered there, and a join
+    // declared for 25 ms. A leave names a path, and the one occupying it is
+    // what leaves, so the newcomer still arrives at the instant it asked
+    // for. Withdrawing the join instead would leave the incumbent running
+    // and answer a leave by cancelling something else.
+    let steps: StepLog = Default::default();
+    let mut conductor = new_conductor();
+    let announced = record_membership_changes(&mut conductor);
+    conductor
+        .add_component(WORLD_LEVEL, ticker("a", &steps))
+        .expect("registration succeeds");
+    conductor.run_until(t_sim_ms(10)).expect("steps succeed");
+
+    conductor
+        .add_component(
+            JoinMetadata::at(WORLD_LEVEL, t_sim_ms(25)),
+            Box::new(Ticker {
+                id: "a",
+                period: dur_ms(10),
+                steps: steps.clone(),
+            }),
+        )
+        .expect("25 ms is still ahead");
+    conductor.remove_component("a").expect("`a` is registered");
+    conductor.run_until(t_sim_ms(50)).expect("steps succeed");
+
+    assert_eq!(
+        steps_of(&steps, "a"),
+        vec![
+            t_sim_ms(0),
+            t_sim_ms(10),
+            t_sim_ms(25),
+            t_sim_ms(35),
+            t_sim_ms(45)
+        ],
+        "the incumbent stopped at 10 ms and the newcomer took the path at 25 ms"
+    );
+    assert_eq!(
+        *announced.lock().expect("membership log mutex"),
+        vec![
+            ("a".to_string(), "joined"),
+            ("a".to_string(), "left"),
+            ("a".to_string(), "joined"),
+        ]
+    );
+}
+
+#[test]
+fn a_leave_and_a_join_at_one_instant_hand_the_path_over() {
+    // The boundary settles leaves before joins, so a path freed at 25 ms is
+    // free for whoever declared 25 ms. The order they are announced in is
+    // the order the world changed.
+    let steps: StepLog = Default::default();
+    let mut conductor = new_conductor();
+    let announced = record_membership_changes(&mut conductor);
+    conductor
+        .add_component(WORLD_LEVEL, ticker("a", &steps))
+        .expect("registration succeeds");
+    conductor.run_until(t_sim_ms(10)).expect("steps succeed");
+
+    conductor
+        .add_component(
+            JoinMetadata::at(WORLD_LEVEL, t_sim_ms(25)),
+            Box::new(Ticker {
+                id: "a",
+                period: dur_ms(10),
+                steps: steps.clone(),
+            }),
+        )
+        .expect("25 ms is still ahead");
+    conductor
+        .remove_component(LeaveMetadata::at("a", t_sim_ms(25)))
+        .expect("`a` is registered");
+    conductor.run_until(t_sim_ms(50)).expect("steps succeed");
+
+    assert_eq!(
+        steps_of(&steps, "a"),
+        vec![
+            t_sim_ms(0),
+            t_sim_ms(10),
+            t_sim_ms(20),
+            t_sim_ms(25),
+            t_sim_ms(35),
+            t_sim_ms(45)
+        ],
+        "the incumbent stepped up to 20 ms and the newcomer from 25 ms"
+    );
+    assert_eq!(
+        *announced.lock().expect("membership log mutex"),
+        vec![
+            ("a".to_string(), "joined"),
+            ("a".to_string(), "left"),
+            ("a".to_string(), "joined"),
+        ],
+        "retired first, admitted second"
+    );
+}
+
+#[test]
+fn removing_a_composite_takes_the_newcomers_promised_to_it() {
+    // An actor leaving whole takes the parts it was still expecting as well
+    // as the ones already there. Leaving a waiting join behind would rebuild
+    // the composite at its instant, out of one component nobody asked to
+    // keep.
+    let steps: StepLog = Default::default();
+    let mut conductor = new_conductor();
+    let announced = record_membership_changes(&mut conductor);
+    conductor
+        .add_component("car1", ticker("physics", &steps))
+        .expect("registration succeeds");
+    conductor.run_until(t_sim_ms(10)).expect("steps succeed");
+
+    conductor
+        .add_component(
+            JoinMetadata::at("car1", t_sim_ms(25)),
+            ticker("radar", &steps),
+        )
+        .expect("25 ms is still ahead");
+    conductor
+        .remove_component("car1")
+        .expect("`car1` names a composite");
+    conductor.run_until(t_sim_ms(50)).expect("steps succeed");
+
+    assert!(
+        steps_of(&steps, "radar").is_empty(),
+        "the newcomer promised to `car1` never arrived"
+    );
+    assert_eq!(
+        *announced.lock().expect("membership log mutex"),
+        vec![
+            ("car1/physics".to_string(), "joined"),
+            ("car1/physics".to_string(), "left"),
+        ],
+        "the waiting join was withdrawn, so neither half of it is announced"
+    );
+    assert!(
+        matches!(
+            conductor.remove_component("car1"),
+            Err(ConductorError::UnknownPath(_))
+        ),
+        "nothing under `car1` is left to name"
     );
 }
 

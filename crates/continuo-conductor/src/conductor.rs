@@ -379,9 +379,6 @@ impl<T: Transport> Conductor<T> {
             }
             let leaves_at = *entry.key();
             for path in entry.remove() {
-                // Whether the target is registered, still waiting to be
-                // admitted, or already gone is `apply_leave`'s to work out. A
-                // leave that finds nothing to remove is already satisfied.
                 self.apply_leave(&path, leaves_at);
             }
         }
@@ -484,24 +481,29 @@ impl<T: Transport> Conductor<T> {
             .collect()
     }
 
-    /// Deregisters a component and tells observers. The one place a
-    /// leave is applied, whichever route asked for it.
+    /// Retires whatever holds `path`, and tells observers when something
+    /// was there to retire. The one place a leave takes effect, whichever
+    /// route asked for it.
+    ///
+    /// A registered component wins over a join still waiting for the same
+    /// path, so a leave and a join naming one instant hand the path over
+    /// rather than cancel each other: leaves apply first at a boundary, and
+    /// the newcomer is then admitted into what was freed. Only where nothing
+    /// is registered does a leave withdraw the waiting join instead.
     ///
     /// `leaves_at` is the instant recorded as the component's last: the
     /// declared one for a scheduled leave, or the earliest still-open
     /// instant for an immediate removal, which is when it stops either way.
     fn apply_leave(&mut self, path: &ComponentPath, leaves_at: SimTime) {
-        if self.cancel_pending_join(path) {
-            return;
-        }
         let Some(index) = self.registry.remove(path) else {
+            // Nothing is registered there, so the leave means one of two
+            // things: a join still waiting for its instant, which this
+            // withdraws, or a component already gone, which satisfies it.
+            self.cancel_pending_join(path);
             return;
         };
         self.schedule.remove_index(index);
         self.transport.unsubscribe(path);
-        if self.cancel_pending_join(path) {
-            return;
-        }
         self.emit_membership(MembershipChange::Left(RecordedLeave {
             path: path.to_string(),
             leaves_at,
