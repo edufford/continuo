@@ -293,21 +293,22 @@ impl<T: Transport> Conductor<T> {
         }
     }
 
-    /// Admits a component. Pass a [`JoinMetadata`] to say when a newcomer to
-    /// a running world first steps, or, before the run starts, just the
-    /// parent path ([`WORLD_LEVEL`](crate::WORLD_LEVEL) for a world-level
-    /// actor, `"car1"` to join that composite), which is shorthand for first
-    /// stepping at sim time zero.
+    /// Takes in a request to add a component. Pass a [`JoinMetadata`] to
+    /// say when a newcomer to a running world first steps, or, before the
+    /// run starts, just the parent path
+    /// ([`WORLD_LEVEL`](crate::WORLD_LEVEL) for a world-level actor,
+    /// `"car1"` to join that composite), which means first stepping at sim
+    /// time zero.
     ///
-    /// Sibling order is arrival order, which fixes both the execution order
-    /// within an instant and the "earlier sibling" of the visibility rule.
-    /// A component admitted mid-run is therefore the newest sibling of
+    /// The component is admitted at the tick boundary before that instant,
+    /// or in this call when that instant is the one in hand. Nothing about
+    /// the newcomer exists until then, so the path returned is the one it
+    /// will occupy, and a path already taken is reported from `step_once`.
+    ///
+    /// Sibling order is admission order, which fixes both the execution
+    /// order within an instant and the "earlier sibling" of the visibility
+    /// rule. A component admitted mid-run is therefore the newest sibling of
     /// whatever it joins.
-    ///
-    /// The first step is scheduled here, as the component is admitted,
-    /// rather than discovered when the instant arrives, so the barrier at
-    /// `first_due` already counts the newcomer among the components it
-    /// waits for.
     ///
     /// Joining is also where a component says what its steps may cost in
     /// wall time, if anything: see [`JoinMetadata::with_timing`] and
@@ -531,31 +532,24 @@ impl<T: Transport> Conductor<T> {
     ///
     /// Prefer naming the instant for anything a run must reproduce: the
     /// bare-path form stops the component wherever the caller happens to
-    /// be, which is deterministic only because the caller is. A named
-    /// instant gives the same run whenever the request was made.
+    /// be, which is deterministic only if the caller is.
     ///
     /// The component stops being scheduled, stops receiving messages, and
-    /// is dropped. Everything it published stays published, because
-    /// departing is not a rollback.
+    /// is dropped, though everything it published stays published, because
+    /// departing is not a rollback. If the path matches a pending join and
+    /// no registered component, that join is withdrawn instead.
     ///
-    /// Survivors are untouched. Their declaration indexes do not shift, so
-    /// execution order within an instant and every "earlier sibling"
-    /// relationship the visibility rule depends on are exactly as they were.
-    ///
-    /// The path becomes free again; a later component may take it and
-    /// arrives as a new sibling, ordered by its arrival like any other.
+    /// Survivors keep their declaration indexes, so execution order within
+    /// an instant and every "earlier sibling" the visibility rule depends
+    /// on are exactly as they were. The path becomes free, and whoever
+    /// takes it next arrives as the newest sibling.
     ///
     /// **A composite's path takes its whole subtree.** `"car1"` removes
-    /// every leaf under it (`car1/controller`, `car1/physics`, and anything
-    /// nested below), because an actor leaving a world leaves whole, and
-    /// removing only some of its parts would leave a controller publishing
-    /// at a physics model that is gone.
-    ///
-    /// The log records **one leave per leaf**, never one for the composite.
-    /// Every join names a leaf, because a leaf is what joins, so departures
-    /// stay symmetrical with arrivals and nothing reading the log needs to
-    /// know the shape of the tree. They go out in declaration order, which
-    /// is the order those components step in.
+    /// every leaf under it, nested ones included, because an actor leaving
+    /// a world leaves whole, and removing only some of its parts would
+    /// leave a controller publishing at a physics model that is gone. The
+    /// log records **one leave per leaf**, never one for the composite, in
+    /// the order those components step in.
     // TODO(M7): departure over the transport
     // (`continuo/{world}/conductor/leave`) waits on distribution too, though
     // for a weaker reason than the join above: `LeaveMetadata` is a path and
