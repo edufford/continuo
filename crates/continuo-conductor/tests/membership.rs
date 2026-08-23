@@ -908,3 +908,94 @@ fn an_emptied_composite_rejoins_as_the_newest_sibling() {
         "two live cars, two instants each"
     );
 }
+
+/// Publishes on every step, so how much a newcomer is handed at its first
+/// step depends on how long it has been subscribed.
+struct Talker;
+
+impl Component for Talker {
+    fn id(&self) -> ComponentId {
+        ComponentId::new("talker").expect("valid id")
+    }
+
+    fn subscriptions(&self) -> Vec<KeyExpr> {
+        Vec::new()
+    }
+
+    fn step(&mut self, ctx: &mut StepCtx) -> Result<SimTime, CoreError> {
+        ctx.publish(
+            KeyExpr::new("chatter").expect("valid key"),
+            &ctx.now().to_canonical_string(),
+        )?;
+
+        // Return the next due time, one period out.
+        Ok(ctx.now() + dur_ms(10))
+    }
+}
+
+/// Records how many messages it was handed at each step.
+struct Listener(Arc<Mutex<Vec<usize>>>);
+
+impl Component for Listener {
+    fn id(&self) -> ComponentId {
+        ComponentId::new("listener").expect("valid id")
+    }
+
+    fn subscriptions(&self) -> Vec<KeyExpr> {
+        vec![KeyExpr::new("chatter").expect("valid key")]
+    }
+
+    fn step(&mut self, ctx: &mut StepCtx) -> Result<SimTime, CoreError> {
+        self.0
+            .lock()
+            .expect("inbox log mutex is never poisoned")
+            .push(ctx.inbox().len());
+
+        // Return the next due time, one period out.
+        Ok(ctx.now() + dur_ms(10))
+    }
+}
+
+/// Runs a talker from zero and asks for a listener at `requested_at`,
+/// declaring 25 ms either way.
+fn run_with_a_late_joiner(requested_at: i64) -> (Vec<usize>, u64) {
+    let heard: Arc<Mutex<Vec<usize>>> = Default::default();
+    let mut conductor = new_conductor();
+    conductor
+        .add_component(WORLD_LEVEL, Box::new(Talker))
+        .expect("registration succeeds");
+    conductor
+        .run_until(t_sim_ms(requested_at))
+        .expect("steps succeed");
+    conductor
+        .add_component(
+            JoinMetadata::at(WORLD_LEVEL, t_sim_ms(25)),
+            Box::new(Listener(heard.clone())),
+        )
+        .expect("25 ms is ahead of either request");
+    conductor.run_until(t_sim_ms(60)).expect("steps succeed");
+    let seen = heard.lock().expect("inbox log mutex").clone();
+
+    // Return what the newcomer was handed, and the run's fingerprint.
+    (seen, conductor.world_hash())
+}
+
+#[test]
+fn what_a_newcomer_first_sees_does_not_depend_on_when_it_was_asked_for() {
+    // Both runs declare the same join at the same instant, so they are the
+    // same run and must fingerprint alike. Subscribing a component when its
+    // request is taken in rather than when it takes effect would hand the
+    // earlier request everything published in between, making the first
+    // inbox a function of when the driver got round to asking.
+    let (asked_early, hash_early) = run_with_a_late_joiner(0);
+    let (asked_late, hash_late) = run_with_a_late_joiner(20);
+
+    assert_eq!(
+        asked_early, asked_late,
+        "the newcomer was handed a different first inbox for the same join"
+    );
+    assert_eq!(
+        hash_early, hash_late,
+        "the same declared join fingerprinted two ways"
+    );
+}

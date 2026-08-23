@@ -24,6 +24,28 @@ type TickCallback = Box<dyn FnMut(&TickFingerprint) + Send>;
 type MembershipCallback = Box<dyn FnMut(&MembershipChange) + Send>;
 type ObservationCallback = Box<dyn FnMut(&RecordedObservation) + Send>;
 
+/// A join waiting for the instant it declared.
+///
+/// It holds the component, so nothing about the newcomer exists in the world
+/// until the boundary before `first_due`: no registry slot, no subscriptions,
+/// and no place in the execution order. Everything that would make its first
+/// step depend on when the request was processed is therefore not yet done.
+struct PendingJoin {
+    parent_path: ComponentPath,
+    component: Box<dyn Component>,
+    timing: StepTiming,
+    first_due: SimTime,
+}
+
+impl PendingJoin {
+    /// The path this join will occupy once it is admitted.
+    fn path_would_be(&self) -> ComponentPath {
+        // Return where the registry will put it, which is where a leave
+        // asking for it by name has to look while it waits.
+        self.parent_path.join(self.component.id())
+    }
+}
+
 /// Owns simulation time and drives the discrete-event loop over a
 /// [`Transport`].
 pub struct Conductor<T: Transport> {
@@ -34,12 +56,13 @@ pub struct Conductor<T: Transport> {
     /// `Some` in 1x real-time mode, gating each instant to wall time;
     /// `None` in free-run. Pacing never affects `world_hash`.
     pacer: Option<Pacer<SystemClock>>,
-    /// Joins declared for a future instant, announced at the tick boundary
-    /// before that instant is stepped. The component is registered as soon
-    /// as it is admitted, so what waits here is only the announcement, held
-    /// back so an observer hears about a newcomer where it first steps
-    /// rather than whenever its request was processed.
-    pending_joins: BTreeMap<SimTime, Vec<RecordedJoin>>,
+    /// Joins declared for a future instant, admitted at the tick boundary
+    /// before that instant is stepped. The whole join waits here, component
+    /// and all: registering one when its request was processed would start
+    /// its subscriptions then, and its first inbox would hold whatever was
+    /// published while it waited, which is a fact about when the driver got
+    /// round to asking rather than about the run.
+    pending_joins: BTreeMap<SimTime, Vec<PendingJoin>>,
     /// Leaves declared for a future instant, applied at the tick
     /// boundary before that instant is stepped. Sorted by `leaves_at`, so
     /// draining the front is enough to find the ones that have come due.
@@ -182,7 +205,24 @@ impl<T: Transport> Conductor<T> {
     /// lets callers drive `step_once` themselves (e.g. live replay checking
     /// that stops at the first divergence).
     pub fn next_scheduled(&self) -> Option<SimTime> {
-        self.schedule.earliest()
+        self.next_due_instant()
+    }
+
+    /// The earliest instant anything is due at, counting joins still waiting
+    /// for theirs.
+    ///
+    /// A waiting join is deliberately not in the schedule, since it has no
+    /// registry slot to schedule, but the instant it declared is one the run
+    /// has to reach: that is where it is admitted and takes its first step.
+    fn next_due_instant(&self) -> Option<SimTime> {
+        let scheduled = self.schedule.earliest();
+        let waiting = self.pending_joins.keys().next().copied();
+
+        // Return whichever comes first, or the only one there is.
+        match (scheduled, waiting) {
+            (Some(scheduled), Some(waiting)) => Some(scheduled.min(waiting)),
+            (found, None) | (None, found) => found,
+        }
     }
 
     /// Total steps executed so far (each instant with due components is one
@@ -297,41 +337,38 @@ impl<T: Transport> Conductor<T> {
             });
         }
 
-        let subscriptions = component.subscriptions();
-        let (index, path) =
-            self.registry
-                .add(&parent_path, component, self.config.world_seed, join.timing)?;
-        for key in subscriptions {
-            self.transport.subscribe(path.clone(), key);
-        }
-        self.schedule.insert(join.first_due, index);
+        let path = parent_path.join(component.id());
 
         // When the request was processed, before it takes effect.
         self.emit_observation(RecordedObservation::JoinRequested(RecordedJoinRequest {
             path: path.to_string(),
             first_due: join.first_due,
         }));
-        let joined = RecordedJoin {
-            path: path.to_string(),
+        let pending = PendingJoin {
+            parent_path,
+            component,
+            timing: join.timing,
             first_due: join.first_due,
         };
         if join.first_due <= earliest_open {
             // It takes effect at the earliest instant still open, which is
             // here, so there is nothing to hold back. This is the same
-            // bargain an unnamed leave gets, which stops its component on
-            // the spot for the same reason.
-            self.emit_membership(MembershipChange::Joined(joined));
+            // bargain an unnamed leave gets, which stops its component on the
+            // spot for the same reason, and it is what keeps a path already
+            // taken an error the caller is handed rather than one a boundary
+            // discovers.
+            self.admit(pending)?;
         } else {
-            // Queued in declaration order, and `announce_due_joins` drains
-            // the vector in order, so the log's joins come out in the order
-            // those components will step.
+            // Queued in declaration order, and `admit_due_joins` drains the
+            // vector in order, so the log's joins come out in the order those
+            // components will step.
             self.pending_joins
                 .entry(join.first_due)
                 .or_default()
-                .push(joined);
+                .push(pending);
         }
 
-        // Return the registered component's full path.
+        // Return the path the newcomer will occupy.
         Ok(path)
     }
 
@@ -345,55 +382,105 @@ impl<T: Transport> Conductor<T> {
             }
             let leaves_at = *entry.key();
             for path in entry.remove() {
-                // A path may have been removed directly in the meantime;
-                // a leave that finds nothing to remove is already satisfied.
-                if self.registry.index_of(&path).is_some() {
-                    self.apply_leave(&path, leaves_at);
-                }
+                // Whether the target is registered, still waiting to be
+                // admitted, or already gone is `apply_leave`'s to work out. A
+                // leave that finds nothing to remove is already satisfied.
+                self.apply_leave(&path, leaves_at);
             }
         }
     }
 
-    /// Announces every join whose declared instant has come, in declaration
+    /// Admits every join whose declared instant has come, in declaration
     /// order. Called at the tick boundary beside [`Self::apply_due_leaves`],
     /// and after it, so a boundary that both retires and admits reads in the
-    /// order the world changed.
-    fn announce_due_joins(&mut self, instant: SimTime) {
+    /// order the world changed, and so a path a leave has just freed is there
+    /// for whoever is taking it.
+    fn admit_due_joins(&mut self, instant: SimTime) -> Result<(), ConductorError> {
         while let Some(entry) = self.pending_joins.first_entry() {
             if *entry.key() > instant {
                 break;
             }
-            for joined in entry.remove() {
-                self.emit_membership(MembershipChange::Joined(joined));
+            for pending in entry.remove() {
+                self.admit(pending)?;
             }
         }
+
+        Ok(())
     }
 
-    /// Drops the announcement a component was waiting on, saying whether
-    /// there was one.
+    /// Registers a component, subscribes it, schedules it and says so.
+    ///
+    /// The one place a join takes effect, whether it was declared for the
+    /// instant in hand or waited in [`Self::pending_joins`] for a later one.
+    /// Everything the registry checks is checked here rather than when the
+    /// request was processed, because a path is only free or taken at the
+    /// instant the newcomer would occupy it: one a leave frees in between is
+    /// available, and one another join takes in between is not.
+    fn admit(&mut self, pending: PendingJoin) -> Result<(), ConductorError> {
+        let PendingJoin {
+            parent_path,
+            component,
+            timing,
+            first_due,
+        } = pending;
+        let subscriptions = component.subscriptions();
+        let (index, path) =
+            self.registry
+                .add(&parent_path, component, self.config.world_seed, timing)?;
+        for key in subscriptions {
+            self.transport.subscribe(path.clone(), key);
+        }
+        self.schedule.insert(first_due, index);
+        self.emit_membership(MembershipChange::Joined(RecordedJoin {
+            path: path.to_string(),
+            first_due,
+        }));
+
+        Ok(())
+    }
+
+    /// Drops a join still waiting for its instant, saying whether there was
+    /// one.
     ///
     /// A leave can come due before the join it cancels, which leaves a
-    /// component that was admitted and never stepped. Announcing its
-    /// departure would hand an observer a leave for something it never saw
-    /// arrive, so the pair is dropped and the two request observations are
-    /// the whole trace.
+    /// component asked for and never admitted. It never stepped and nothing
+    /// saw it arrive, so announcing its departure would hand an observer a
+    /// leave for something that was never there: the pair is dropped, and the
+    /// two request observations are the whole trace.
     ///
     /// The scan covers only joins declared ahead and not yet due, which is
     /// a scenario's look-ahead rather than the population.
     fn cancel_pending_join(&mut self, path: &ComponentPath) -> bool {
-        let wanted = path.to_string();
         let mut cancelled = false;
         for queued in self.pending_joins.values_mut() {
-            queued.retain(|joined| {
-                let keep = joined.path != wanted;
+            queued.retain(|pending| {
+                let keep = pending.path_would_be() != *path;
                 cancelled |= !keep;
                 keep
             });
         }
 
         // Return whether one was waiting. An instant left with an empty
-        // vector is drained without announcing anything.
+        // vector is drained without admitting anything.
         cancelled
+    }
+
+    /// Every join still waiting whose path is `path` or sits under it, in
+    /// the order they were asked for, so a composite removed whole takes the
+    /// newcomers promised to it as well as the ones already there.
+    fn pending_joins_under(&self, path: &ComponentPath) -> Vec<ComponentPath> {
+        let depth = path.segments().len();
+
+        // Return the paths those joins would have occupied.
+        self.pending_joins
+            .values()
+            .flatten()
+            .map(PendingJoin::path_would_be)
+            .filter(|candidate| {
+                *candidate == *path
+                    || (candidate.segments().len() > depth && candidate.prefix(depth) == *path)
+            })
+            .collect()
     }
 
     /// Deregisters a component and tells observers. The one place a
@@ -403,6 +490,9 @@ impl<T: Transport> Conductor<T> {
     /// declared one for a scheduled leave, or the earliest still-open
     /// instant for an immediate removal, which is when it stops either way.
     fn apply_leave(&mut self, path: &ComponentPath, leaves_at: SimTime) {
+        if self.cancel_pending_join(path) {
+            return;
+        }
         let Some(index) = self.registry.remove(path) else {
             return;
         };
@@ -467,11 +557,15 @@ impl<T: Transport> Conductor<T> {
         let departing = if self.registry.index_of(&path).is_some() {
             vec![path]
         } else {
-            let subtree = self.registry.components_under(&path);
-            if subtree.is_empty() {
+            // A join still waiting for its instant counts as present: it was
+            // asked for, so withdrawing it is a removal rather than a path
+            // nobody has heard of.
+            let mut found = self.registry.components_under(&path);
+            found.extend(self.pending_joins_under(&path));
+            if found.is_empty() {
                 return Err(ConductorError::UnknownPath(path));
             }
-            subtree
+            found
         };
         let earliest_open = self.earliest_open_instant();
         if let Some(leaves_at) = leave.leaves_at {
@@ -534,9 +628,9 @@ impl<T: Transport> Conductor<T> {
         // holding only that component could no longer be pruned, so it
         // would still become a tick, numbered and fingerprinted and chained
         // into the world hash for an instant where nobody stepped.
-        if let Some(next) = self.schedule.earliest() {
+        if let Some(next) = self.next_due_instant() {
             self.apply_due_leaves(next);
-            self.announce_due_joins(next);
+            self.admit_due_joins(next)?;
         }
         let Some((now, due)) = self.schedule.pop_earliest() else {
             return Ok(false);
@@ -857,7 +951,7 @@ impl<T: Transport> Conductor<T> {
     /// Runs until the earliest scheduled instant would exceed `end`
     /// (inclusive: an instant exactly at `end` is executed).
     pub fn run_until(&mut self, end: SimTime) -> Result<(), ConductorError> {
-        while let Some(earliest) = self.schedule.earliest() {
+        while let Some(earliest) = self.next_due_instant() {
             if earliest > end {
                 break;
             }
