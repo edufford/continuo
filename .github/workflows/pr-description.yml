@@ -19,18 +19,12 @@ permissions:
 
 jobs:
   ready_to_be_a_commit_message:
-    # A draft reports under a name of its own, because the job's name is the
-    # check's name and the ruleset requires by that name. Reporting under the
-    # required one leaves the draft's result in the checks list after the PR
-    # is marked ready, where it reads as a verdict on a description nothing
-    # has read, and it satisfies the requirement, since GitHub counts a
-    # skipped run as a pass. Under its own name it says what it is, and the
-    # required check has simply not reported yet, which is what a draft
-    # should look like.
-    #
-    # The job runs either way and the steps are what defer, rather than an
-    # `if` on the job: a skipped job does not evaluate this expression, and
-    # the raw text becomes the check's name.
+    # A draft reports under a name of its own, since the job's name is the
+    # check's name and the ruleset requires by it. Under the required name a
+    # draft would satisfy the requirement with a run that read nothing, and
+    # leave that result in the checks list after the PR is marked ready. The
+    # steps defer rather than the job, because a skipped job leaves this
+    # expression unevaluated and the raw text becomes the name.
     name: ${{ github.event.pull_request.draft && 'The description is checked once this PR is ready' || 'The description is ready to be a commit message' }}
     runs-on: ubuntu-latest
     steps:
@@ -84,15 +78,11 @@ jobs:
           fi
           echo "Every line fits the commit message."
 
-      # The same wrap, biting a second way. A description is prose with code
-      # in it, and the wrap does not know the difference: a span broken across
-      # it keeps its backticks and arrives as a command or an identifier cut
-      # in half, and a name split mid-word is one nobody can grep for.
-      #
-      # An odd number of backticks on a line is what a machine can see of
-      # that. Fenced blocks are skipped, so a delimiter and the lines under it
-      # are not read as spans that never close, which is what keeps this exact
-      # rather than a guess about correct text.
+      # The wrap does not know prose from code. Backticks land in the commit
+      # as written, so a span it breaks arrives as an identifier cut in half.
+      # An odd number of backticks is what a machine can see of that. Fenced
+      # blocks are skipped, so a delimiter and the lines under it are not read
+      # as spans that never close, which keeps the rule exact.
       - name: "Check: no code span is broken across the wrap"
         if: github.event.pull_request.draft == false
         env:
