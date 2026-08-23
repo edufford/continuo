@@ -160,12 +160,11 @@ impl<T: Transport> Conductor<T> {
     }
 
     /// Adds a callback invoked for everything the *machine* did rather
-    /// than the run: steps over their budget, the timeouts that say why a
-    /// component left or a run stopped, and when each membership request
-    /// was processed (see [`crate::Recorder::observation_callback`]).
+    /// than the run. See [`RecordedObservation`] for what that covers, and
+    /// [`crate::Recorder::observation_callback`] for recording it.
     ///
     /// The fourth observation point, and the one whose reports a re-run is
-    /// free to differ on. See [`RecordedObservation`].
+    /// free to differ on.
     ///
     /// Accumulates, in the order added, like [`Self::add_tick_callback`].
     pub fn add_observation_callback(

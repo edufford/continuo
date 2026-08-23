@@ -476,10 +476,10 @@ impl Recorder {
         }
     }
 
-    /// Records what the machine did: over-budget steps, and the timeouts
-    /// that say why a component left or a run stopped, so a run's
-    /// conditions end up in one file rather than in whichever process each
-    /// step ran in. These lines are never compared; see [`RecordedObservation`].
+    /// Records what the machine did rather than what the run did, so a
+    /// run's conditions end up in one file rather than in whichever
+    /// process each step ran in. These lines are never compared. See
+    /// [`RecordedObservation`] for what counts as one and why.
     pub fn observation_callback(&self) -> impl FnMut(&RecordedObservation) + Send + 'static {
         let inner = self.inner.clone();
 
