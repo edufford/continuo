@@ -3,7 +3,8 @@ name: PR description
 # This repository squash-merges using the PR title and description, so the
 # description is the commit message that lands on main. This holds a PR that
 # is out of draft to what such a message needs: no review notes still
-# attached, and no line wider than the commit will keep.
+# attached, no line wider than the commit will keep, and no code span the
+# wrap has broken.
 #
 # Its own workflow rather than a job in CI, because the events that matter
 # here are `edited` and `ready_for_review`, which fire on every touch of a
@@ -18,9 +19,13 @@ permissions:
 
 jobs:
   ready_to_be_a_commit_message:
-    name: The description is ready to be a commit message
-    # A draft is where those notes belong, so only a PR out of draft is asked.
-    if: github.event.pull_request.draft == false
+    # A draft reports under a name of its own, since the job's name is the
+    # check's name and the ruleset requires by it. Under the required name a
+    # draft would satisfy the requirement with a run that read nothing, and
+    # leave that result in the checks list after the PR is marked ready. The
+    # steps defer rather than the job, because a skipped job leaves this
+    # expression unevaluated and the raw text becomes the name.
+    name: ${{ github.event.pull_request.draft && 'The description is checked once this PR is ready' || 'The description is ready to be a commit message' }}
     runs-on: ubuntu-latest
     steps:
       # The description reaches the script through the environment rather than
@@ -32,6 +37,7 @@ jobs:
       # between a section and a mention: a description explaining this
       # convention names the marker in prose, and `4a3f309` is one that does.
       - name: "Check: no draft notes survive into the description"
+        if: github.event.pull_request.draft == false
         env:
           BODY: ${{ github.event.pull_request.body }}
         shell: bash
@@ -52,6 +58,7 @@ jobs:
       # CRLF endings, and counting the `\r` would report every line at its
       # width plus one and fail a description that is exactly right.
       - name: "Check: no line is too wide for the commit message"
+        if: github.event.pull_request.draft == false
         env:
           BODY: ${{ github.event.pull_request.body }}
         shell: bash
@@ -70,3 +77,39 @@ jobs:
             exit 1
           fi
           echo "Every line fits the commit message."
+
+      # The wrap does not know prose from code. Backticks land in the commit
+      # as written, so a span it breaks arrives as an identifier cut in half.
+      # An odd number of backticks is what a machine can see of that. Fenced
+      # blocks are skipped, so a delimiter and the lines under it are not read
+      # as spans that never close, which keeps the rule exact.
+      - name: "Check: no code span is broken across the wrap"
+        if: github.event.pull_request.draft == false
+        env:
+          BODY: ${{ github.event.pull_request.body }}
+        shell: bash
+        run: |
+          # Find lines carrying an odd number of backticks.
+          unterminated=$(printf '%s\n' "$BODY" | tr -d '\r' \
+            | awk '
+                /^[[:space:]]*```/ { fenced = !fenced; next }
+                fenced { next }
+                gsub(/`/, "`") % 2 { print "  line " NR ": " $0 }
+              ')
+          if [ -n "$unterminated" ]; then
+            echo "ERROR: the description breaks a code span across lines:"
+            printf '%s\n' "$unterminated"
+            echo
+            echo "Backticks land in the squash commit as written, so whatever"
+            echo "is inside them arrives cut in half and nobody can grep for"
+            echo "it. Rewrap the paragraph so each span stays on one line."
+            exit 1
+          fi
+          echo "Every code span survives the wrap."
+
+      - name: "Deferred: this PR is still a draft"
+        if: github.event.pull_request.draft
+        shell: bash
+        run: |
+          echo "Still a draft, so the description has not been read yet."
+          echo "The review notes belong there until it is marked ready."
