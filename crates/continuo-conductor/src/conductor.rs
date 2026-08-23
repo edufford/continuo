@@ -30,6 +30,9 @@ type ObservationCallback = Box<dyn FnMut(&RecordedObservation) + Send>;
 /// until the boundary before `first_due`: no registry slot, no subscriptions,
 /// and no place in the execution order. Each of those would otherwise carry
 /// the instant its request was processed into its first step.
+///
+/// There is no `PendingLeave` beside it: a leave waits as a bare path, for
+/// the reason `pending_leaves` gives below.
 struct PendingJoin {
     parent_path: ComponentPath,
     /// The path the registry will put it at, which is where a leave asking
@@ -66,6 +69,12 @@ pub struct Conductor<T: Transport> {
     /// Leaves declared for a future instant, applied at the tick
     /// boundary before that instant is stepped. Sorted by `leaves_at`, so
     /// draining the front is enough to find the ones that have come due.
+    ///
+    /// A path rather than a struct like [`PendingJoin`], because that is
+    /// the whole of a leave: the instant is the key, and there is no
+    /// component to keep alive in the meantime. The two converge only if a
+    /// request has to carry its own ordering metadata, which both queues
+    /// would want at once.
     pending_leaves: BTreeMap<SimTime, Vec<ComponentPath>>,
     sim_time: SimTime,
     tick: u64,
