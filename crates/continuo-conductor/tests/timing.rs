@@ -374,8 +374,8 @@ fn a_re_run_that_misses_different_budgets_still_verifies() {
     // that behaved identically as divergent.
     let recorded = record_a_run_costing(SLOW);
     assert_eq!(budget_misses_in(&recorded).len(), 3);
-    // Every observation, not just the misses: the log carries where the
-    // join request landed as well, and it is skipped for the same reason.
+    // Every observation, not just the misses: the log carries when the join
+    // request was processed as well, and it is skipped for the same reason.
     let expectations = recorded
         .events
         .iter()

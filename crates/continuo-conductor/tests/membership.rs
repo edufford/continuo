@@ -350,8 +350,8 @@ fn the_event_log_records_who_joined_and_left() {
 fn a_join_is_recorded_where_it_takes_effect_not_where_it_was_requested() {
     // `b` is asked for after the t=10 ms tick and declares t=25 ms. The two
     // lines it produces sit in different places, which is the whole point of
-    // there being two: the request lands where the caller happened to be,
-    // and the join lands at the boundary before `b` first steps.
+    // there being two: the request is recorded where the caller happened to
+    // be, and the join at the boundary before `b` first steps.
     let log = record_a_dynamic_run(&membership_config());
 
     let requested_at = log
@@ -380,15 +380,19 @@ fn a_join_is_recorded_where_it_takes_effect_not_where_it_was_requested() {
     // The request sits after the ticks at 0 and 10 ms, where the caller
     // made it. The join sits after the 20 ms tick as well, immediately
     // before the 25 ms one it declared.
-    assert_eq!(ticks_before(requested_at), 2, "where the request landed");
+    assert_eq!(
+        ticks_before(requested_at),
+        2,
+        "where the request was processed"
+    );
     assert_eq!(ticks_before(joined_at), 3, "where the join took effect");
 }
 
 #[test]
 fn a_component_removed_before_its_join_takes_effect_is_never_announced() {
-    // A join declared for 25 ms, withdrawn at 10 ms. It was admitted and
-    // never stepped, so no observer ever heard of it: announcing the leave
-    // alone would report a departure for something that never arrived.
+    // A join declared for 25 ms, withdrawn at 10 ms. It was asked for and
+    // never admitted, so no observer ever heard of it: announcing the leave
+    // alone would report a departure for something that was never there.
     // The two requests are the only trace, which is what they are for.
     let steps: StepLog = Default::default();
     let config = membership_config();
@@ -453,11 +457,8 @@ fn a_component_removed_before_its_join_takes_effect_is_never_announced() {
 fn a_recorded_dynamic_run_verifies_against_a_faithful_re_run() {
     let config = membership_config();
     let expected = record_a_dynamic_run(&config);
-    // Expectations rather than lines, because the log also carries the
-    // membership requests, and those are observations: the re-run is not
-    // asked to land them in the same places, and does not report them at
-    // all. A count of lines would demand what verification deliberately
-    // does not check.
+    // Expectations rather than lines: the log also carries the membership
+    // requests, and a re-run is not asked to reproduce those.
     let total_expectations = expected
         .events
         .iter()

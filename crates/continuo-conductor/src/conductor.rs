@@ -175,11 +175,6 @@ impl<T: Transport> Conductor<T> {
     }
 
     /// Reports a membership change that has taken effect to every observer.
-    ///
-    /// Taken effect, never merely accepted: both halves are announced at
-    /// the boundary the change names, so an observer can treat the arrival
-    /// as the moment. When it was processed is an observation instead,
-    /// which is the stream a re-run is free to differ on.
     fn emit_membership(&mut self, change: MembershipChange) {
         for callback in self.membership_callbacks.iter_mut() {
             callback(&change);
@@ -418,7 +413,8 @@ impl<T: Transport> Conductor<T> {
         Ok(())
     }
 
-    /// Registers a component, subscribes it, schedules it and says so.
+    /// Registers a component, subscribes it, schedules it, and publishes
+    /// the membership change.
     ///
     /// The one place a join takes effect, whether it was declared for the
     /// instant in hand or waited in [`Self::pending_joins`] for a later one.
@@ -474,8 +470,9 @@ impl<T: Transport> Conductor<T> {
             });
         }
 
-        // Return whether one was waiting. An instant left with an empty
-        // vector is drained without admitting anything.
+        // Return whether one was waiting. Emptying an instant's vector
+        // leaves its key in the map, which costs nothing: `admit_due_joins`
+        // drains that key and admits none.
         cancelled
     }
 
