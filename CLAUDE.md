@@ -122,7 +122,7 @@ skipped, and says so, when fmpy is not installed.
 `continuo-actors` is the one to watch, since editing a control law there
 leaves the packaged FMU a build behind and `cargo test --workspace` stays
 green. Packaging needs `cargo install cargo-fmi` once, and validating needs
-`python -m pip install fmpy`.
+fmpy in the environment the viewer's checks run in.
 
 ## Turn a mistake into a check
 
@@ -243,6 +243,10 @@ messages, PR descriptions, console strings.
     builds that commit, breaking each line on its own rather than reflowing
     the paragraph, so a 78-column line lands as 72 characters and an orphan
     fragment on the line below. `2540aed` is what that looks like.
+  - **Keep every code span whole.** The same wrap, biting a second way: the
+    backticks land in the commit as written, so a span it breaks arrives as a
+    command or an identifier cut in half. `4c69fb7` is a test name split
+    mid-word, which is then a name nobody can grep for.
   - Nothing in it can be a branch SHA, a checkbox, or a link into the diff,
     since none of those mean anything against main once the branch is gone.
     The `Co-authored-by:` trailers are GitHub's to append, so the description
@@ -255,10 +259,13 @@ messages, PR descriptions, console strings.
   heading reading `## Draft notes (deleted before merge)`. Everything above
   that marker is the commit message throughout, and the marker and all
   beneath it are deleted when the PR is marked ready.
-- `pr-description.yml` holds a PR that is out of draft to both halves of
-  that: no `## Draft notes` heading, and no line past 72 columns. The first
-  is anchored to the start of a line, so a description explaining this
-  convention can still name the marker in prose, as this one does.
+- `pr-description.yml` holds a PR that is out of draft to all three of those:
+  no `## Draft notes` heading, no line past 72 columns, and no code span the
+  wrap has broken. The first is anchored to the start of a line, so a
+  description explaining this convention can still name the marker in prose,
+  as this one does. A draft reports under a name of its own and defers, so
+  the required check reads as not yet reported rather than as a stale pass,
+  and a draft's commits carry an outstanding check until it is marked ready.
 - Comments posted through `gh` authenticate as the repository owner. Every one
   Claude writes is italicized throughout and ends with a footer line reading
   "Posted by Claude Code" behind a robot-face emoji, italic like the rest, so
@@ -292,6 +299,13 @@ A session opened on a worktree still needs its memory pinned back to the
 repository root's pool, since auto-memory is keyed to the working directory
 and a worktree gets an empty one of its own. Set `autoMemoryDirectory` in the
 worktree's own `.claude/settings.local.json` to the root's memory directory.
+
+It needs a Python environment of its own too, since `python/.venv` is git
+ignored and so no worktree gets one with the checkout. Make one under the
+worktree's own `python/` and install `-e . pytest ruff fmpy` into it.
+Sharing the main checkout's would run that checkout's viewer instead, since
+`pip install -e .` records one source tree, and `fmpy` is on the line
+because `verify-fmus` validates nothing without it.
 
 Never put one in a sibling directory such as `../continuo-<name>`. A session
 rooted at the repository root cannot reach it with file tools at all, and that
