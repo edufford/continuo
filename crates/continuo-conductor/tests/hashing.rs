@@ -88,7 +88,7 @@ fn run_noise_world(world_seed: u64) -> EventLog {
     conductor.add_tick_callback(recorder.tick_callback());
 
     conductor
-        .add_component(
+        .add_component_at_start(
             WORLD_LEVEL,
             Box::new(NoiseSource {
                 id: "noise",
@@ -137,7 +137,7 @@ fn run_hidden_world(initial: u64, expose_state: bool) -> u64 {
     )
     .expect("free-run config is always accepted");
     conductor
-        .add_component(
+        .add_component_at_start(
             WORLD_LEVEL,
             Box::new(HiddenCounter {
                 count: initial,
@@ -187,7 +187,7 @@ fn live_verification_stops_at_the_first_divergence() {
         Conductor::new(config, transport).expect("free-run config is always accepted");
     conductor.add_tick_callback(checker.tick_callback());
     conductor
-        .add_component(
+        .add_component_at_start(
             WORLD_LEVEL,
             Box::new(NoiseSource {
                 id: "noise",
@@ -221,7 +221,7 @@ fn playback_double_reproduces_the_recorded_messages() {
         Conductor::new(config, transport).expect("free-run config is always accepted");
     conductor.add_tick_callback(recorder.tick_callback());
     conductor
-        .add_component(
+        .add_component_at_start(
             WORLD_LEVEL,
             Box::new(PlaybackComponent::from_log(
                 ComponentId::new("noise").expect("valid id"),

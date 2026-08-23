@@ -87,7 +87,7 @@ fn advances_to_earliest_due_and_orders_by_declaration() {
     let observations: ObservationLog = Default::default();
     let mut c = new_conductor();
     // Declared order: a then b, but different periods.
-    c.add_component(
+    c.add_component_at_start(
         WORLD_LEVEL,
         Box::new(Probe {
             id: "a",
@@ -98,7 +98,7 @@ fn advances_to_earliest_due_and_orders_by_declaration() {
         }),
     )
     .unwrap();
-    c.add_component(
+    c.add_component_at_start(
         WORLD_LEVEL,
         Box::new(Probe {
             id: "b",
@@ -136,7 +136,7 @@ fn advances_to_earliest_due_and_orders_by_declaration() {
 fn strict_advance_guard_rejects_non_advancing_next_due() {
     let observations: ObservationLog = Default::default();
     let mut c = new_conductor();
-    c.add_component(
+    c.add_component_at_start(
         WORLD_LEVEL,
         Box::new(Probe {
             id: "stuck",
@@ -159,7 +159,7 @@ fn strict_advance_guard_rejects_non_advancing_next_due() {
 fn same_instant_delivery_to_later_sibling_within_composite() {
     let observations: ObservationLog = Default::default();
     let mut c = new_conductor();
-    c.add_component(
+    c.add_component_at_start(
         "actor",
         Box::new(Probe {
             id: "producer",
@@ -170,7 +170,7 @@ fn same_instant_delivery_to_later_sibling_within_composite() {
         }),
     )
     .unwrap();
-    c.add_component(
+    c.add_component_at_start(
         "actor",
         Box::new(Probe {
             id: "consumer",
@@ -208,7 +208,7 @@ fn cross_actor_same_instant_is_deferred_to_next_step() {
     let observations: ObservationLog = Default::default();
     let mut c = new_conductor();
     // Two world-level actors, co-scheduled every 10 ms.
-    c.add_component(
+    c.add_component_at_start(
         WORLD_LEVEL,
         Box::new(Probe {
             id: "producer",
@@ -219,7 +219,7 @@ fn cross_actor_same_instant_is_deferred_to_next_step() {
         }),
     )
     .unwrap();
-    c.add_component(
+    c.add_component_at_start(
         WORLD_LEVEL,
         Box::new(Probe {
             id: "consumer",
@@ -258,7 +258,7 @@ fn cross_actor_same_instant_is_deferred_to_next_step() {
 fn slow_consumer_receives_accumulated_messages_in_order() {
     let observations: ObservationLog = Default::default();
     let mut c = new_conductor();
-    c.add_component(
+    c.add_component_at_start(
         WORLD_LEVEL,
         Box::new(Probe {
             id: "fast",
@@ -269,7 +269,7 @@ fn slow_consumer_receives_accumulated_messages_in_order() {
         }),
     )
     .unwrap();
-    c.add_component(
+    c.add_component_at_start(
         WORLD_LEVEL,
         Box::new(Probe {
             id: "slow",

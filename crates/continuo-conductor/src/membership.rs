@@ -24,8 +24,8 @@ use crate::timing::StepTiming;
 /// [`continuo_core::ComponentPath::parse`] maps `""` to the root, and a
 /// [`continuo_core::ComponentId`] is never empty, so no real composite can
 /// collide with it. Named because the bare literal reads at a call site
-/// like a forgotten argument, where `add_component(WORLD_LEVEL, component)`
-/// says what it means.
+/// like a forgotten argument, where
+/// `add_component_at_start(WORLD_LEVEL, component)` says what it means.
 pub const WORLD_LEVEL: &str = "";
 
 /// Everything the conductor needs to admit a component.
@@ -62,9 +62,8 @@ impl JoinMetadata {
     /// Joins before the run starts, first stepping at sim time zero, which
     /// is what every component in a statically-built world wants.
     ///
-    /// This is what you get by passing just the parent path where a join is
-    /// expected: `add_component("car1", component)` is shorthand for
-    /// `add_component(JoinMetadata::at_start("car1"), component)`.
+    /// `Conductor::add_component_at_start` builds one of these, so reach for
+    /// this directly only to add `with_timing` to a start-time join.
     pub fn at_start(parent_path: impl Into<String>) -> Self {
         // Return a join for the world's opening instant.
         JoinMetadata {
@@ -137,50 +136,7 @@ impl LeaveMetadata {
     }
 }
 
-/// Lets a path be passed on its own wherever a leave is expected, so
-/// removing a component immediately stays
-/// `remove_component("car1/physics")`. It always means
-/// [`LeaveMetadata::now`].
-impl From<&str> for LeaveMetadata {
-    fn from(path: &str) -> Self {
-        LeaveMetadata::now(path)
-    }
-}
-
-impl From<String> for LeaveMetadata {
-    fn from(path: String) -> Self {
-        LeaveMetadata::now(path)
-    }
-}
-
-impl From<&String> for LeaveMetadata {
-    fn from(path: &String) -> Self {
-        LeaveMetadata::now(path.clone())
-    }
-}
-
-/// Lets the parent path be passed on its own wherever a join is expected,
-/// so building a static world stays `add_component("car1", component)`
-/// instead of `add_component(JoinMetadata::at_start("car1"), component)`.
-///
-/// It always means [`JoinMetadata::at_start`], so it is only usable before
-/// the run begins. Offered to a running conductor it resolves to sim time
-/// zero, long closed, and the join is rejected rather than quietly
-/// landing at some instant the caller never chose.
-impl From<&str> for JoinMetadata {
-    fn from(parent_path: &str) -> Self {
-        JoinMetadata::at_start(parent_path)
-    }
-}
-
-impl From<String> for JoinMetadata {
-    fn from(parent_path: String) -> Self {
-        JoinMetadata::at_start(parent_path)
-    }
-}
-
-impl From<&String> for JoinMetadata {
-    fn from(parent_path: &String) -> Self {
-        JoinMetadata::at_start(parent_path.clone())
-    }
-}
+// A bare path used to stand in for either of these, so the conductor took
+// `impl Into<JoinMetadata>` and the argument's type picked the timing. Each
+// side now has a method of its own for the common case, which says in its
+// name what the conversion said nowhere.

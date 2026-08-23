@@ -200,7 +200,7 @@ fn a_timeout_halts_the_world_when_that_is_the_policy() {
         )
         .expect("registration succeeds");
     conductor
-        .add_component(WORLD_LEVEL, ticker("later_sibling", Duration::ZERO, &steps))
+        .add_component_at_start(WORLD_LEVEL, ticker("later_sibling", Duration::ZERO, &steps))
         .expect("registration succeeds");
 
     let halted = conductor.run_until(t_sim_ms(10));
@@ -237,7 +237,7 @@ fn a_timeout_removes_the_component_at_the_next_instant_when_that_is_the_policy()
         )
         .expect("registration succeeds");
     conductor
-        .add_component(WORLD_LEVEL, ticker("neighbour", Duration::ZERO, &steps))
+        .add_component_at_start(WORLD_LEVEL, ticker("neighbour", Duration::ZERO, &steps))
         .expect("registration succeeds");
     conductor
         .run_until(t_sim_ms(30))
@@ -448,7 +448,7 @@ fn the_log_says_why_a_timed_out_component_left() {
         )
         .expect("registration succeeds");
     conductor
-        .add_component(WORLD_LEVEL, ticker("neighbour", Duration::ZERO, &steps))
+        .add_component_at_start(WORLD_LEVEL, ticker("neighbour", Duration::ZERO, &steps))
         .expect("registration succeeds");
     conductor
         .run_until(t_sim_ms(20))

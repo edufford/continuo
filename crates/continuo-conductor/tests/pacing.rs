@@ -52,7 +52,7 @@ fn run(pacing: Pacing, end: SimTime) -> Conductor<InProcTransport> {
     )
     .expect("config is accepted");
     conductor
-        .add_component(
+        .add_component_at_start(
             WORLD_LEVEL,
             Box::new(Ticker {
                 period: SimDuration::from_millis(10),

@@ -93,7 +93,7 @@ fn run<T: Transport>(mut conductor: Conductor<T>, bridge: Option<&VizBridge>) ->
         conductor.add_membership_callback(bridge.membership_callback());
     }
     conductor
-        .add_component(WORLD_LEVEL, beacon("a"))
+        .add_component_at_start(WORLD_LEVEL, beacon("a"))
         .expect("registration succeeds");
     conductor
         .run_until(SimTime::from_millis(20))
@@ -107,7 +107,9 @@ fn run<T: Transport>(mut conductor: Conductor<T>, bridge: Option<&VizBridge>) ->
     conductor
         .run_until(SimTime::from_millis(50))
         .expect("steps succeed");
-    conductor.remove_component("a").expect("`a` is registered");
+    conductor
+        .remove_component_now("a")
+        .expect("`a` is registered");
     conductor
         .run_until(SimTime::from_millis(80))
         .expect("steps succeed");
@@ -175,7 +177,7 @@ fn an_observer_built_as_a_component_would_change_the_hash() {
 
     let mut conductor = Conductor::new(config(), InProcTransport::new()).expect("accepted");
     conductor
-        .add_component(WORLD_LEVEL, Box::new(SilentObserver))
+        .add_component_at_start(WORLD_LEVEL, Box::new(SilentObserver))
         .expect("registration succeeds");
     let watched_from_inside = run(conductor, None);
 

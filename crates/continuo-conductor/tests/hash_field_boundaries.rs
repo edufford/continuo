@@ -71,7 +71,7 @@ fn world_hash(components: Vec<ScriptedComponent>) -> u64 {
         Conductor::new(config, InProcTransport::new()).expect("free-run config is always accepted");
     for component in components {
         conductor
-            .add_component(WORLD_LEVEL, Box::new(component))
+            .add_component_at_start(WORLD_LEVEL, Box::new(component))
             .expect("registration succeeds");
     }
     conductor.step_once().expect("one tick runs");

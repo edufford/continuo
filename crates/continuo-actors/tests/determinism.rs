@@ -49,7 +49,7 @@ fn run_world(sim_seconds: i64, world_seed: u64) -> EventLog {
             orientation: Quat::from_yaw(path.heading_at(s0)),
         };
         conductor
-            .add_component(
+            .add_component_at_start(
                 car,
                 Box::new(PathFollowController::new(
                     car,
@@ -64,7 +64,7 @@ fn run_world(sim_seconds: i64, world_seed: u64) -> EventLog {
             )
             .expect("controller path is unique per car");
         conductor
-            .add_component(
+            .add_component_at_start(
                 car,
                 Box::new(UnicyclePhysics::new(
                     car,

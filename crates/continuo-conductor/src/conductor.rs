@@ -288,12 +288,31 @@ impl<T: Transport> Conductor<T> {
         }
     }
 
-    /// Takes in a request to add a component. Pass a [`JoinMetadata`] to
-    /// say when a newcomer to a running world first steps, or, before the
-    /// run starts, just the parent path
-    /// ([`WORLD_LEVEL`](crate::WORLD_LEVEL) for a world-level actor,
-    /// `"car1"` to join that composite), which means first stepping at sim
-    /// time zero.
+    /// Adds a component to a world that has not started, first stepping at
+    /// sim time zero. Pass [`WORLD_LEVEL`](crate::WORLD_LEVEL) for a
+    /// world-level actor, or a composite's path such as `"car1"` to join
+    /// that composite.
+    ///
+    /// This is what building a static world wants, and it is only usable
+    /// before the run starts: zero is behind the earliest open instant once
+    /// anything has stepped, so calling it mid-run is
+    /// [`ConductorError::JoinInThePast`] rather than a join landing at some
+    /// instant the caller never chose. Use [`Self::add_component`] there,
+    /// which is also where a start-time join goes when it wants to declare
+    /// [`StepTiming`](crate::StepTiming).
+    pub fn add_component_at_start(
+        &mut self,
+        parent_path: impl Into<String>,
+        component: Box<dyn Component>,
+    ) -> Result<ComponentPath, ConductorError> {
+        // Return the path it will occupy, or the error the request earned.
+        self.add_component(JoinMetadata::at_start(parent_path), component)
+    }
+
+    /// Takes in a request to add a component at the instant its
+    /// [`JoinMetadata`] names, which is where a newcomer to a running world
+    /// first steps. [`Self::add_component_at_start`] is the shorthand for
+    /// building a world before it runs.
     ///
     /// The component is admitted at the tick boundary before that instant,
     /// or in this call when that instant is the one in hand. Nothing about
@@ -313,10 +332,9 @@ impl<T: Transport> Conductor<T> {
     // join hands over a `Box<dyn Component>`, which no transport can carry.
     pub fn add_component(
         &mut self,
-        join: impl Into<JoinMetadata>,
+        join: JoinMetadata,
         component: Box<dyn Component>,
     ) -> Result<ComponentPath, ConductorError> {
-        let join = join.into();
         let parent_path = ComponentPath::parse(&join.parent_path)?;
 
         // Validate before touching anything, so a rejected join leaves no
@@ -525,13 +543,22 @@ impl<T: Transport> Conductor<T> {
         }));
     }
 
-    /// Removes a component. Pass a [`LeaveMetadata`] to name the instant it
-    /// stops at, or just its path to stop it immediately, at this tick
-    /// boundary, since membership never changes mid-tick.
+    /// Removes a component at the earliest instant still open, which is this
+    /// tick boundary, since membership never changes mid-tick.
     ///
-    /// Prefer naming the instant for anything a run must reproduce: the
-    /// bare-path form stops the component wherever the caller happens to
-    /// be, which is deterministic only if the caller is.
+    /// The instant is therefore wherever the caller happens to be, which is
+    /// deterministic only if the caller is. Prefer
+    /// [`Self::remove_component`] with a named instant for anything a run
+    /// must reproduce; this one is for a caller that has no instant to name
+    /// and wants the component stopped.
+    pub fn remove_component_now(&mut self, path: impl Into<String>) -> Result<(), ConductorError> {
+        // Return whether the removal was accepted.
+        self.remove_component(LeaveMetadata::now(path))
+    }
+
+    /// Removes a component at the instant its [`LeaveMetadata`] names, the
+    /// first one it does not step at. [`Self::remove_component_now`] is the
+    /// shorthand for stopping it at this tick boundary instead.
     ///
     /// The component stops being scheduled, stops receiving messages, and
     /// is dropped, though everything it published stays published, because
@@ -555,11 +582,7 @@ impl<T: Transport> Conductor<T> {
     // an instant, so it could cross a transport today. There is simply
     // nobody to send it. Everything in this process holds `&mut Conductor`
     // and calls this.
-    pub fn remove_component(
-        &mut self,
-        leave: impl Into<LeaveMetadata>,
-    ) -> Result<(), ConductorError> {
-        let leave = leave.into();
+    pub fn remove_component(&mut self, leave: LeaveMetadata) -> Result<(), ConductorError> {
         let path = ComponentPath::parse(&leave.path)?;
         // One leaf, or every leaf of a composite. Checking for a registered
         // leaf first means a leaf always wins: a path cannot be both, since
