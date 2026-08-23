@@ -462,17 +462,19 @@ impl<T: Transport> Conductor<T> {
     /// a scenario's look-ahead rather than the population.
     fn cancel_pending_join(&mut self, path: &ComponentPath) -> bool {
         let mut cancelled = false;
-        for queued in self.pending_joins.values_mut() {
+        // An instant emptied by the inner filter loses its key too, so it
+        // stops being an instant `next_due_instant` reports as due when
+        // nothing would be admitted there.
+        self.pending_joins.retain(|_, queued| {
             queued.retain(|pending| {
                 let keep = pending.component_path != *path;
                 cancelled |= !keep;
                 keep
             });
-        }
+            !queued.is_empty()
+        });
 
-        // Return whether one was waiting. Emptying an instant's vector
-        // leaves its key in the map, which costs nothing: `admit_due_joins`
-        // drains that key and admits none.
+        // Return whether one was waiting.
         cancelled
     }
 
