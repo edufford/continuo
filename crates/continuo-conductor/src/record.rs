@@ -78,7 +78,7 @@ pub struct RecordedMessage {
 /// because that is the part delivery decides once joins arrive over the
 /// transport (milestone 7). Splitting the two is what keeps this stream
 /// comparable: a re-run must reproduce the declared instant, never the
-/// boundary a request happened to land on.
+/// boundary a request happened to be processed at.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RecordedJoin {
     pub path: String,
@@ -92,7 +92,7 @@ pub struct RecordedJoin {
 /// `first_due`: it is chosen by whoever asked, so it is stable however
 /// early or late the request was made, and it is what decides where this
 /// component's output stops. This line sits where the leave took effect,
-/// and [`RecordedLeaveRequest`] records where the request landed, for the
+/// and [`RecordedLeaveRequest`] records when it was processed, for the
 /// reason [`RecordedJoin`] gives.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RecordedLeave {
@@ -119,7 +119,7 @@ pub enum MembershipChange {
 /// **Status, not request.** This one is the conductor saying a join or leave
 /// has taken effect, which is what an observer subscribes to: a viewer needs
 /// it to stop drawing a component that has retired, and to start drawing one
-/// when it joins rather than whenever its request landed.
+/// when it joins rather than whenever its request was processed.
 ///
 /// It is nested under `membership/` to leave room for the other direction.
 /// Requests still arrive as direct calls, so no request key exists yet, but
@@ -145,7 +145,7 @@ pub fn membership_key(world_name: &str) -> KeyExpr {
         .expect("valid membership key")
 }
 
-/// A join the conductor took in, recorded where the request landed.
+/// A join the conductor took in, recorded when it was processed.
 ///
 /// The [`RecordedJoin`] it leads to sits later, at the boundary before
 /// `first_due`. This line is the only record of the gap between the two, and
@@ -159,12 +159,12 @@ pub struct RecordedJoinRequest {
     pub first_due: SimTime,
 }
 
-/// A leave the conductor took in, recorded where the request landed.
+/// A leave the conductor took in, recorded when it was processed.
 ///
 /// The counterpart to [`RecordedJoinRequest`], and recorded for the same
 /// reason. `leaves_at` is `None` where the request named no instant, which
 /// stops the component at the earliest one still open: that is the request
-/// as made, and the [`RecordedLeave`] says where it landed.
+/// as made, and the [`RecordedLeave`] says where it took effect.
 ///
 /// One line per request, naming the path the caller passed, so a composite
 /// removed whole is one request against the several leaves it produces.
@@ -227,11 +227,11 @@ pub struct RecordedTimeout {
 /// behaved identically as different.
 ///
 /// Two kinds live here. The wall-clock facts milestones 3 and 4 measure,
-/// which another machine notices differently, and where a membership request
-/// landed, which delivery decides once requests cross a transport. Both are
-/// the same thing said twice: worth writing down, and never worth comparing.
-/// Anything else of that character belongs here rather than as a new
-/// top-level event: the pacing overruns counted by
+/// which another machine notices differently, and when a membership request
+/// was processed, which delivery decides once requests cross a transport.
+/// Both are the same thing said twice: worth writing down, and never worth
+/// comparing. Anything else of that character belongs here rather than as a
+/// new top-level event: the pacing overruns counted by
 /// [`Conductor::overrun_reanchor_count`](crate::Conductor::overrun_reanchor_count)
 /// are the obvious next one, being a run-level measurement that today exists
 /// only as a counter that dies with the process.

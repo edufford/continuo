@@ -34,16 +34,16 @@ pub struct Conductor<T: Transport> {
     /// `Some` in 1x real-time mode, gating each instant to wall time;
     /// `None` in free-run. Pacing never affects `world_hash`.
     pacer: Option<Pacer<SystemClock>>,
-    /// Leaves declared for a future instant, applied at the tick
-    /// boundary before that instant is stepped. Sorted by `leaves_at`, so
-    /// draining the front is enough to find the ones that have come due.
-    pending_leaves: BTreeMap<SimTime, Vec<ComponentPath>>,
     /// Joins declared for a future instant, announced at the tick boundary
     /// before that instant is stepped. The component is registered as soon
     /// as it is admitted, so what waits here is only the announcement, held
     /// back so an observer hears about a newcomer where it first steps
-    /// rather than wherever its request landed.
+    /// rather than whenever its request was processed.
     pending_joins: BTreeMap<SimTime, Vec<RecordedJoin>>,
+    /// Leaves declared for a future instant, applied at the tick
+    /// boundary before that instant is stepped. Sorted by `leaves_at`, so
+    /// draining the front is enough to find the ones that have come due.
+    pending_leaves: BTreeMap<SimTime, Vec<ComponentPath>>,
     sim_time: SimTime,
     tick: u64,
     /// Running determinism fingerprint: seeded from the world config, then
@@ -82,8 +82,8 @@ impl<T: Transport> Conductor<T> {
             registry: Registry::default(),
             schedule: Schedule::default(),
             pacer,
-            pending_leaves: BTreeMap::new(),
             pending_joins: BTreeMap::new(),
+            pending_leaves: BTreeMap::new(),
             sim_time: SimTime::ZERO,
             tick: 0,
             world_hash,
@@ -129,8 +129,8 @@ impl<T: Transport> Conductor<T> {
 
     /// Adds a callback invoked for everything the *machine* did rather
     /// than the run: steps over their budget, the timeouts that say why a
-    /// component left or a run stopped, and where each membership request
-    /// landed (see [`crate::Recorder::observation_callback`]).
+    /// component left or a run stopped, and when each membership request
+    /// was processed (see [`crate::Recorder::observation_callback`]).
     ///
     /// The fourth observation point, and the one whose reports a re-run is
     /// free to differ on. See [`RecordedObservation`].
@@ -147,7 +147,7 @@ impl<T: Transport> Conductor<T> {
     ///
     /// Taken effect, never merely accepted: both halves are announced at
     /// the boundary the change names, so an observer can treat the arrival
-    /// as the moment. Where the request landed is an observation instead,
+    /// as the moment. When it was processed is an observation instead,
     /// which is the stream a re-run is free to differ on.
     fn emit_membership(&mut self, change: MembershipChange) {
         for callback in self.membership_callbacks.iter_mut() {
@@ -306,7 +306,7 @@ impl<T: Transport> Conductor<T> {
         }
         self.schedule.insert(join.first_due, index);
 
-        // Where the request landed, before anything says it took effect.
+        // When the request was processed, before it takes effect.
         self.emit_observation(RecordedObservation::JoinRequested(RecordedJoinRequest {
             path: path.to_string(),
             first_due: join.first_due,
@@ -488,10 +488,10 @@ impl<T: Transport> Conductor<T> {
             }
         }
 
-        // Where the request landed, naming the path as asked for: one line
-        // for a composite, against the leaf leaves it goes on to produce.
-        // Recorded past the validation above, so the log carries requests
-        // the conductor took in rather than ones it refused.
+        // When the request was processed, naming the path as asked for:
+        // one line for a composite, against the leaf leaves it goes on to
+        // produce. Recorded past the validation above, so the log carries
+        // requests the conductor took in rather than ones it refused.
         self.emit_observation(RecordedObservation::LeaveRequested(RecordedLeaveRequest {
             path: leave.path.clone(),
             leaves_at: leave.leaves_at,
