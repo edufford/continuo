@@ -347,18 +347,25 @@ impl<T: Transport> Conductor<T> {
             step_timing: join.timing,
             first_due: join.first_due,
         };
-        if join.first_due <= earliest_open {
+        if join.first_due == earliest_open {
             // It takes effect at the earliest instant still open, which is
-            // here, so there is nothing to hold back. This is the same
-            // bargain an unnamed leave gets, which stops its component on the
-            // spot for the same reason, and it is what keeps a path already
-            // taken an error the caller is handed rather than one a boundary
-            // discovers.
+            // here, so there is nothing to hold back; anything earlier was
+            // refused above. This is the same bargain an unnamed leave gets,
+            // which stops its component on the spot for the same reason, and
+            // it is what keeps a path already taken an error the caller is
+            // handed rather than one a boundary discovers.
             self.admit(pending)?;
         } else {
-            // Queued in declaration order, and `admit_due_joins` drains the
-            // vector in order, so the log's joins come out in the order those
-            // components will step.
+            // Queued in the order the requests were processed, and
+            // `admit_due_joins` drains the vector in order, so joins take
+            // effect in the order those components will step.
+            //
+            // TODO(M7): that order is the order the requests arrived in,
+            // which is deterministic only while one process makes them all.
+            // Sibling order is execution order and the visibility rule's
+            // earlier sibling, so this is the last thing about a newcomer
+            // that still depends on when it was asked for. PLAN.md,
+            // "Distribution", says what replaces it.
             self.pending_joins
                 .entry(join.first_due)
                 .or_default()

@@ -458,6 +458,19 @@ component in particular.
   same tick protocol.
 - Note: the per-tick gather must stay deterministic (sort by publisher/sequence,
   not arrival), which the determinism rules above already guarantee.
+- **Joins declared for one instant need an order that is not arrival
+  order**, for the same reason and by much the same means. Sibling order is
+  the execution order within an instant and the visibility rule's earlier
+  sibling, so letting delivery decide it lets delivery decide the run.
+  There are two parts. A request should be able to carry several components
+  in a stated order, which settles the case that matters, a composite
+  admitted whole by one requester, and gives admission the unit
+  `remove_component` already has. What is left is two requesters declaring
+  one instant, ordered by the sim time of the request and then by requester
+  and its own sequence number. Never by a wall clock: a re-run stamps
+  differently, two hosts have two clocks, and every wall-clock quantity
+  here is deliberately an observation, which is the stream a re-run is free
+  to differ on.
 - One conductor per world; remote processes run **hosts** (component
   container + transport bridge + publish stamping). Data flows host↔host
   over pub/sub without routing through the conductor. Because same-instant
