@@ -551,6 +551,9 @@ impl<T: Transport> Conductor<T> {
     /// [`Self::remove_component`] with a named instant for anything a run
     /// must reproduce; this one is for a caller that has no instant to name
     /// and wants the component stopped.
+    // TODO(M7): whether this form survives is settled there, because a leave
+    // arriving over a transport has no "now" to resolve against. PLAN.md's
+    // deferred list has what requiring an instant would cost.
     pub fn remove_component_now(&mut self, path: impl Into<String>) -> Result<(), ConductorError> {
         // Return whether the removal was accepted.
         self.remove_component(LeaveMetadata::now(path))
