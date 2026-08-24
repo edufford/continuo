@@ -135,8 +135,3 @@ impl LeaveMetadata {
         }
     }
 }
-
-// A bare path used to stand in for either of these, so the conductor took
-// `impl Into<JoinMetadata>` and the argument's type picked the timing. Each
-// side now has a method of its own for the common case, which says in its
-// name what the conversion said nowhere.

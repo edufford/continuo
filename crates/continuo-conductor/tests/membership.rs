@@ -265,18 +265,16 @@ fn adding_at_the_start_only_works_before_the_run_starts() {
     let steps: StepLog = Default::default();
     let mut conductor = new_conductor();
 
-    // It means sim time zero, so before anything has stepped it lands on the
-    // world's opening instant.
+    // `add_component_at_start` means sim time zero, so before anything has
+    // stepped it lands on the world's opening instant.
     conductor
         .add_component_at_start(WORLD_LEVEL, ticker("a", &steps))
         .expect("nothing has stepped yet");
     conductor.run_until(t_sim_ms(10)).expect("steps succeed");
 
-    // It still means zero once the run is under way, now long closed, so it
-    // is rejected rather than quietly resolving to an instant the caller
-    // never chose. Joining a running world is something you have to say the
-    // time for, which is what the name now warns about before the error
-    // does.
+    // Sim time zero has passed once the run is under way, so the same call
+    // is rejected rather than resolving to an instant the caller never
+    // chose.
     assert!(matches!(
         conductor.add_component_at_start(WORLD_LEVEL, ticker("b", &steps)),
         Err(ConductorError::JoinInThePast { .. })

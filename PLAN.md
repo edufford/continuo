@@ -836,8 +836,10 @@ under "Wire format", rather than churning the fingerprint once apiece.
   and `DespawnTrafficRequest` carries only a name, so
   `run_live_traffic_scenario`'s claim that every request declares the
   instant it takes effect is true of arrivals and not of retirements.
-  Giving a despawn the period of slack a spawn has retires each car later
-  than today, so `DEMO_WORLD_HASH` moves.
+  A despawn given the slack a spawn has would name an instant a spawner
+  period ahead, where today it takes effect at the next boundary after the
+  request, so every car retires a period later and `DEMO_WORLD_HASH`
+  moves.
 
 - **The viewer's `--check` counts components and calls them joins.** Its
   summary prints `joins / leaves` directly above `actors seen`, and the two
