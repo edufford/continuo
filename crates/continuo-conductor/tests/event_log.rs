@@ -255,7 +255,7 @@ fn a_playback_double_registers_like_any_component() {
     let mut conductor = Conductor::new(sample_config(), InProcTransport::new())
         .expect("free-run config is always accepted");
     conductor
-        .add_component(
+        .add_component_at_start(
             WORLD_LEVEL,
             Box::new(PlaybackComponent::from_log(
                 ComponentId::new(PUBLISHER).unwrap(),

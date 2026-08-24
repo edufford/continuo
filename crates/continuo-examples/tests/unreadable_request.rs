@@ -60,7 +60,7 @@ fn run_demo(sabotaged: bool) -> Result<(), continuo_conductor::ConductorError> {
     traffic_world::setup_live_traffic_scenario(&mut conductor).expect("the world builds");
     if sabotaged {
         conductor
-            .add_component(WORLD_LEVEL, Box::new(Saboteur { fired: false }))
+            .add_component_at_start(WORLD_LEVEL, Box::new(Saboteur { fired: false }))
             .expect("registration succeeds");
     }
 

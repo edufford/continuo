@@ -81,7 +81,7 @@ fn every_membership_observer_is_invoked_in_the_order_it_was_added() {
     conductor.add_membership_callback(recording_into(&seen, "second"));
 
     conductor
-        .add_component(WORLD_LEVEL, ticker("a"))
+        .add_component_at_start(WORLD_LEVEL, ticker("a"))
         .expect("registration succeeds");
 
     assert_eq!(
@@ -105,7 +105,7 @@ fn every_tick_observer_is_invoked() {
     });
 
     conductor
-        .add_component(WORLD_LEVEL, ticker("a"))
+        .add_component_at_start(WORLD_LEVEL, ticker("a"))
         .expect("registration succeeds");
     conductor
         .run_until(SimTime::from_millis(30))
@@ -129,12 +129,14 @@ fn a_second_observer_does_not_silence_a_recorder() {
     conductor.add_membership_callback(recording_into(&watched, "watcher"));
 
     conductor
-        .add_component(WORLD_LEVEL, ticker("a"))
+        .add_component_at_start(WORLD_LEVEL, ticker("a"))
         .expect("registration succeeds");
     conductor
         .run_until(SimTime::from_millis(10))
         .expect("steps succeed");
-    conductor.remove_component("a").expect("`a` is registered");
+    conductor
+        .remove_component_now("a")
+        .expect("`a` is registered");
 
     let log = recorder.finish();
     let membership_events = log

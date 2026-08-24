@@ -198,7 +198,7 @@ fn add_ego<T: Transport>(
 /// recording is the traffic, and a live spawner would be deciding on top of
 /// it. See `traffic_resim`.
 fn add_spawner<T: Transport>(conductor: &mut Conductor<T>) -> Result<(), ConductorError> {
-    conductor.add_component(
+    conductor.add_component_at_start(
         WORLD_LEVEL,
         Box::new(TrafficSpawner::new(
             SimDuration::from_millis(500),
@@ -320,7 +320,7 @@ pub fn setup_playback_traffic_scenario<T: Transport>(
     let actor_names = recorded_traffic_actor_names(recorded);
     for actor_name in &actor_names {
         let id = ComponentId::new(actor_name.as_str()).expect("a recorded path segment is an id");
-        conductor.add_component(
+        conductor.add_component_at_start(
             WORLD_LEVEL,
             Box::new(PlaybackComponent::from_log(id, recorded, actor_name)),
         )?;
@@ -359,7 +359,7 @@ fn recorded_traffic_actor_names(recorded: &EventLog) -> Vec<String> {
 /// on-boundary poses are visible, and nothing can be scheduled between a
 /// boundary and its sample.
 fn add_logger<T: Transport>(conductor: &mut Conductor<T>) -> Result<(), ConductorError> {
-    conductor.add_component(
+    conductor.add_component_at_start(
         WORLD_LEVEL,
         Box::new(PoseLogger::new(
             SimDuration::from_secs(1),
@@ -502,7 +502,7 @@ impl TrafficRequestHandler {
                 // by hand could, and a request for someone already gone has
                 // simply been satisfied early.
                 Request::Despawn(despawn) => {
-                    match conductor.remove_component(&despawn.actor_name) {
+                    match conductor.remove_component_now(&despawn.actor_name) {
                         Ok(()) | Err(ConductorError::UnknownPath(_)) => {}
                         Err(other) => return Err(other),
                     }

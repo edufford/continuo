@@ -64,7 +64,7 @@ fn run_world(diverges: bool) -> Result<(), ConductorError> {
     let mut conductor =
         Conductor::new(config, InProcTransport::new()).expect("free-run config is always accepted");
     conductor
-        .add_component(
+        .add_component_at_start(
             WORLD_LEVEL,
             Box::new(DivergingIntegrator {
                 position: Vec3 {

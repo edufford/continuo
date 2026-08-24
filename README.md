@@ -381,7 +381,7 @@ composite name to make it a child):
 ```rust
 use continuo_conductor::WORLD_LEVEL;
 
-conductor.add_component(WORLD_LEVEL, Box::new(Beacon))?;
+conductor.add_component_at_start(WORLD_LEVEL, Box::new(Beacon))?;
 ```
 
 ## License

@@ -101,10 +101,10 @@ fn run_world(matching: bool, tolerant: bool) -> Result<(), ConductorError> {
     let mut conductor =
         Conductor::new(config, InProcTransport::new()).expect("free-run config is always accepted");
     conductor
-        .add_component(WORLD_LEVEL, Box::new(Sensor { matching }))
+        .add_component_at_start(WORLD_LEVEL, Box::new(Sensor { matching }))
         .expect("registration succeeds");
     conductor
-        .add_component(
+        .add_component_at_start(
             WORLD_LEVEL,
             Box::new(Reader {
                 tolerant,

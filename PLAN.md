@@ -819,6 +819,28 @@ under "Wire format", rather than churning the fingerprint once apiece.
 - **External (non-deterministic) ego participation**: a relaxed admission mode
   for a live AV stack under test, after milestone 7.
 
+- **Requiring every leave to declare its instant, decided at milestone 7.**
+  A leave may still name no instant, which stops its component at the
+  earliest one still open. That is reproducible today only because the
+  caller is, and `remove_component_now` exists so a call site says which
+  bargain it took rather than looking like a complete request.
+
+  Milestone 7 is the trigger rather than a guess: a leave arriving over a
+  transport has no meaningful "now", so it would take effect wherever
+  delivery put it, which is the fault DECISIONS.md, 2026-08-23, removed
+  from the join half. Requiring an instant also makes
+  `LeaveMetadata::leaves_at` and `RecordedLeaveRequest.leaves_at` plain
+  `SimTime` values, matching their join counterparts.
+
+  The demo is where the work is. `SpawnTrafficRequest` carries `first_due`
+  and `DespawnTrafficRequest` carries only a name, so
+  `run_live_traffic_scenario`'s claim that every request declares the
+  instant it takes effect is true of arrivals and not of retirements.
+  A despawn given the slack a spawn has would name an instant a spawner
+  period ahead, where today it takes effect at the next boundary after the
+  request, so every car retires a period later and `DEMO_WORLD_HASH`
+  moves.
+
 - **The viewer's `--check` counts components and calls them joins.** Its
   summary prints `joins / leaves` directly above `actors seen`, and the two
   count different things: membership is published per component, so a car
