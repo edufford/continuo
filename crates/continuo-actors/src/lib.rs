@@ -70,7 +70,7 @@ pub fn accel_cmd_key(world_name: &str, actor_name: &str) -> KeyExpr {
         .expect("valid accel command key")
 }
 
-/// Key for the turn commanded to an actor in `world`.
+/// Key for the steering commanded to an actor in `world`.
 pub fn steer_cmd_key(world_name: &str, actor_name: &str) -> KeyExpr {
     KeyExpr::new_rooted(format!("{world_name}/actor/{actor_name}/steer_cmd"))
         .expect("valid steer command key")

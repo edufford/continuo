@@ -551,36 +551,42 @@ mod tests {
     }
 
     #[test]
-    fn an_acceleration_normalized_by_the_limits_arrives_as_itself() {
-        // A controller divides by the limits and a plant multiplies by
-        // them, and this is the only place the two halves of that meet.
-        // Braking and accelerating divide by different numbers, so a
-        // controller taking one for the other, or the plant doing so,
-        // reaches the car as a rate nobody asked for.
-        for wanted in [LIMITS.accel_max, 1.5, 0.0, -2.0, -LIMITS.decel_max] {
-            let command = accel_fraction(wanted, LIMITS.accel_max, LIMITS.decel_max);
+    fn a_command_made_from_an_acceleration_drives_that_acceleration() {
+        // Both limits, half of each, and nothing at all, each converted
+        // to a command and driven for one step.
+        for wanted_accel in [
+            LIMITS.accel_max,
+            LIMITS.accel_max / 2.0,
+            0.0,
+            -LIMITS.decel_max / 2.0,
+            -LIMITS.decel_max,
+        ] {
+            let command = accel_fraction(wanted_accel, LIMITS.accel_max, LIMITS.decel_max);
             let state = run(&mut plant(CRUISE_SPD), 1, vec![accel(1, command)]);
-            let gained = state.speed - CRUISE_SPD;
+            let gained_spd = state.speed - CRUISE_SPD;
             assert!(
-                (gained - wanted * STEP_SECS).abs() < 1e-9,
-                "{wanted} m/s^2 asked for as {command} and arrived as {}",
-                gained / STEP_SECS
+                (gained_spd - wanted_accel * STEP_SECS).abs() < 1e-9,
+                "{wanted_accel} m/s^2 asked for as {command} and arrived as {}",
+                gained_spd / STEP_SECS
             );
         }
     }
 
     #[test]
-    fn a_yaw_rate_normalized_by_the_limits_arrives_as_itself() {
-        // The same round trip on the other axis, where one limit serves
-        // both directions and the sign is the whole of what a mirrored
-        // pair checks.
-        for wanted in [LIMITS.yaw_rate_max, 0.5, 0.0, -0.5, -LIMITS.yaw_rate_max] {
-            let command = steer_fraction(wanted, LIMITS.yaw_rate_max);
+    fn a_command_made_from_a_yaw_rate_turns_at_that_yaw_rate() {
+        for wanted_yaw_rate in [
+            LIMITS.yaw_rate_max,
+            LIMITS.yaw_rate_max / 2.0,
+            0.0,
+            -LIMITS.yaw_rate_max / 2.0,
+            -LIMITS.yaw_rate_max,
+        ] {
+            let command = steer_fraction(wanted_yaw_rate, LIMITS.yaw_rate_max);
             let state = run(&mut plant(CRUISE_SPD), 1, vec![steer(1, command)]);
-            let turned = wanted * STEP_SECS;
+            let turned_angle = wanted_yaw_rate * STEP_SECS;
             assert!(
-                (state.orientation.yaw() - turned).abs() < 1e-9,
-                "{wanted} rad/s asked for as {command} and arrived at {}",
+                (state.orientation.yaw() - turned_angle).abs() < 1e-9,
+                "{wanted_yaw_rate} rad/s asked for as {command} and arrived at {}",
                 state.orientation.yaw()
             );
         }
