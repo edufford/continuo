@@ -269,6 +269,7 @@ mod tests {
     use continuo_core::{ComponentPath, Message};
 
     use super::*;
+    use crate::control_laws::{accel_fraction, steer_fraction};
 
     /// The period every test here steps at, and its length in seconds,
     /// which every expected value below is worked from.
@@ -546,6 +547,42 @@ mod tests {
             assert_eq!(state.speed, CRUISE_SPD, "speed moved on {command}");
             assert_eq!(state.orientation.yaw(), 0.0, "yaw moved on {command}");
             assert_eq!(state.position.y, start_pose().position.y);
+        }
+    }
+
+    #[test]
+    fn an_acceleration_normalized_by_the_limits_arrives_as_itself() {
+        // A controller divides by the limits and a plant multiplies by
+        // them, and this is the only place the two halves of that meet.
+        // Braking and accelerating divide by different numbers, so a
+        // controller taking one for the other, or the plant doing so,
+        // reaches the car as a rate nobody asked for.
+        for wanted in [LIMITS.accel_max, 1.5, 0.0, -2.0, -LIMITS.decel_max] {
+            let command = accel_fraction(wanted, LIMITS.accel_max, LIMITS.decel_max);
+            let state = run(&mut plant(CRUISE_SPD), 1, vec![accel(1, command)]);
+            let gained = state.speed - CRUISE_SPD;
+            assert!(
+                (gained - wanted * STEP_SECS).abs() < 1e-9,
+                "{wanted} m/s^2 asked for as {command} and arrived as {}",
+                gained / STEP_SECS
+            );
+        }
+    }
+
+    #[test]
+    fn a_yaw_rate_normalized_by_the_limits_arrives_as_itself() {
+        // The same round trip on the other axis, where one limit serves
+        // both directions and the sign is the whole of what a mirrored
+        // pair checks.
+        for wanted in [LIMITS.yaw_rate_max, 0.5, 0.0, -0.5, -LIMITS.yaw_rate_max] {
+            let command = steer_fraction(wanted, LIMITS.yaw_rate_max);
+            let state = run(&mut plant(CRUISE_SPD), 1, vec![steer(1, command)]);
+            let turned = wanted * STEP_SECS;
+            assert!(
+                (state.orientation.yaw() - turned).abs() < 1e-9,
+                "{wanted} rad/s asked for as {command} and arrived at {}",
+                state.orientation.yaw()
+            );
         }
     }
 

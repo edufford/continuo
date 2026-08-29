@@ -5,7 +5,7 @@ use continuo_core::{
 };
 
 use crate::commands::SteerCmd;
-use crate::control_laws::{PurePursuitParams, pure_pursuit_yaw_rate};
+use crate::control_laws::{PurePursuitParams, pure_pursuit_yaw_rate, steer_fraction};
 use crate::path::Waypoints;
 
 /// Path follower: reads the latest pose, asks
@@ -90,7 +90,7 @@ impl Component for PathFollowController {
 
         let yaw_rate = pure_pursuit_yaw_rate(&self.road, self.last_pose, self.pursuit_params);
         let cmd = SteerCmd {
-            steer_cmd: (yaw_rate / self.pursuit_params.max_yaw_rate).clamp(-1.0, 1.0),
+            steer_cmd: steer_fraction(yaw_rate, self.pursuit_params.max_yaw_rate),
         };
 
         let key = crate::steer_cmd_key(ctx.world_name(), &self.actor_name);

@@ -265,6 +265,43 @@ pub fn idm_accel(speed: f64, gap: f64, approach_rate: f64, params: IdmParams) ->
         .clamp(-params.b_decel_comfort, params.a_accel_max)
 }
 
+/// The command that asks a plant for `accel` m/s^2.
+///
+/// A command is a fraction of what the car does at its stops, so this is
+/// what a plant does with one, run backwards: it multiplies by whichever
+/// of `accel_max` and `decel_max` the sign picks, and a controller
+/// dividing by anything else asks for a rate it will not get. Nothing
+/// catches that, because a number with no unit has nothing to disagree
+/// about, so both halves of a car taking one
+/// [`DriveLimits`](crate::DriveLimits) is the whole of why they match.
+///
+/// Braking has a limit of its own because a car brakes harder than it
+/// accelerates. Both are divisors, so both have to be greater than zero,
+/// and whoever takes them from outside checks them there, as [`IdmParams`]
+/// says of its own.
+///
+/// A law's own limits are not these. A follower brakes at what it finds
+/// comfortable, which is well short of what the car could do, and that
+/// distance is why a controller has to be told what car it is driving
+/// rather than taking its own tuning for the answer.
+pub fn accel_fraction(accel: f64, accel_max: f64, decel_max: f64) -> f64 {
+    let limit = if accel < 0.0 { decel_max } else { accel_max };
+
+    // Return the fraction, held at the stops. Past them is a law asking
+    // for a car it does not have, and a plant holds it there regardless.
+    (accel / limit).clamp(-1.0, 1.0)
+}
+
+/// The command that asks a plant for `yaw_rate` rad/s.
+///
+/// [`accel_fraction`] says what a fraction is and what agreeing on a limit
+/// costs. One limit rather than two, since a car turns as hard one way as
+/// the other, and a steering law stops where the car does rather than at a
+/// tuning number of its own, so `yaw_rate_max` is both.
+pub fn steer_fraction(yaw_rate: f64, yaw_rate_max: f64) -> f64 {
+    (yaw_rate / yaw_rate_max).clamp(-1.0, 1.0)
+}
+
 #[cfg(test)]
 mod tests {
     use continuo_core::{Quat, Vec3};
@@ -586,6 +623,54 @@ mod tests {
         assert_eq!(
             idm_accel(20.0, -3.0, 0.0, idm_tuning()),
             -idm_tuning().b_decel_comfort
+        );
+    }
+
+    /// What the cars here can do, which is what a command is a fraction
+    /// of. The three differ, so a test taking one for another fails.
+    const LIMITS: crate::DriveLimits = crate::DriveLimits::highway_car();
+
+    #[test]
+    fn a_command_is_the_fraction_of_the_car_the_law_asked_for() {
+        // Accelerating and braking divide by different numbers, which is
+        // what the negative case is here to pin: half of 3 is not half
+        // of 5, so a fraction taken against the wrong one arrives as a
+        // different rate.
+        assert_eq!(accel_fraction(1.5, LIMITS.accel_max, LIMITS.decel_max), 0.5);
+        assert_eq!(
+            accel_fraction(-2.5, LIMITS.accel_max, LIMITS.decel_max),
+            -0.5
+        );
+        assert_eq!(steer_fraction(0.6, LIMITS.yaw_rate_max), 0.5);
+        assert_eq!(steer_fraction(-0.6, LIMITS.yaw_rate_max), -0.5);
+    }
+
+    #[test]
+    fn a_law_asking_for_more_car_than_there_is_asks_for_all_of_it() {
+        // A plant clamps what it is sent, so this only keeps a command
+        // inside the range its own type promises.
+        assert_eq!(accel_fraction(9.0, LIMITS.accel_max, LIMITS.decel_max), 1.0);
+        assert_eq!(
+            accel_fraction(-9.0, LIMITS.accel_max, LIMITS.decel_max),
+            -1.0
+        );
+        assert_eq!(steer_fraction(4.0, LIMITS.yaw_rate_max), 1.0);
+        assert_eq!(steer_fraction(-4.0, LIMITS.yaw_rate_max), -1.0);
+    }
+
+    #[test]
+    fn a_followers_hardest_braking_is_less_than_the_car_has() {
+        // Why a controller is told what car it drives rather than
+        // dividing by its own tuning: IDM brakes at what a driver finds
+        // comfortable, and the car has more than that. Normalizing
+        // against `b_decel_comfort` would send a full brake pedal where
+        // the law asked for less than half of one.
+        let hardest = -idm_tuning().b_decel_comfort;
+        let asked_for = accel_fraction(hardest, LIMITS.accel_max, LIMITS.decel_max);
+        assert!(asked_for > -1.0, "{asked_for}");
+        assert!(
+            (asked_for * LIMITS.decel_max - hardest).abs() < 1e-12,
+            "{asked_for}"
         );
     }
 
