@@ -31,18 +31,18 @@ impl PurePursuitParams {
     ///
     /// All four are scenario tuning: an aim point a car length or so
     /// ahead, turned toward briskly, and a turn no harder than the car
-    /// itself does, which is where [`DriveLimits::yaw_rate_max`] comes in
+    /// itself does, which is where [`PlantLimits::yaw_rate_max`] comes in
     /// as the default. Lower it and the follower holds a gentler turn,
     /// since what a command is a fraction of is the plant's limit rather
     /// than this one.
     ///
-    /// [`DriveLimits::yaw_rate_max`]: crate::DriveLimits::yaw_rate_max
+    /// [`PlantLimits::yaw_rate_max`]: crate::PlantLimits::yaw_rate_max
     pub const fn highway_car(lateral_tgt: f64) -> Self {
         PurePursuitParams {
             lateral_tgt,
             lookahead: 6.0,
             gain_yaw_rate: 1.5,
-            max_yaw_rate: crate::DriveLimits::highway_car().yaw_rate_max,
+            max_yaw_rate: crate::PlantLimits::highway_car().yaw_rate_max,
         }
     }
 }
@@ -603,7 +603,7 @@ mod tests {
 
     /// The limits every conversion below is written against, so a rate
     /// here is a multiple of one rather than a number of its own.
-    const LIMITS: crate::DriveLimits = crate::DriveLimits::highway_car();
+    const LIMITS: crate::PlantLimits = crate::PlantLimits::highway_car();
 
     /// The share of a limit each rate below asks for.
     const HALF: f64 = 0.5;

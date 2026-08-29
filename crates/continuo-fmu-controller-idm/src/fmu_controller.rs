@@ -11,7 +11,7 @@ use continuo_actors::control_laws::{
     FREE_ROAD, IdmParams, PurePursuitParams, accel_fraction, idm_accel, nearest_detection,
     pure_pursuit_yaw_rate, steer_fraction,
 };
-use continuo_actors::{DriveLimits, MAX_DETECTIONS, Waypoints};
+use continuo_actors::{MAX_DETECTIONS, PlantLimits, Waypoints};
 use continuo_core::{Detection, Pose, Quat, Vec3};
 use fmi::fmi3::{Fmi3Error, Fmi3Res};
 use fmi_export::FmuModel;
@@ -48,7 +48,7 @@ const DEFAULT_IDM: IdmParams = IdmParams::highway_car(DEFAULT_TARGET_SPEED);
 const DEFAULT_PURSUIT: PurePursuitParams = PurePursuitParams::highway_car(0.0);
 
 /// What the car's limits hold until a host sets them.
-const DEFAULT_LIMITS: DriveLimits = DriveLimits::highway_car();
+const DEFAULT_LIMITS: PlantLimits = PlantLimits::highway_car();
 
 /// The value of a parameter that has to be greater than zero, or a
 /// refusal naming it. Rejects a zero, a negative, an infinity, and a NaN.

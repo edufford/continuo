@@ -33,7 +33,7 @@ use continuo_actors::control_laws::{
     FREE_ROAD, IdmParams, PurePursuitParams, accel_fraction, idm_accel, nearest_detection,
     pure_pursuit_yaw_rate, steer_fraction,
 };
-use continuo_actors::{DriveLimits, MAX_DETECTIONS, Waypoints};
+use continuo_actors::{MAX_DETECTIONS, PlantLimits, Waypoints};
 use continuo_core::{
     Component, ComponentPath, CoreError, Detection, KeyExpr, Message, Pose, Quat, RandomSplitMix64,
     SimDuration, SimTime, StepCtx,
@@ -63,7 +63,7 @@ const PURSUIT: PurePursuitParams = PurePursuitParams::highway_car(3.5);
 const IDM: IdmParams = IdmParams::highway_car(30.0);
 
 /// The limits the FMU is told about, which a plant would be built with.
-const LIMITS: DriveLimits = DriveLimits::highway_car();
+const LIMITS: PlantLimits = PlantLimits::highway_car();
 
 /// What the following law's acceleration is commanded as, normalized to
 /// the plant's limits.

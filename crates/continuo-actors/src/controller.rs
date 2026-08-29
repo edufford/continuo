@@ -7,7 +7,7 @@ use continuo_core::{
 use crate::commands::SteerCmd;
 use crate::control_laws::{PurePursuitParams, pure_pursuit_yaw_rate, steer_fraction};
 use crate::path::Waypoints;
-use crate::physics::DriveLimits;
+use crate::physics::PlantLimits;
 
 /// Path follower: reads the latest pose, asks
 /// [`pure_pursuit_yaw_rate`] where to steer, and publishes that as a
@@ -21,7 +21,7 @@ use crate::physics::DriveLimits;
 /// shares one [`Waypoints`], and a lane is a number rather than a curve of
 /// its own. Pass `0.0` to drive the road itself.
 ///
-/// The command is a fraction of the [`DriveLimits`] it is given, which
+/// The command is a fraction of the [`PlantLimits`] it is given, which
 /// have to be the ones the plant was built with for it to mean the same
 /// thing at both ends. The law's own `max_yaw_rate` is tuning beside
 /// them: set it below the plant's limit and the car holds a gentler turn
@@ -30,13 +30,13 @@ use crate::physics::DriveLimits;
 /// Declared *before* its physics sibling in the car composite, so its
 /// command is delivered same-instant when both are due.
 ///
-/// [`DriveLimits`]: crate::DriveLimits
+/// [`PlantLimits`]: crate::PlantLimits
 pub struct PathFollowController {
     actor_name: String,
     road: Arc<Waypoints>,
     period: SimDuration,
     pursuit_params: PurePursuitParams,
-    limits: DriveLimits,
+    limits: PlantLimits,
     last_pose: Pose,
 }
 
@@ -50,7 +50,7 @@ impl PathFollowController {
         lookahead: f64,
         gain_yaw_rate: f64,
         max_yaw_rate: f64,
-        limits: DriveLimits,
+        limits: PlantLimits,
         initial_pose: Pose,
     ) -> Self {
         PathFollowController {

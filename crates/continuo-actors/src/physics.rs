@@ -55,7 +55,7 @@ impl CarState {
 /// Braking has its own limit because a car brakes harder than it
 /// accelerates. One number for both would get one of them wrong.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct DriveLimits {
+pub struct PlantLimits {
     /// m/s^2 at a command of +1.
     pub accel_max: f64,
     /// m/s^2 at a command of -1, written positive.
@@ -64,10 +64,10 @@ pub struct DriveLimits {
     pub yaw_rate_max: f64,
 }
 
-impl DriveLimits {
+impl PlantLimits {
     /// The car this project drives, at ordinary passenger-car rates.
     pub const fn highway_car() -> Self {
-        DriveLimits {
+        PlantLimits {
             accel_max: 3.0,
             decel_max: 5.0,
             yaw_rate_max: 1.2,
@@ -80,7 +80,7 @@ impl DriveLimits {
 /// that put the car, with the speed it owns beside the pose. Publishes
 /// `z = 0` and yaw-only quaternions per the pose convention.
 ///
-/// It also owns [`DriveLimits`], which is what makes a normalized command
+/// It also owns [`PlantLimits`], which is what makes a normalized command
 /// mean something. A controller asks for a fraction and the plant decides
 /// what fraction of what, so the same command drives a hatchback and a
 /// truck differently without either controller knowing which it has.
@@ -93,7 +93,7 @@ impl DriveLimits {
 pub struct UnicyclePhysics {
     actor_name: String,
     period: SimDuration,
-    limits: DriveLimits,
+    limits: PlantLimits,
     x: f64,
     y: f64,
     yaw: f64,
@@ -106,7 +106,7 @@ impl UnicyclePhysics {
     pub fn new(
         actor_name: impl Into<String>,
         period: SimDuration,
-        limits: DriveLimits,
+        limits: PlantLimits,
         initial: CarState,
     ) -> Self {
         UnicyclePhysics {
@@ -286,7 +286,7 @@ mod tests {
     /// What a full command is worth on every car here, so an expected
     /// value is worked from a command and a limit rather than written
     /// down.
-    const LIMITS: DriveLimits = DriveLimits::highway_car();
+    const LIMITS: PlantLimits = PlantLimits::highway_car();
 
     /// Where a car starts where the test is not about where it starts:
     /// off the origin and pointing along `+x`, so a plant that lost the

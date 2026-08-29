@@ -1083,9 +1083,11 @@ it got there, including the roads not taken.
   - **Both are normalized to [-1, 1] and carry no unit.** A pedal and a
     steering wheel travel between stops, and how much car is behind them is
     the car's business, so `DriveLimits` lives on the plant and a command
-    says only what fraction of one it wants. A controller naming an
-    acceleration would be asserting something about a vehicle it does not
-    own, and two cars given one command would have to behave alike.
+    says only what fraction of one it wants. *(Renamed `PlantLimits`
+    2026-08-28, since the type has to say whose limits it holds.)* A
+    controller naming an acceleration would be asserting something about a
+    vehicle it does not own, and two cars given one command would have to
+    behave alike.
     - The cost is that the two sides must agree on the limits with no way
       to check. A number with no unit has nothing to disagree about, so a
       controller working from a different `yaw_rate_max` steers to a rate
@@ -1291,10 +1293,11 @@ it got there, including the roads not taken.
     `plant_decel_max` and `plant_yaw_rate_max` and divides by those, and
     they are fixed rather than tunable: a car does not become a different
     car between steps, and driving a different one is a different instance.
+    `DriveLimits` is renamed `PlantLimits` to say whose limits they are.
   - **Steering keeps a clamp of its own beside them.** `max_yaw_rate`
     defaults to the plant's rate limit, so a car steers as hard as it can,
-    but it could be tuned differently. The native controller takes the
-    plant's `DriveLimits` for the same reason. The clamp still has to be
+    but it could be tuned differently. The native controller takes its
+    car's `PlantLimits` for the same reason. The clamp still has to be
     positive, now because `clamp` panics when the low bound is above the
     high one and a panic through the C interface would take the host process
     with it.
@@ -1306,7 +1309,7 @@ it got there, including the roads not taken.
     dividing by the limits and a plant multiplying by them is the one place
     the two meet: the plant's tests hand it what a law asked for and read
     the rate back off it. What they cannot check is that a scenario handed
-    both halves of a car one `DriveLimits`, which is the cost the 2026-08-19
+    both halves of a car one `PlantLimits`, which is the cost the 2026-08-19
     entry already records.
   - `DEMO_WORLD_HASH` does not move. Every default is the number it was, and
     nothing in the demo is an FMU yet.

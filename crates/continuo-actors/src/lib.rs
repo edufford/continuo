@@ -42,7 +42,7 @@ pub use commands::{AccelCmd, SteerCmd};
 pub use controller::PathFollowController;
 pub use logger::PoseLogger;
 pub use path::Waypoints;
-pub use physics::{CarState, DriveLimits, UnicyclePhysics};
+pub use physics::{CarState, PlantLimits, UnicyclePhysics};
 pub use traffic_spawner::{
     DespawnTrafficRequest, SpawnTrafficRequest, TrafficSpawner, road_pose, straight_road,
     traffic_despawn_key, traffic_spawn_key,

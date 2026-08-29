@@ -25,7 +25,7 @@
 use std::sync::{Arc, Mutex, OnceLock};
 
 use continuo_actors::{
-    CarState, DespawnTrafficRequest, DriveLimits, PathFollowController, PoseLogger,
+    CarState, DespawnTrafficRequest, PathFollowController, PlantLimits, PoseLogger,
     SpawnTrafficRequest, TrafficSpawner, UnicyclePhysics, Waypoints, road_pose, straight_road,
     traffic_despawn_key, traffic_spawn_key,
 };
@@ -77,7 +77,7 @@ const RETIRE_BEHIND: f64 = 60.0;
 const SPAWN_GAP: (f64, f64) = (20.0, 50.0);
 
 /// What a full command is worth on every car in this world.
-const CAR_LIMITS: DriveLimits = DriveLimits::highway_car();
+const CAR_LIMITS: PlantLimits = PlantLimits::highway_car();
 
 /// A handle on the one road every car in this world drives, built once and
 /// handed out, not rebuilt per call, which is what keeps a run that spawns
