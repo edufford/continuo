@@ -1272,59 +1272,41 @@ it got there, including the roads not taken.
     subscribes only to keys under its own actor name, and the siblings
     publishing them do not exist until it is admitted.
 
-- **2026-08-28**: **A controller asks for a fraction of what its plant
-  can do, and the FMU is told what that is.** Commands became normalized
-  when the plant took over acceleration, and the exported controller went
-  on publishing an acceleration in m/s^2 and a yaw rate in rad/s. Nothing
-  failed: no car runs on the FMU yet, and the comparison against the laws
-  runs both sides through the same unconverted numbers, so the two agreed
-  with each other while both disagreed with the plant. Wired into a car, a
-  rate of 1 m/s^2 would have arrived as 3, and anything past 1 as the
-  whole pedal.
-  - **Normalizing is a control law**, so `accel_fraction` and
-    `steer_fraction` sit beside the laws whose answers they convert, and
-    the native controller and the FMU call the same two. Writing the
-    division at each publisher instead is what that module exists to
-    avoid: one implementation rather than two kept in step by hand.
-  - **A law's limits are not the plant's**, which is why the FMU gains
-    `plant_accel_max`, `plant_decel_max` and `plant_yaw_rate_max`, and
-    why the normalizing divides by those wherever it happens. IDM
-    accelerates at 1.5 m/s^2 and brakes at 2.0 against a plant whose
-    limits are 3.0 and 5.0, because a law's pair says what a driver finds
-    comfortable rather than what the plant allows, so a fraction taken
-    against them would send a full brake pedal where the law asked for
-    less than half of one.
-  - **Steering keeps a limit of its own beside the plant's**, where one
-    number nearly served. Pure pursuit's `max_yaw_rate` defaults to the
-    plant's, so a car steers as hard as it can, but it is tuning: a
-    follower held to half the turn its plant allows is a valid
-    configuration, and under a single number it was not expressible,
-    since lowering the clamp lowered the divisor with it and the car
-    turned exactly as hard as before. The native controller therefore
-    takes the `DriveLimits` of the plant it commands, of which it reads
-    the turn alone.
-  - **Those two are fixed rather than tunable.** A driver changes their
-    mind between steps, which is what the law parameters are tunable for.
-    A car does not become a different car, and driving a different one is
-    a different instance, which membership already is.
+- **2026-08-28**: **An FMU controller commands a normalized fraction of what
+  its plant can do, and the FMU is told the plant's limits.** Commands
+  became normalized when the plant took over acceleration, and the exported
+  FMU controller went on publishing an acceleration in m/s^2 and a yaw rate
+  in rad/s. Nothing failed, because no car runs on the FMU yet and the
+  comparison against the laws ran both sides through the same unconverted
+  numbers: the two agreed with each other while both disagreed with the
+  plant.
+  - **Converting a rate into a normalized command is a control law**, so
+    `accel_fraction` and `steer_fraction` sit beside the laws whose answers
+    they convert and both controllers call them, rather than the division
+    being written afresh at each publisher.
+  - **A control law's limits are separate from the plant's.** IDM
+    accelerates at 1.5 m/s^2 and brakes at 2.0 where the plant does 3.0 and
+    5.0, since a law's pair says what a driver finds comfortable rather than
+    what the car allows. So the FMU gains `plant_accel_max`,
+    `plant_decel_max` and `plant_yaw_rate_max` and divides by those, and
+    they are fixed rather than tunable: a car does not become a different
+    car between steps, and driving a different one is a different instance.
+  - **Steering keeps a clamp of its own beside them.** `max_yaw_rate`
+    defaults to the plant's rate limit, so a car steers as hard as it can,
+    but it could be tuned differently. The native controller takes the
+    plant's `DriveLimits` for the same reason. The clamp still has to be
+    positive, now because `clamp` panics when the low bound is above the
+    high one and a panic through the C interface would take the host process
+    with it.
   - **`yaw_rate_cmd` becomes `steer_cmd`**, which settles the contract as
-    well as the unit. An FMU's variable name is the payload path its
-    output publishes at, so under the old name a plant would have been
-    handed `{"yaw_rate_cmd": ...}` and refused to decode it, and a mapping
-    would have carried a pointer saying what the name should have said.
-  - **`max_yaw_rate` now has to be positive**, which is about the clamp
-    rather than the normalizing. `clamp` panics when the low bound is
-    above the high one, and a panic unwinding through the C interface
-    would take the host process with it, so a negative is refused at
-    initialization along with the three plant limits, which are divisors.
-  - **The check is a round trip through the plant.** A controller dividing
-    by the limits and a plant multiplying by them is the one place the two
-    halves meet, so
-    `a_command_made_from_an_acceleration_drives_that_acceleration` and its
-    steering twin hand a plant what a law asked for and read the rate back
-    off it. A sign or a limit taken for the other fails there. What they
-    cannot check is that a scenario handed both halves of a car one
-    `DriveLimits`, which is the cost the 2026-08-19 entry already records.
-  - `DEMO_WORLD_HASH` does not move. The native controller runs the
-    division it ran before, under a name now, and nothing in the demo is
-    an FMU yet.
+    well as the unit. An FMU's variable name is the payload path its output
+    publishes at, so under the old name a plant would have been handed
+    `{"yaw_rate_cmd": ...}` and refused to decode it.
+  - **The check is a round trip through the plant**, since a controller
+    dividing by the limits and a plant multiplying by them is the one place
+    the two meet: the plant's tests hand it what a law asked for and read
+    the rate back off it. What they cannot check is that a scenario handed
+    both halves of a car one `DriveLimits`, which is the cost the 2026-08-19
+    entry already records.
+  - `DEMO_WORLD_HASH` does not move. Every default is the number it was, and
+    nothing in the demo is an FMU yet.

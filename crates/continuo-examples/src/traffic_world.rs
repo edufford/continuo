@@ -120,11 +120,9 @@ pub fn config_paced(pacing: Pacing) -> ConductorConfig {
 /// physics owns it. Nothing here commands an acceleration, so what the car
 /// starts at is what it holds for the whole run.
 ///
-/// Both halves are built from [`CAR_LIMITS`], since a normalized command
-/// means whatever the plant says it means and a controller working from a
-/// different set would steer to the wrong rate. The turn the law is
-/// allowed is that set's as well here, so these cars steer as hard as
-/// they can.
+/// Controller and physics both take [`CAR_LIMITS`], since a normalized
+/// command means whatever the plant says it means and a controller
+/// working from a different set would command the wrong rate.
 fn add_car<T: Transport>(
     conductor: &mut Conductor<T>,
     actor_name: &str,
@@ -145,7 +143,7 @@ fn add_car<T: Transport>(
             SimDuration::from_millis(100),
             6.0,                     // lookahead, m
             1.5,                     // heading gain, 1/s
-            CAR_LIMITS.yaw_rate_max, // turn as hard as the car does
+            CAR_LIMITS.yaw_rate_max, // command turns up to the car's limit
             CAR_LIMITS,
             initial_pose,
         )),

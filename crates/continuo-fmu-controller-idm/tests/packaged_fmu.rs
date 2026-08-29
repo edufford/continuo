@@ -294,8 +294,8 @@ fn step_once(
     )
 }
 
-/// What the laws answer in `situation`, asked of the car here in this
-/// process.
+/// The commands the laws answer with in `situation`, worked out natively
+/// rather than inside the packaged FMU to be a reference for comparison.
 fn native_commands(
     road: &Waypoints,
     pursuit: PurePursuitParams,

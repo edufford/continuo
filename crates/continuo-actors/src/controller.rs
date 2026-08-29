@@ -10,34 +10,32 @@ use crate::path::Waypoints;
 use crate::physics::DriveLimits;
 
 /// Path follower: reads the latest pose, asks
-/// [`pure_pursuit_yaw_rate`] where to steer, and publishes that.
+/// [`pure_pursuit_yaw_rate`] where to steer, and publishes that as a
+/// normalized steer command.
 ///
 /// Lateral only. Speed is the plant's business, and a car with nobody
 /// commanding an acceleration holds the one it was built with.
-///
-/// What it publishes is normalized against the [`DriveLimits`] it is
-/// given, which are the plant's, while the law's own `max_yaw_rate` is
-/// tuning: set it below the plant's and the car holds a gentler turn than
-/// it could. Hand the two halves of a car different limits and it turns
-/// at a rate nobody intended, which nothing here can detect, because a
-/// normalized command carries no unit to disagree about.
-///
-/// [`DriveLimits`]: crate::DriveLimits
 ///
 /// Follows the road in **Frenet coordinates**: an arc length `s` found by
 /// projection, and a fixed lateral offset it holds. So every car on a road
 /// shares one [`Waypoints`], and a lane is a number rather than a curve of
 /// its own. Pass `0.0` to drive the road itself.
 ///
+/// The command is a fraction of the [`DriveLimits`] it is given, which
+/// have to be the ones the plant was built with for it to mean the same
+/// thing at both ends. The law's own `max_yaw_rate` is tuning beside
+/// them: set it below the plant's limit and the car holds a gentler turn
+/// than it could.
+///
 /// Declared *before* its physics sibling in the car composite, so its
 /// command is delivered same-instant when both are due.
+///
+/// [`DriveLimits`]: crate::DriveLimits
 pub struct PathFollowController {
     actor_name: String,
     road: Arc<Waypoints>,
     period: SimDuration,
     pursuit_params: PurePursuitParams,
-    /// The plant being commanded, of which only the turn is read here.
-    /// A controller that commanded a speed would want the rest.
     limits: DriveLimits,
     last_pose: Pose,
 }

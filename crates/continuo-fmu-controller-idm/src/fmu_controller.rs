@@ -50,11 +50,8 @@ const DEFAULT_PURSUIT: PurePursuitParams = PurePursuitParams::highway_car(0.0);
 /// What the car's limits hold until a host sets them.
 const DEFAULT_LIMITS: DriveLimits = DriveLimits::highway_car();
 
-/// A parameter something divides by, checked before it gets there.
-///
-/// Rejects a zero, a negative, an infinity and a NaN alike, since what
-/// they have in common is that no answer computed from them means
-/// anything.
+/// The value of a parameter that has to be greater than zero, or a
+/// refusal naming it. Rejects a zero, a negative, an infinity, and a NaN.
 fn require_positive(name: &'static str, given: f64) -> Result<f64, BadInput> {
     if given.is_finite() && given > 0.0 {
         Ok(given)
@@ -171,11 +168,7 @@ pub struct FmuController {
     /// The car's deceleration at a full command of -1.0, in m/s^2 and positive.
     #[variable(causality = Parameter, variability = Fixed, start = Self::default().plant_decel_max)]
     plant_decel_max: f64,
-    /// The car's yaw rate at a full command of +1.0, in rad/s.
-    ///
-    /// Separate from the steering law's `max_yaw_rate`, which is tuning:
-    /// a follower told to turn no harder than half of this commands half
-    /// a lock at most, and means it.
+    /// The car's yaw rate at a full command of +1.0, rad/s counter-clockwise.
     #[variable(causality = Parameter, variability = Fixed, start = Self::default().plant_yaw_rate_max)]
     plant_yaw_rate_max: f64,
 
@@ -188,7 +181,7 @@ pub struct FmuController {
     /// checking importer refuses to load.
     #[variable(causality = Output, initial = Calculated)]
     accel_cmd: f64,
-    /// The normalized steering command, -1.0 for full right lock.
+    /// The normalized steering command, +1.0 for full left lock.
     #[variable(causality = Output, initial = Calculated)]
     steer_cmd: f64,
 
@@ -302,16 +295,11 @@ impl FmuController {
         Fmi3Error::Error
     }
 
-    /// The steering law's parameters, checked.
+    /// The steering law's parameters after input validation.
     ///
     /// Read afresh per step rather than kept, because these are tunable
-    /// and a host may have changed one since the last. Keeping a copy
-    /// would take the change and act on the old value, and checking once
-    /// would let a new zero through.
+    /// and a host may have changed one since the last validation.
     fn pursuit_params(&self) -> Result<PurePursuitParams, BadInput> {
-        // Return the set, once the two that cannot take any value are
-        // sound: an aim point at or behind the follower steers it the
-        // wrong way, and a negative clamp panics inside the law.
         Ok(PurePursuitParams {
             lateral_tgt: self.lateral_tgt,
             lookahead: require_positive("lookahead", self.lookahead)?,
@@ -334,12 +322,12 @@ impl FmuController {
         })
     }
 
-    /// What to ask the plant for, given the road the laws command along.
+    /// Calculate the commands to send to the plant for the road being driven.
     ///
     /// Every number here comes from [`continuo_actors::control_laws`]
-    /// including the normalization. What this adds is the type conversions
-    /// between them: a pose out of seven scalars, and a scan out of two
-    /// detection arrays.
+    /// including the normalization. What this adds is the type
+    /// conversions between them: a pose out of seven scalars, and a
+    /// surrounding traffic scan out of two detection arrays.
     fn calculate_commands(&self, road: &Waypoints) -> Result<(f64, f64), BadInput> {
         let pose = Pose {
             position: Vec3::new(self.position_x, self.position_y, 0.0),
@@ -567,7 +555,7 @@ mod tests {
 
     /// Asserts a controller commands nothing, naming the parameter it
     /// refused and quoting the value back.
-    fn check_refusal(controller: &FmuController, road: &Waypoints, name: &str, given: f64) {
+    fn check_refusal(controller: &FmuController, road: &Waypoints, name: &str, bad_val: f64) {
         match controller.calculate_commands(road) {
             Err(BadInput::NotPositive {
                 name: refused,
@@ -575,9 +563,9 @@ mod tests {
             }) => {
                 assert_eq!(refused, name);
                 // Bits, because a NaN is not equal to itself.
-                assert_eq!(quoted.to_bits(), given.to_bits());
+                assert_eq!(quoted.to_bits(), bad_val.to_bits());
             }
-            other => panic!("{name} = {given} gave {other:?}"),
+            other => panic!("{name} = {bad_val} gave {other:?}"),
         }
     }
 
@@ -588,39 +576,39 @@ mod tests {
         // A host in another tool can send any of these, and the model
         // description cannot warn it off, since `fmi-export` 0.3.0
         // declares no bounds for a variable.
-        for given in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+        for bad_val in [0.0, -1.0, f64::NAN, f64::INFINITY] {
             let mut target_speed = controller_given(&road);
-            target_speed.v0_speed_tgt = given;
-            check_refusal(&target_speed, &road, "v0_speed_tgt", given);
+            target_speed.v0_speed_tgt = bad_val;
+            check_refusal(&target_speed, &road, "v0_speed_tgt", bad_val);
 
             let mut acceleration = controller_given(&road);
-            acceleration.a_accel_max = given;
-            check_refusal(&acceleration, &road, "a_accel_max", given);
+            acceleration.a_accel_max = bad_val;
+            check_refusal(&acceleration, &road, "a_accel_max", bad_val);
 
             let mut braking = controller_given(&road);
-            braking.b_decel_comfort = given;
-            check_refusal(&braking, &road, "b_decel_comfort", given);
+            braking.b_decel_comfort = bad_val;
+            check_refusal(&braking, &road, "b_decel_comfort", bad_val);
 
             let mut aim_point = controller_given(&road);
-            aim_point.lookahead = given;
-            check_refusal(&aim_point, &road, "lookahead", given);
+            aim_point.lookahead = bad_val;
+            check_refusal(&aim_point, &road, "lookahead", bad_val);
 
             // The three the normalizing divides by
             let mut turn = controller_given(&road);
-            turn.max_yaw_rate = given;
-            check_refusal(&turn, &road, "max_yaw_rate", given);
+            turn.max_yaw_rate = bad_val;
+            check_refusal(&turn, &road, "max_yaw_rate", bad_val);
 
             let mut plant_accel = controller_given(&road);
-            plant_accel.plant_accel_max = given;
-            check_refusal(&plant_accel, &road, "plant_accel_max", given);
+            plant_accel.plant_accel_max = bad_val;
+            check_refusal(&plant_accel, &road, "plant_accel_max", bad_val);
 
             let mut plant_braking = controller_given(&road);
-            plant_braking.plant_decel_max = given;
-            check_refusal(&plant_braking, &road, "plant_decel_max", given);
+            plant_braking.plant_decel_max = bad_val;
+            check_refusal(&plant_braking, &road, "plant_decel_max", bad_val);
 
             let mut plant_turn = controller_given(&road);
-            plant_turn.plant_yaw_rate_max = given;
-            check_refusal(&plant_turn, &road, "plant_yaw_rate_max", given);
+            plant_turn.plant_yaw_rate_max = bad_val;
+            check_refusal(&plant_turn, &road, "plant_yaw_rate_max", bad_val);
         }
     }
 
@@ -696,12 +684,14 @@ mod tests {
 
     #[test]
     fn a_law_capped_below_the_plant_commands_no_more_than_its_cap() {
-        const HALF_A_LOCK: f64 = 0.5;
+        // Every command here is a right lock, negative, since the car
+        // points a quarter turn left of the road and steers back.
+        const FULL_LOCK: f64 = -1.0;
+        // The share of the plant's turn the law is held to below.
+        const HALF: f64 = 0.5;
 
-        // Pointing a quarter turn left of the road, so the law asks for
-        // far more turn than either cap allows and what comes back is the
-        // cap rather than the geometry. Negative, since a car pointing
-        // left of its lane steers right to get back.
+        // Pointing across the road asks for far more turn than either cap
+        // allows, so what comes back is the cap rather than the geometry.
         let road = Waypoints::build_straight((0.0, 0.0), (400.0, 0.0));
         let facing_across = Quat::from_yaw(std::f64::consts::FRAC_PI_2);
         let mut controller = controller_given(&road);
@@ -712,19 +702,18 @@ mod tests {
             .calculate_commands(&road)
             .expect("the defaults are a set the laws can run on");
         assert!(
-            (at_the_plants_turn + 1.0).abs() < 1e-12,
+            (at_the_plants_turn - FULL_LOCK).abs() < 1e-12,
             "capped where the car is: {at_the_plants_turn}"
         );
 
-        // Half the turn as tuning, on the same car. A follower held to
-        // half of what it could do commands half a lock and gets it,
-        // which is the config a single number could not express.
-        controller.max_yaw_rate = controller.plant_yaw_rate_max * HALF_A_LOCK;
+        // Half the turn as tuning, on the same car. A follower capped to
+        // half of the plant's limit should command up to half a lock.
+        controller.max_yaw_rate = controller.plant_yaw_rate_max * HALF;
         let (_, held_to_half) = controller
             .calculate_commands(&road)
             .expect("the defaults are a set the laws can run on");
         assert!(
-            (held_to_half + HALF_A_LOCK).abs() < 1e-12,
+            (held_to_half - FULL_LOCK * HALF).abs() < 1e-12,
             "held to half the turn: {held_to_half}"
         );
 
@@ -735,7 +724,7 @@ mod tests {
             .calculate_commands(&road)
             .expect("the defaults are a set the laws can run on");
         assert!(
-            (past_the_plant + 1.0).abs() < 1e-12,
+            (past_the_plant - FULL_LOCK).abs() < 1e-12,
             "allowed more turn than the car has: {past_the_plant}"
         );
     }

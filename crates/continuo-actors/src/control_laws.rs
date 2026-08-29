@@ -269,8 +269,6 @@ pub fn idm_accel(speed: f64, gap: f64, approach_rate: f64, params: IdmParams) ->
 /// the limit its sign picks.
 pub fn accel_fraction(accel: f64, accel_max: f64, decel_max: f64) -> f64 {
     let limit = if accel < 0.0 { decel_max } else { accel_max };
-
-    // Return the fraction of that limit.
     (accel / limit).clamp(-1.0, 1.0)
 }
 
@@ -612,8 +610,7 @@ mod tests {
 
     #[test]
     fn a_command_is_the_fraction_of_the_limit_the_law_asked_for() {
-        // Half of each limit: accelerating, braking, and the turn either
-        // way.
+        // Half of each limit: accelerating, braking, and the turn each way.
         assert_eq!(
             accel_fraction(LIMITS.accel_max * HALF, LIMITS.accel_max, LIMITS.decel_max),
             HALF
