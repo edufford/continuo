@@ -1287,15 +1287,22 @@ it got there, including the roads not taken.
     division at each publisher instead is what that module exists to
     avoid: one implementation rather than two kept in step by hand.
   - **A law's limits are not the plant's**, which is why the FMU gains
-    `plant_accel_max` and `plant_decel_max` and steering gains nothing.
-    IDM accelerates at 1.5 m/s^2 and brakes at 2.0 against a plant whose
+    `plant_accel_max`, `plant_decel_max` and `plant_yaw_rate_max`, and
+    why the normalizing divides by those wherever it happens. IDM
+    accelerates at 1.5 m/s^2 and brakes at 2.0 against a plant whose
     limits are 3.0 and 5.0, because a law's pair says what a driver finds
     comfortable rather than what the plant allows, so a fraction taken
     against them would send a full brake pedal where the law asked for
-    less than half of one. Pure pursuit's `max_yaw_rate` is the plant's
-    `yaw_rate_max` already, by construction and for the reason its own
-    tuning gives, so one number is both where the law stops and what the
-    command is a fraction of.
+    less than half of one.
+  - **Steering keeps a limit of its own beside the plant's**, where one
+    number nearly served. Pure pursuit's `max_yaw_rate` defaults to the
+    plant's, so a car steers as hard as it can, but it is tuning: a
+    follower held to half the turn its plant allows is a valid
+    configuration, and under a single number it was not expressible,
+    since lowering the clamp lowered the divisor with it and the car
+    turned exactly as hard as before. The native controller therefore
+    takes the `DriveLimits` of the plant it commands, of which it reads
+    the turn alone.
   - **Those two are fixed rather than tunable.** A driver changes their
     mind between steps, which is what the law parameters are tunable for.
     A car does not become a different car, and driving a different one is
@@ -1305,10 +1312,11 @@ it got there, including the roads not taken.
     output publishes at, so under the old name a plant would have been
     handed `{"yaw_rate_cmd": ...}` and refused to decode it, and a mapping
     would have carried a pointer saying what the name should have said.
-  - **`max_yaw_rate` now has to be positive.** As a clamp a zero is a
-    harmless zero command; as a divisor it is a NaN reaching a car. It
-    joins the parameters the FMU refuses at initialization, beside the
-    two new ones.
+  - **`max_yaw_rate` now has to be positive**, which is about the clamp
+    rather than the normalizing. `clamp` panics when the low bound is
+    above the high one, and a panic unwinding through the C interface
+    would take the host process with it, so a negative is refused at
+    initialization along with the three plant limits, which are divisors.
   - **The check is a round trip through the plant.** A controller dividing
     by the limits and a plant multiplying by them is the one place the two
     halves meet, so

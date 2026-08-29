@@ -171,6 +171,13 @@ pub struct FmuController {
     /// The car's deceleration at a full command of -1.0, in m/s^2 and positive.
     #[variable(causality = Parameter, variability = Fixed, start = Self::default().plant_decel_max)]
     plant_decel_max: f64,
+    /// The car's yaw rate at a full command of +1.0, in rad/s.
+    ///
+    /// Separate from the steering law's `max_yaw_rate`, which is tuning:
+    /// a follower told to turn no harder than half of this commands half
+    /// a lock at most, and means it.
+    #[variable(causality = Parameter, variability = Fixed, start = Self::default().plant_yaw_rate_max)]
+    plant_yaw_rate_max: f64,
 
     /// The normalized acceleration command, -1.0 to +1.0, no unit.
     ///
@@ -228,6 +235,7 @@ impl Default for FmuController {
             b_decel_comfort: DEFAULT_IDM.b_decel_comfort,
             plant_accel_max: DEFAULT_LIMITS.accel_max,
             plant_decel_max: DEFAULT_LIMITS.decel_max,
+            plant_yaw_rate_max: DEFAULT_LIMITS.yaw_rate_max,
             accel_cmd: 0.0,
             steer_cmd: 0.0,
             road: None,
@@ -301,10 +309,9 @@ impl FmuController {
     /// would take the change and act on the old value, and checking once
     /// would let a new zero through.
     fn pursuit_params(&self) -> Result<PurePursuitParams, BadInput> {
-        // Return the set, once the two it cannot work without are
-        // positive: an aim point at or behind the follower steers it the
-        // wrong way, and a hardest turn of nothing divides a command to
-        // an infinity.
+        // Return the set, once the two that cannot take any value are
+        // sound: an aim point at or behind the follower steers it the
+        // wrong way, and a negative clamp panics inside the law.
         Ok(PurePursuitParams {
             lateral_tgt: self.lateral_tgt,
             lookahead: require_positive("lookahead", self.lookahead)?,
@@ -345,7 +352,10 @@ impl FmuController {
         };
         let pursuit_params = self.pursuit_params()?;
         let yaw_rate = pure_pursuit_yaw_rate(road, pose, pursuit_params);
-        let steer_cmd = steer_fraction(yaw_rate, pursuit_params.max_yaw_rate);
+        let steer_cmd = steer_fraction(
+            yaw_rate,
+            require_positive("plant_yaw_rate_max", self.plant_yaw_rate_max)?,
+        );
 
         // The two arrays back into the detections they were taken from,
         // which is the shape the law reads. Padding loses to anything
@@ -607,6 +617,10 @@ mod tests {
             let mut plant_braking = controller_given(&road);
             plant_braking.plant_decel_max = given;
             check_refusal(&plant_braking, &road, "plant_decel_max", given);
+
+            let mut plant_turn = controller_given(&road);
+            plant_turn.plant_yaw_rate_max = given;
+            check_refusal(&plant_turn, &road, "plant_yaw_rate_max", given);
         }
     }
 
@@ -677,6 +691,52 @@ mod tests {
         assert!(
             (on_twice_the_limit - HALF_A_PEDAL / 2.0).abs() < 1e-12,
             "{on_twice_the_limit}"
+        );
+    }
+
+    #[test]
+    fn a_law_capped_below_the_plant_commands_no_more_than_its_cap() {
+        const HALF_A_LOCK: f64 = 0.5;
+
+        // Pointing a quarter turn left of the road, so the law asks for
+        // far more turn than either cap allows and what comes back is the
+        // cap rather than the geometry. Negative, since a car pointing
+        // left of its lane steers right to get back.
+        let road = Waypoints::build_straight((0.0, 0.0), (400.0, 0.0));
+        let facing_across = Quat::from_yaw(std::f64::consts::FRAC_PI_2);
+        let mut controller = controller_given(&road);
+        controller.orientation_w = facing_across.w;
+        controller.orientation_z = facing_across.z;
+
+        let (_, at_the_plants_turn) = controller
+            .calculate_commands(&road)
+            .expect("the defaults are a set the laws can run on");
+        assert!(
+            (at_the_plants_turn + 1.0).abs() < 1e-12,
+            "capped where the car is: {at_the_plants_turn}"
+        );
+
+        // Half the turn as tuning, on the same car. A follower held to
+        // half of what it could do commands half a lock and gets it,
+        // which is the config a single number could not express.
+        controller.max_yaw_rate = controller.plant_yaw_rate_max * HALF_A_LOCK;
+        let (_, held_to_half) = controller
+            .calculate_commands(&road)
+            .expect("the defaults are a set the laws can run on");
+        assert!(
+            (held_to_half + HALF_A_LOCK).abs() < 1e-12,
+            "held to half the turn: {held_to_half}"
+        );
+
+        // And a cap above the plant asks for a full lock rather than for
+        // more than one, which is the clamp inside the conversion.
+        controller.max_yaw_rate = controller.plant_yaw_rate_max * 2.0;
+        let (_, past_the_plant) = controller
+            .calculate_commands(&road)
+            .expect("the defaults are a set the laws can run on");
+        assert!(
+            (past_the_plant + 1.0).abs() < 1e-12,
+            "allowed more turn than the car has: {past_the_plant}"
         );
     }
 

@@ -72,12 +72,9 @@ fn as_accel_cmd(accel: f64) -> f64 {
 }
 
 /// What the steering law's yaw rate is commanded as, normalized to the
-/// turn it is capped at.
-///
-/// The whole tuning set rather than that one number, since it is the set
-/// a caller chose and the mapping hands the FMU the same field.
-fn as_steer_cmd(yaw_rate: f64, pursuit: PurePursuitParams) -> f64 {
-    steer_fraction(yaw_rate, pursuit.max_yaw_rate)
+/// plant's limits.
+fn as_steer_cmd(yaw_rate: f64) -> f64 {
+    steer_fraction(yaw_rate, LIMITS.yaw_rate_max)
 }
 
 fn key(name: &str) -> KeyExpr {
@@ -203,6 +200,7 @@ fn controller_mapping(road: &Waypoints, pursuit: PurePursuitParams, idm: IdmPara
             ("b_decel_comfort".to_string(), json!(idm.b_decel_comfort)),
             ("plant_accel_max".to_string(), json!(LIMITS.accel_max)),
             ("plant_decel_max".to_string(), json!(LIMITS.decel_max)),
+            ("plant_yaw_rate_max".to_string(), json!(LIMITS.yaw_rate_max)),
         ],
     }
 }
@@ -312,7 +310,7 @@ fn native_commands(
     // falls and an approach rate rises as it closes, so each is the
     // other's negative, and getting that backwards inside the FMU is one
     // of the things these tests are here to catch.
-    (as_accel_cmd(accel), as_steer_cmd(yaw_rate, pursuit))
+    (as_accel_cmd(accel), as_steer_cmd(yaw_rate))
 }
 
 /// Runs every situation through the packaged FMU and through the laws,
@@ -734,6 +732,7 @@ fn a_parameter_used_for_division_halts_the_world_unless_it_is_positive() {
         "max_yaw_rate",
         "plant_accel_max",
         "plant_decel_max",
+        "plant_yaw_rate_max",
     ] {
         for given in [json!(0.0), json!(-1.0)] {
             let reason = refusal(&[(name, given.clone())]);

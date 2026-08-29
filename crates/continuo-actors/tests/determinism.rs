@@ -58,7 +58,8 @@ fn run_world(sim_seconds: i64, world_seed: u64) -> EventLog {
                     SimDuration::from_millis(100), // control period
                     6.0,                           // lookahead distance, m
                     1.5,                           // heading gain, 1/s
-                    CAR_LIMITS.yaw_rate_max,
+                    CAR_LIMITS.yaw_rate_max,       // turn as hard as the car does
+                    CAR_LIMITS,
                     initial_pose,
                 )),
             )
