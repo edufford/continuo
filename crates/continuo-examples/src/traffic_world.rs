@@ -25,7 +25,7 @@
 use std::sync::{Arc, Mutex, OnceLock};
 
 use continuo_actors::{
-    CarState, DespawnTrafficRequest, DriveLimits, PathFollowController, PoseLogger,
+    CarState, DespawnTrafficRequest, PathFollowController, PlantLimits, PoseLogger,
     SpawnTrafficRequest, TrafficSpawner, UnicyclePhysics, Waypoints, road_pose, straight_road,
     traffic_despawn_key, traffic_spawn_key,
 };
@@ -77,7 +77,7 @@ const RETIRE_BEHIND: f64 = 60.0;
 const SPAWN_GAP: (f64, f64) = (20.0, 50.0);
 
 /// What a full command is worth on every car in this world.
-const CAR_LIMITS: DriveLimits = DriveLimits::highway_car();
+const CAR_LIMITS: PlantLimits = PlantLimits::highway_car();
 
 /// A handle on the one road every car in this world drives, built once and
 /// handed out, not rebuilt per call, which is what keeps a run that spawns
@@ -120,10 +120,9 @@ pub fn config_paced(pacing: Pacing) -> ConductorConfig {
 /// physics owns it. Nothing here commands an acceleration, so what the car
 /// starts at is what it holds for the whole run.
 ///
-/// Both halves read their turn rate out of [`CAR_LIMITS`], since a
-/// normalized command means whatever the plant says it means and a
-/// controller working from a different number would steer to the wrong
-/// rate.
+/// Controller and physics both take [`CAR_LIMITS`], since a normalized
+/// command means whatever the plant says it means and a controller
+/// working from a different set would command the wrong rate.
 fn add_car<T: Transport>(
     conductor: &mut Conductor<T>,
     actor_name: &str,
@@ -142,9 +141,10 @@ fn add_car<T: Transport>(
             road.clone(),
             lane_offset,
             SimDuration::from_millis(100),
-            6.0, // lookahead, m
-            1.5, // heading gain, 1/s
-            CAR_LIMITS.yaw_rate_max,
+            6.0,                     // lookahead, m
+            1.5,                     // heading gain, 1/s
+            CAR_LIMITS.yaw_rate_max, // command turns up to the car's limit
+            CAR_LIMITS,
             initial_pose,
         )),
         Box::new(UnicyclePhysics::new(

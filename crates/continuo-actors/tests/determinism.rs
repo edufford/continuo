@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use continuo_actors::{CarState, DriveLimits, PathFollowController, UnicyclePhysics, Waypoints};
+use continuo_actors::{CarState, PathFollowController, PlantLimits, UnicyclePhysics, Waypoints};
 use continuo_conductor::record::LogEvent;
 use continuo_conductor::{Conductor, ConductorConfig, EventLog, Pacing, Recorder};
 use continuo_core::{HashFnv1a64, Pose, Quat, SimDuration, SimTime};
@@ -13,10 +13,10 @@ use continuo_transport::{InProcTransport, MonitorTransport};
 /// What every car here holds, nobody commanding an acceleration.
 const CAR_SPEED: f64 = 8.0;
 
-/// What a full command is worth on those cars. The controller is handed
-/// the turn rate out of it for the reason `traffic_world` gives: a
+/// What a full command is worth on those cars, taken by the controller
+/// and the physics alike for the reason `traffic_world` gives: a
 /// normalized command means whatever the plant says it means.
-const CAR_LIMITS: DriveLimits = DriveLimits::highway_car();
+const CAR_LIMITS: PlantLimits = PlantLimits::highway_car();
 
 fn run_world(sim_seconds: i64, world_seed: u64) -> EventLog {
     let config = ConductorConfig {
@@ -58,7 +58,8 @@ fn run_world(sim_seconds: i64, world_seed: u64) -> EventLog {
                     SimDuration::from_millis(100), // control period
                     6.0,                           // lookahead distance, m
                     1.5,                           // heading gain, 1/s
-                    CAR_LIMITS.yaw_rate_max,
+                    CAR_LIMITS.yaw_rate_max,       // command turns up to the car's limit
+                    CAR_LIMITS,
                     initial_pose,
                 )),
             )

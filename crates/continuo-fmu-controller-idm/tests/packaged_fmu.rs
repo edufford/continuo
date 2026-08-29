@@ -30,9 +30,10 @@
 use std::path::PathBuf;
 
 use continuo_actors::control_laws::{
-    FREE_ROAD, IdmParams, PurePursuitParams, idm_accel, nearest_detection, pure_pursuit_yaw_rate,
+    FREE_ROAD, IdmParams, PurePursuitParams, accel_fraction, idm_accel, nearest_detection,
+    pure_pursuit_yaw_rate, steer_fraction,
 };
-use continuo_actors::{MAX_DETECTIONS, Waypoints};
+use continuo_actors::{MAX_DETECTIONS, PlantLimits, Waypoints};
 use continuo_core::{
     Component, ComponentPath, CoreError, Detection, KeyExpr, Message, Pose, Quat, RandomSplitMix64,
     SimDuration, SimTime, StepCtx,
@@ -60,6 +61,21 @@ const MAYBE_STALE: &str =
 /// exercise the numbers the demo does.
 const PURSUIT: PurePursuitParams = PurePursuitParams::highway_car(3.5);
 const IDM: IdmParams = IdmParams::highway_car(30.0);
+
+/// The limits the FMU is told about, which a plant would be built with.
+const LIMITS: PlantLimits = PlantLimits::highway_car();
+
+/// What the following law's acceleration is commanded as, normalized to
+/// the plant's limits.
+fn as_accel_cmd(accel: f64) -> f64 {
+    accel_fraction(accel, LIMITS.accel_max, LIMITS.decel_max)
+}
+
+/// What the steering law's yaw rate is commanded as, normalized to the
+/// plant's limits.
+fn as_steer_cmd(yaw_rate: f64) -> f64 {
+    steer_fraction(yaw_rate, LIMITS.yaw_rate_max)
+}
 
 fn key(name: &str) -> KeyExpr {
     KeyExpr::new(format!("{WORLD}/{name}")).unwrap()
@@ -166,7 +182,7 @@ fn controller_mapping(road: &Waypoints, pursuit: PurePursuitParams, idm: IdmPara
         ],
         outputs: vec![
             OutputBinding::new("accel_cmd", cmd.clone()),
-            OutputBinding::new("yaw_rate_cmd", cmd),
+            OutputBinding::new("steer_cmd", cmd),
         ],
         initial_values: vec![
             ("road_x".to_string(), json!(road_x)),
@@ -182,6 +198,9 @@ fn controller_mapping(road: &Waypoints, pursuit: PurePursuitParams, idm: IdmPara
             ("s0_gap_min".to_string(), json!(idm.s0_gap_min)),
             ("a_accel_max".to_string(), json!(idm.a_accel_max)),
             ("b_decel_comfort".to_string(), json!(idm.b_decel_comfort)),
+            ("plant_accel_max".to_string(), json!(LIMITS.accel_max)),
+            ("plant_decel_max".to_string(), json!(LIMITS.decel_max)),
+            ("plant_yaw_rate_max".to_string(), json!(LIMITS.yaw_rate_max)),
         ],
     }
 }
@@ -271,11 +290,12 @@ fn step_once(
     // that survives this is the same number to the bit.
     (
         payload["accel_cmd"].as_f64().expect("an acceleration"),
-        payload["yaw_rate_cmd"].as_f64().expect("a yaw rate"),
+        payload["steer_cmd"].as_f64().expect("a turn"),
     )
 }
 
-/// What the laws answer in `situation`, called here in this process.
+/// The commands the laws answer with in `situation`, worked out natively
+/// rather than inside the packaged FMU to be a reference for comparison.
 fn native_commands(
     road: &Waypoints,
     pursuit: PurePursuitParams,
@@ -283,15 +303,14 @@ fn native_commands(
     situation: &Situation,
 ) -> (f64, f64) {
     let lead = nearest_detection(&situation.scan);
+    let accel = idm_accel(situation.speed, lead.range, -lead.range_rate, idm);
+    let yaw_rate = pure_pursuit_yaw_rate(road, situation.pose, pursuit);
 
     // Return the same pair the FMU is asked for. A range closes as it
     // falls and an approach rate rises as it closes, so each is the
     // other's negative, and getting that backwards inside the FMU is one
     // of the things these tests are here to catch.
-    (
-        idm_accel(situation.speed, lead.range, -lead.range_rate, idm),
-        pure_pursuit_yaw_rate(road, situation.pose, pursuit),
-    )
+    (as_accel_cmd(accel), as_steer_cmd(yaw_rate))
 }
 
 /// Runs every situation through the packaged FMU and through the laws,
@@ -328,7 +347,7 @@ fn commands_over(
             assert_eq!(
                 from_fmu.1.to_bits(),
                 from_laws.1.to_bits(),
-                "yaw_rate_cmd: the FMU says {} where the laws say {}, {}\n{MAYBE_STALE}",
+                "steer_cmd: the FMU says {} where the laws say {}, {}\n{MAYBE_STALE}",
                 from_fmu.1,
                 from_laws.1,
                 situation.summary(),
@@ -699,16 +718,21 @@ fn a_road_the_fmu_cannot_build_halts_the_world_rather_than_panicking() {
 }
 
 #[test]
-fn a_parameter_the_laws_divide_by_halts_the_world_unless_it_is_positive() {
+fn a_parameter_used_for_division_halts_the_world_unless_it_is_positive() {
     // The model description states no bounds, because `fmi-export` 0.3.0
     // has no key for one, so a host in another tool can send any of these
-    // and nothing warns it off. Without the check they reach the laws as a
-    // NaN, which then spreads into every command the car goes on to make.
+    // and nothing warns it off. Unchecked they reach a law as a NaN or
+    // the normalizing as an infinity, and either spreads into every
+    // command the car goes on to make.
     for name in [
         "v0_speed_tgt",
         "a_accel_max",
         "b_decel_comfort",
         "lookahead",
+        "max_yaw_rate",
+        "plant_accel_max",
+        "plant_decel_max",
+        "plant_yaw_rate_max",
     ] {
         for given in [json!(0.0), json!(-1.0)] {
             let reason = refusal(&[(name, given.clone())]);
@@ -772,7 +796,7 @@ fn a_tuning_parameter_changed_between_steps_changes_the_command() {
 
     assert_eq!(
         at_this_speed.to_bits(),
-        idm_accel(
+        as_accel_cmd(idm_accel(
             SPEED,
             FREE_ROAD.range,
             0.0,
@@ -780,7 +804,7 @@ fn a_tuning_parameter_changed_between_steps_changes_the_command() {
                 v0_speed_tgt: SPEED,
                 ..IDM
             }
-        )
+        ))
         .to_bits(),
         "{MAYBE_STALE}"
     );
@@ -819,13 +843,13 @@ fn the_nearest_of_several_detections_is_the_one_followed() {
     let (accel_cmd, _) = fmu_commands(&mut fmu, &situation(scan));
     assert_eq!(
         accel_cmd.to_bits(),
-        idm_accel(SPEED, 18.0, 6.0, IDM).to_bits(),
+        as_accel_cmd(idm_accel(SPEED, 18.0, 6.0, IDM)).to_bits(),
         "followed something other than the nearest\n{MAYBE_STALE}"
     );
     for (range, approach_rate) in [(55.0, 1.0), (31.0, -2.0)] {
         assert_ne!(
             accel_cmd.to_bits(),
-            idm_accel(SPEED, range, approach_rate, IDM).to_bits(),
+            as_accel_cmd(idm_accel(SPEED, range, approach_rate, IDM)).to_bits(),
             "the assertion above cannot tell {range} m apart from the nearest"
         );
     }
@@ -837,12 +861,12 @@ fn the_nearest_of_several_detections_is_the_one_followed() {
     let (accel_cmd, _) = fmu_commands(&mut fmu, &situation(tied));
     assert_eq!(
         accel_cmd.to_bits(),
-        idm_accel(SPEED, 22.0, 3.0, IDM).to_bits(),
+        as_accel_cmd(idm_accel(SPEED, 22.0, 3.0, IDM)).to_bits(),
         "a tie went to the later slot\n{MAYBE_STALE}"
     );
     assert_ne!(
         accel_cmd.to_bits(),
-        idm_accel(SPEED, 22.0, -7.0, IDM).to_bits(),
+        as_accel_cmd(idm_accel(SPEED, 22.0, -7.0, IDM)).to_bits(),
         "the assertion above cannot tell the two tied slots apart"
     );
 }

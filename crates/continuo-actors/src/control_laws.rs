@@ -29,20 +29,20 @@ pub struct PurePursuitParams {
 impl PurePursuitParams {
     /// The set this project steers cars with, taking the lane to hold.
     ///
-    /// The lookahead and the gain are scenario tuning: an aim point a car
-    /// length or so ahead, turned toward briskly. `max_yaw_rate` is not
-    /// tuning at all. A steer command is a fraction of the plant's
-    /// [`DriveLimits::yaw_rate_max`], so a follower dividing by any other
-    /// number asks for a turn it will not get, and the two are one
-    /// constant here for that reason.
+    /// All four are scenario tuning: an aim point a car length or so
+    /// ahead, turned toward briskly, and a turn no harder than the car
+    /// itself does, which is where [`PlantLimits::yaw_rate_max`] comes in
+    /// as the default. Lower it and the follower holds a gentler turn,
+    /// since what a command is a fraction of is the plant's limit rather
+    /// than this one.
     ///
-    /// [`DriveLimits::yaw_rate_max`]: crate::DriveLimits::yaw_rate_max
+    /// [`PlantLimits::yaw_rate_max`]: crate::PlantLimits::yaw_rate_max
     pub const fn highway_car(lateral_tgt: f64) -> Self {
         PurePursuitParams {
             lateral_tgt,
             lookahead: 6.0,
             gain_yaw_rate: 1.5,
-            max_yaw_rate: crate::DriveLimits::highway_car().yaw_rate_max,
+            max_yaw_rate: crate::PlantLimits::highway_car().yaw_rate_max,
         }
     }
 }
@@ -263,6 +263,18 @@ pub fn idm_accel(speed: f64, gap: f64, approach_rate: f64, params: IdmParams) ->
     // road gives.
     (params.a_accel_max * (free_road - crowding * crowding))
         .clamp(-params.b_decel_comfort, params.a_accel_max)
+}
+
+/// The normalized command that asks a plant for `accel` m/s^2, against
+/// the limit its sign picks.
+pub fn accel_fraction(accel: f64, accel_max: f64, decel_max: f64) -> f64 {
+    let limit = if accel < 0.0 { decel_max } else { accel_max };
+    (accel / limit).clamp(-1.0, 1.0)
+}
+
+/// The normalized command that asks a plant for `yaw_rate` rad/s.
+pub fn steer_fraction(yaw_rate: f64, yaw_rate_max: f64) -> f64 {
+    (yaw_rate / yaw_rate_max).clamp(-1.0, 1.0)
 }
 
 #[cfg(test)]
@@ -586,6 +598,64 @@ mod tests {
         assert_eq!(
             idm_accel(20.0, -3.0, 0.0, idm_tuning()),
             -idm_tuning().b_decel_comfort
+        );
+    }
+
+    /// The limits every conversion below is written against, so a rate
+    /// here is a multiple of one rather than a number of its own.
+    const LIMITS: crate::PlantLimits = crate::PlantLimits::highway_car();
+
+    /// The share of a limit each rate below asks for.
+    const HALF: f64 = 0.5;
+
+    #[test]
+    fn a_command_is_the_fraction_of_the_limit_the_law_asked_for() {
+        // Half of each limit: accelerating, braking, and the turn each way.
+        assert_eq!(
+            accel_fraction(LIMITS.accel_max * HALF, LIMITS.accel_max, LIMITS.decel_max),
+            HALF
+        );
+        assert_eq!(
+            accel_fraction(-LIMITS.decel_max * HALF, LIMITS.accel_max, LIMITS.decel_max),
+            -HALF
+        );
+        assert_eq!(
+            steer_fraction(LIMITS.yaw_rate_max * HALF, LIMITS.yaw_rate_max),
+            HALF
+        );
+        assert_eq!(
+            steer_fraction(-LIMITS.yaw_rate_max * HALF, LIMITS.yaw_rate_max),
+            -HALF
+        );
+    }
+
+    #[test]
+    fn a_rate_past_the_limit_is_clamped_to_one() {
+        const PAST_IT: f64 = 3.0;
+
+        assert_eq!(
+            accel_fraction(
+                LIMITS.accel_max * PAST_IT,
+                LIMITS.accel_max,
+                LIMITS.decel_max
+            ),
+            1.0
+        );
+        assert_eq!(
+            accel_fraction(
+                -LIMITS.decel_max * PAST_IT,
+                LIMITS.accel_max,
+                LIMITS.decel_max
+            ),
+            -1.0
+        );
+        assert_eq!(
+            steer_fraction(LIMITS.yaw_rate_max * PAST_IT, LIMITS.yaw_rate_max),
+            1.0
+        );
+        assert_eq!(
+            steer_fraction(-LIMITS.yaw_rate_max * PAST_IT, LIMITS.yaw_rate_max),
+            -1.0
         );
     }
 

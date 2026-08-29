@@ -1083,9 +1083,11 @@ it got there, including the roads not taken.
   - **Both are normalized to [-1, 1] and carry no unit.** A pedal and a
     steering wheel travel between stops, and how much car is behind them is
     the car's business, so `DriveLimits` lives on the plant and a command
-    says only what fraction of one it wants. A controller naming an
-    acceleration would be asserting something about a vehicle it does not
-    own, and two cars given one command would have to behave alike.
+    says only what fraction of one it wants. *(Renamed `PlantLimits`
+    2026-08-28, since the type has to say whose limits it holds.)* A
+    controller naming an acceleration would be asserting something about a
+    vehicle it does not own, and two cars given one command would have to
+    behave alike.
     - The cost is that the two sides must agree on the limits with no way
       to check. A number with no unit has nothing to disagree about, so a
       controller working from a different `yaw_rate_max` steers to a rate
@@ -1271,3 +1273,43 @@ it got there, including the roads not taken.
     waits for its instant. Nothing accumulates in the gap because a car
     subscribes only to keys under its own actor name, and the siblings
     publishing them do not exist until it is admitted.
+
+- **2026-08-28**: **An FMU controller commands a normalized fraction of what
+  its plant can do, and the FMU is told the plant's limits.** Commands
+  became normalized when the plant took over acceleration, and the exported
+  FMU controller went on publishing an acceleration in m/s^2 and a yaw rate
+  in rad/s. Nothing failed, because no car runs on the FMU yet and the
+  comparison against the laws ran both sides through the same unconverted
+  numbers: the two agreed with each other while both disagreed with the
+  plant.
+  - **Converting a rate into a normalized command is a control law**, so
+    `accel_fraction` and `steer_fraction` sit beside the laws whose answers
+    they convert and both controllers call them, rather than the division
+    being written afresh at each publisher.
+  - **A control law's limits are separate from the plant's.** IDM
+    accelerates at 1.5 m/s^2 and brakes at 2.0 where the plant does 3.0 and
+    5.0, since a law's pair says what a driver finds comfortable rather than
+    what the car allows. So the FMU gains `plant_accel_max`,
+    `plant_decel_max` and `plant_yaw_rate_max` and divides by those, and
+    they are fixed rather than tunable: a car does not become a different
+    car between steps, and driving a different one is a different instance.
+    `DriveLimits` is renamed `PlantLimits` to say whose limits they are.
+  - **Steering keeps a clamp of its own beside them.** `max_yaw_rate`
+    defaults to the plant's rate limit, so a car steers as hard as it can,
+    but it could be tuned differently. The native controller takes its
+    car's `PlantLimits` for the same reason. The clamp still has to be
+    positive, now because `clamp` panics when the low bound is above the
+    high one and a panic through the C interface would take the host process
+    with it.
+  - **`yaw_rate_cmd` becomes `steer_cmd`**, which settles the contract as
+    well as the unit. An FMU's variable name is the payload path its output
+    publishes at, so under the old name a plant would have been handed
+    `{"yaw_rate_cmd": ...}` and refused to decode it.
+  - **The check is a round trip through the plant**, since a controller
+    dividing by the limits and a plant multiplying by them is the one place
+    the two meet: the plant's tests hand it what a law asked for and read
+    the rate back off it. What they cannot check is that a scenario handed
+    both halves of a car one `PlantLimits`, which is the cost the 2026-08-19
+    entry already records.
+  - `DEMO_WORLD_HASH` does not move. Every default is the number it was, and
+    nothing in the demo is an FMU yet.

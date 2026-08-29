@@ -42,7 +42,7 @@ pub use commands::{AccelCmd, SteerCmd};
 pub use controller::PathFollowController;
 pub use logger::PoseLogger;
 pub use path::Waypoints;
-pub use physics::{CarState, DriveLimits, UnicyclePhysics};
+pub use physics::{CarState, PlantLimits, UnicyclePhysics};
 pub use traffic_spawner::{
     DespawnTrafficRequest, SpawnTrafficRequest, TrafficSpawner, road_pose, straight_road,
     traffic_despawn_key, traffic_spawn_key,
@@ -70,7 +70,7 @@ pub fn accel_cmd_key(world_name: &str, actor_name: &str) -> KeyExpr {
         .expect("valid accel command key")
 }
 
-/// Key for the yaw rate commanded to an actor in `world`.
+/// Key for the steering commanded to an actor in `world`.
 pub fn steer_cmd_key(world_name: &str, actor_name: &str) -> KeyExpr {
     KeyExpr::new_rooted(format!("{world_name}/actor/{actor_name}/steer_cmd"))
         .expect("valid steer command key")

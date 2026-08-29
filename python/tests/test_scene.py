@@ -146,7 +146,7 @@ def test_commands_are_not_poses():
             key="continuo/demo/actor/ego/steer_cmd",
             publisher="ego/controller",
             seq=0,
-            payload={"yaw_rate_cmd": 0.0},
+            payload={"steer_cmd": 0.0},
         )
     )
 

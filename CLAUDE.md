@@ -199,7 +199,10 @@ messages, PR descriptions, console strings.
 
 - Every multi-statement block whose final expression is the return gets a
   blank line and a `// Return ...` comment before it, so an implicit return is
-  visible to a reader. Single-expression bodies are exempt.
+  visible to a reader. A body short enough to take in at a glance is exempt,
+  a single expression or a line or two before it, since nothing there hides
+  the tail expression and the comment would only push apart two lines that
+  read as one.
 - Test names are sentences stating what holds:
   `a_car_off_its_lane_turns_back_toward_it`, not `test_steering`.
 - `TODO(M<n>)` marks work waiting on a numbered milestone and

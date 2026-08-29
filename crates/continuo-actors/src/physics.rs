@@ -55,7 +55,7 @@ impl CarState {
 /// Braking has its own limit because a car brakes harder than it
 /// accelerates. One number for both would get one of them wrong.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct DriveLimits {
+pub struct PlantLimits {
     /// m/s^2 at a command of +1.
     pub accel_max: f64,
     /// m/s^2 at a command of -1, written positive.
@@ -64,10 +64,10 @@ pub struct DriveLimits {
     pub yaw_rate_max: f64,
 }
 
-impl DriveLimits {
+impl PlantLimits {
     /// The car this project drives, at ordinary passenger-car rates.
     pub const fn highway_car() -> Self {
-        DriveLimits {
+        PlantLimits {
             accel_max: 3.0,
             decel_max: 5.0,
             yaw_rate_max: 1.2,
@@ -80,7 +80,7 @@ impl DriveLimits {
 /// that put the car, with the speed it owns beside the pose. Publishes
 /// `z = 0` and yaw-only quaternions per the pose convention.
 ///
-/// It also owns [`DriveLimits`], which is what makes a normalized command
+/// It also owns [`PlantLimits`], which is what makes a normalized command
 /// mean something. A controller asks for a fraction and the plant decides
 /// what fraction of what, so the same command drives a hatchback and a
 /// truck differently without either controller knowing which it has.
@@ -93,7 +93,7 @@ impl DriveLimits {
 pub struct UnicyclePhysics {
     actor_name: String,
     period: SimDuration,
-    limits: DriveLimits,
+    limits: PlantLimits,
     x: f64,
     y: f64,
     yaw: f64,
@@ -106,7 +106,7 @@ impl UnicyclePhysics {
     pub fn new(
         actor_name: impl Into<String>,
         period: SimDuration,
-        limits: DriveLimits,
+        limits: PlantLimits,
         initial: CarState,
     ) -> Self {
         UnicyclePhysics {
@@ -269,6 +269,7 @@ mod tests {
     use continuo_core::{ComponentPath, Message};
 
     use super::*;
+    use crate::control_laws::{accel_fraction, steer_fraction};
 
     /// The period every test here steps at, and its length in seconds,
     /// which every expected value below is worked from.
@@ -285,7 +286,7 @@ mod tests {
     /// What a full command is worth on every car here, so an expected
     /// value is worked from a command and a limit rather than written
     /// down.
-    const LIMITS: DriveLimits = DriveLimits::highway_car();
+    const LIMITS: PlantLimits = PlantLimits::highway_car();
 
     /// Where a car starts where the test is not about where it starts:
     /// off the origin and pointing along `+x`, so a plant that lost the
@@ -546,6 +547,48 @@ mod tests {
             assert_eq!(state.speed, CRUISE_SPD, "speed moved on {command}");
             assert_eq!(state.orientation.yaw(), 0.0, "yaw moved on {command}");
             assert_eq!(state.position.y, start_pose().position.y);
+        }
+    }
+
+    #[test]
+    fn a_command_made_from_an_acceleration_drives_that_acceleration() {
+        // Both limits, half of each, and nothing at all, each converted
+        // to a command and driven for one step.
+        for wanted_accel in [
+            LIMITS.accel_max,
+            LIMITS.accel_max / 2.0,
+            0.0,
+            -LIMITS.decel_max / 2.0,
+            -LIMITS.decel_max,
+        ] {
+            let command = accel_fraction(wanted_accel, LIMITS.accel_max, LIMITS.decel_max);
+            let state = run(&mut plant(CRUISE_SPD), 1, vec![accel(1, command)]);
+            let gained_spd = state.speed - CRUISE_SPD;
+            assert!(
+                (gained_spd - wanted_accel * STEP_SECS).abs() < 1e-9,
+                "{wanted_accel} m/s^2 asked for as {command} and arrived as {}",
+                gained_spd / STEP_SECS
+            );
+        }
+    }
+
+    #[test]
+    fn a_command_made_from_a_yaw_rate_turns_at_that_yaw_rate() {
+        for wanted_yaw_rate in [
+            LIMITS.yaw_rate_max,
+            LIMITS.yaw_rate_max / 2.0,
+            0.0,
+            -LIMITS.yaw_rate_max / 2.0,
+            -LIMITS.yaw_rate_max,
+        ] {
+            let command = steer_fraction(wanted_yaw_rate, LIMITS.yaw_rate_max);
+            let state = run(&mut plant(CRUISE_SPD), 1, vec![steer(1, command)]);
+            let turned_angle = wanted_yaw_rate * STEP_SECS;
+            assert!(
+                (state.orientation.yaw() - turned_angle).abs() < 1e-9,
+                "{wanted_yaw_rate} rad/s asked for as {command} and arrived at {}",
+                state.orientation.yaw()
+            );
         }
     }
 
