@@ -1313,3 +1313,14 @@ it got there, including the roads not taken.
     entry already records.
   - `DEMO_WORLD_HASH` does not move. Every default is the number it was, and
     nothing in the demo is an FMU yet.
+
+- **2026-08-29**: **`Waypoints::frenet` measures its lateral across the
+  winning segment rather than to the closest point on the path.** The
+  two are the same distance wherever a point projects inside a segment,
+  and differ only past the end of an open road, where the arc length
+  stops at the end and the lateral goes on saying which side of the
+  road's line the point is on. Measuring to the end point instead would
+  read a car that has run out of road as having drifted several lanes
+  out of its own, and which lane a car is in is the question the pair
+  exists to answer. `project` is now the arc length half of it, so the
+  two cannot disagree about which segment won.

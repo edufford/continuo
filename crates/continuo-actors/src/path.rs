@@ -211,11 +211,26 @@ impl Waypoints {
         libm::atan2(b.1 - a.1, b.0 - a.0)
     }
 
-    /// Arc length of the closest point on the path to `(x, y)`.
-    /// Deterministic: ties resolve to the earliest segment.
-    pub fn project(&self, x: f64, y: f64) -> f64 {
+    /// Where `(x, y)` sits on the path: the arc length of the closest
+    /// point on it, and how far to the **left** of the path the point
+    /// lies. Deterministic: ties resolve to the earliest segment.
+    ///
+    /// This is the Frenet `(s, d)` pair that
+    /// [`point_at_offset`](Self::point_at_offset()) resolves back into
+    /// world coordinates, so a point built at an offset comes back
+    /// carrying it. Both halves are what let a lane be a number rather
+    /// than a curve: two cars share a lane when their `d` agree, and one
+    /// is ahead of the other when its `s` is larger.
+    ///
+    /// `d` is measured across the winning segment rather than to the
+    /// closest point, which is the same distance anywhere the two agree
+    /// and differs only past the end of an open road. There `s` stops at
+    /// the end and `d` goes on saying which side of the road's line the
+    /// point is, so a car that has driven off the end reads as still in
+    /// its lane instead of as having drifted a car's length out of it.
+    pub fn frenet(&self, x: f64, y: f64) -> (f64, f64) {
         // Point-to-segment projection, evaluated per segment, keeping the
-        // closest hit. For each segment a→b:
+        // closest hit. For each segment a -> b:
         //   (dx, dy)  segment direction vector b - a
         //   len2      its squared length (avoids a sqrt; zero for
         //             degenerate duplicate points)
@@ -227,9 +242,17 @@ impl Waypoints {
         //   d2        squared distance from the query point to (px, py)
         //             (squared distances compare identically to distances,
         //             so no sqrt is needed)
+        //   cross     the 2D cross product of the direction with p - a,
+        //             which is the signed area of the parallelogram they
+        //             span, so dividing by the segment's length leaves
+        //             the signed distance from its line, positive to the
+        //             left. This is the only sqrt any of it needs, and
+        //             the winner alone pays it.
         // The winning segment converts t back to arc length via its
-        // cumulative start offset.
+        // cumulative start offset. A degenerate segment has no direction
+        // to be left of, so its lateral is zero.
         let mut best_s = 0.0;
+        let mut best_lateral = 0.0;
         let mut best_d2 = f64::INFINITY;
         for i in 0..self.num_segments() {
             let a = self.points[i];
@@ -248,11 +271,24 @@ impl Waypoints {
             if d2 < best_d2 {
                 best_d2 = d2;
                 best_s = self.cumulative[i] + (self.cumulative[i + 1] - self.cumulative[i]) * t;
+                best_lateral = if len2 > 0.0 {
+                    (dx * (y - a.1) - dy * (x - a.0)) / len2.sqrt()
+                } else {
+                    0.0
+                };
             }
         }
 
-        // Return the arc length of the closest point found.
-        best_s
+        // Return the arc length of the closest point found, and which
+        // side of the path the query point is on.
+        (best_s, best_lateral)
+    }
+
+    /// Arc length of the closest point on the path to `(x, y)`, for a
+    /// caller with no use for the lateral half of
+    /// [`frenet`](Self::frenet()).
+    pub fn project(&self, x: f64, y: f64) -> f64 {
+        self.frenet(x, y).0
     }
 }
 
@@ -357,6 +393,49 @@ mod tests {
         // A point exactly on a corner projects to that corner.
         let s = p.project(0.0, 10.0);
         assert!((s - 30.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn frenet_recovers_both_arc_length_and_signed_lateral() {
+        // A bend, so nothing here passes by reading `y` back out as if
+        // the road were the x axis.
+        let road = Waypoints::build_open(vec![(0.0, 0.0), (100.0, 0.0), (100.0, 50.0)]);
+
+        // Left of the way the road runs is positive, right negative.
+        let (s, lateral) = road.frenet(30.0, 5.0);
+        assert!((s - 30.0).abs() < 1e-12 && (lateral - 5.0).abs() < 1e-12);
+        let (s, lateral) = road.frenet(30.0, -5.0);
+        assert!((s - 30.0).abs() < 1e-12 && (lateral + 5.0).abs() < 1e-12);
+        // The second segment runs +y, whose left is -x, so the sign
+        // follows the road rather than the axes.
+        let (s, lateral) = road.frenet(96.0, 20.0);
+        assert!((s - 120.0).abs() < 1e-12 && (lateral - 4.0).abs() < 1e-12);
+
+        // The pair `point_at_offset` resolves, so a point built at an
+        // offset comes back carrying it. The last of the three is past
+        // the bend, where the two segments' offsets point different ways.
+        for (s, lateral) in [(10.0, 3.5), (70.0, -3.5), (130.0, 3.5)] {
+            let point = road.point_at_offset(s, lateral);
+            let (back_s, back_lateral) = road.frenet(point.x, point.y);
+            assert!((back_s - s).abs() < 1e-12, "arc length {back_s} for {s}");
+            assert!(
+                (back_lateral - lateral).abs() < 1e-12,
+                "lateral {back_lateral} for {lateral}"
+            );
+        }
+
+        // Off the end of the road, the arc length stops and the lateral
+        // goes on measuring across it. The distance to the end point is
+        // 20 m, and answering with that would read as a car four lanes
+        // over rather than as one that has run out of road.
+        let (s, lateral) = road.frenet(100.0, 70.0);
+        assert!((s - 150.0).abs() < 1e-12 && lateral.abs() < 1e-12);
+
+        // On a loop the same rule puts the inside on the left, since
+        // `square` runs counter-clockwise.
+        let (_, outside) = square().frenet(7.0, -1.0);
+        let (_, inside) = square().frenet(7.0, 1.0);
+        assert!((outside + 1.0).abs() < 1e-12 && (inside - 1.0).abs() < 1e-12);
     }
 
     /// A point as the bits it is made of, so the comparisons below are
