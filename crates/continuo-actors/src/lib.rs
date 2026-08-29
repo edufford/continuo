@@ -1,6 +1,6 @@
 //! Sample actor components for continuo worlds: a waypoint path, a
-//! path-following controller, unicycle physics, a pose logger, and a
-//! traffic spawner.
+//! path-following controller, unicycle physics, a forward-looking radar,
+//! a pose logger, and a traffic spawner.
 //!
 //! A controller commands and a plant integrates, and they meet on the
 //! messages in [`commands`]: one per axis, normalized, so different
@@ -15,6 +15,14 @@
 //! composite `[controller, physics]`, where the controller runs at the
 //! slower period and intra-composite same-instant delivery feeds its
 //! command to the physics within the same step.
+//!
+//! [`RadarSensor`] is what lets one car follow another. It reads every
+//! pose in the world and publishes what is ahead of its own car in its
+//! own lane, as ranges and closing rates rather than as positions, so a
+//! follower is told the two quantities its law wants and nothing about
+//! where anybody is. A car that follows carries one ahead of its
+//! controller in the composite, which puts a scan in front of the
+//! controller in the same instant it was made.
 //!
 //! [`TrafficSpawner`] is what makes a world of those cars *dynamic*. It
 //! watches poses and publishes requests to add and remove cars, deciding
@@ -34,6 +42,7 @@ mod controller;
 mod logger;
 mod path;
 mod physics;
+mod radar;
 mod traffic_spawner;
 
 use continuo_core::KeyExpr;
@@ -43,6 +52,7 @@ pub use controller::PathFollowController;
 pub use logger::PoseLogger;
 pub use path::Waypoints;
 pub use physics::{CarState, PlantLimits, UnicyclePhysics};
+pub use radar::{RadarScan, RadarSensor};
 pub use traffic_spawner::{
     DespawnTrafficRequest, SpawnTrafficRequest, TrafficSpawner, road_pose, straight_road,
     traffic_despawn_key, traffic_spawn_key,
@@ -59,6 +69,20 @@ pub use traffic_spawner::{
 /// here, so the cap and the array are one number.
 pub const MAX_DETECTIONS: usize = 64;
 
+/// How long a car is, nose to tail, in meters.
+///
+/// One number for every car, because nothing publishes an extent: a
+/// vehicle reaches the wire as a pose and a speed, so how big it is
+/// lives here instead. Anything measuring between two cars measures
+/// with it, starting with a radar's range to the car ahead.
+///
+/// It moves together with `CAR_LENGTH` in
+/// `python/continuo_viz/render.py`, which draws the body this
+/// measures. Two constants rather than one because the viewer reads a
+/// recorded log rather than this crate, and PLAN.md's "World and map"
+/// work is where an extent starts traveling and both of them go.
+pub const CAR_LENGTH: f64 = 4.5;
+
 /// Key for an actor's pose in `world`.
 pub fn pose_key(world_name: &str, actor_name: &str) -> KeyExpr {
     KeyExpr::new_rooted(format!("{world_name}/actor/{actor_name}/pose")).expect("valid pose key")
@@ -74,4 +98,9 @@ pub fn accel_cmd_key(world_name: &str, actor_name: &str) -> KeyExpr {
 pub fn steer_cmd_key(world_name: &str, actor_name: &str) -> KeyExpr {
     KeyExpr::new_rooted(format!("{world_name}/actor/{actor_name}/steer_cmd"))
         .expect("valid steer command key")
+}
+
+/// Key for what an actor's radar sees in `world`.
+pub fn radar_key(world_name: &str, actor_name: &str) -> KeyExpr {
+    KeyExpr::new_rooted(format!("{world_name}/actor/{actor_name}/radar")).expect("valid radar key")
 }

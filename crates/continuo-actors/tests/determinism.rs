@@ -4,7 +4,9 @@
 
 use std::sync::Arc;
 
-use continuo_actors::{CarState, PathFollowController, PlantLimits, UnicyclePhysics, Waypoints};
+use continuo_actors::{
+    CarState, PathFollowController, PlantLimits, RadarScan, RadarSensor, UnicyclePhysics, Waypoints,
+};
 use continuo_conductor::record::LogEvent;
 use continuo_conductor::{Conductor, ConductorConfig, EventLog, Pacing, Recorder};
 use continuo_core::{HashFnv1a64, Pose, Quat, SimDuration, SimTime};
@@ -17,6 +19,15 @@ const CAR_SPEED: f64 = 8.0;
 /// and the physics alike for the reason `traffic_world` gives: a
 /// normalized command means whatever the plant says it means.
 const CAR_LIMITS: PlantLimits = PlantLimits::highway_car();
+
+/// How far each car's radar sees, and how far off the path a car can be
+/// and still count as sharing it.
+///
+/// The three cars are spread evenly around a loop of about 205 m, so at
+/// this range each of them sees the car in front and not the one beyond
+/// that.
+const RADAR_RANGE: f64 = 120.0;
+const RADAR_LANE_TOLERANCE: f64 = 1.75;
 
 fn run_world(sim_seconds: i64, world_seed: u64) -> EventLog {
     let config = ConductorConfig {
@@ -36,18 +47,36 @@ fn run_world(sim_seconds: i64, world_seed: u64) -> EventLog {
         Conductor::new(config, transport).expect("free-run config is always accepted");
     conductor.add_tick_callback(recorder.tick_callback());
 
-    // Each car is registered as a composite `carN = [controller, physics]`.
-    // Registration order is declared sibling order, which fixes both the
-    // execution order at shared instants and the visibility rule's "earlier
-    // sibling": the controller steps first and its command reaches the
-    // physics in the same step; the physics' pose reaches the controller at
-    // its next step.
+    // Each car is registered as a composite
+    // `carN = [radar, controller, physics]`. Registration order is
+    // declared sibling order, which fixes both the execution order at
+    // shared instants and the visibility rule's "earlier sibling": the
+    // controller steps after the radar and before the physics, so its
+    // command reaches the physics in the same step, and the physics'
+    // pose reaches both of the others at their next step.
+    //
+    // Nothing reads the scans. The radars are aboard so that two runs
+    // have them to compare, and so that the loop's wrap around its own
+    // seam is exercised under the conductor rather than only in a unit
+    // test.
     for (i, car) in ["car1", "car2", "car3"].into_iter().enumerate() {
         let s0 = path.total_length() * i as f64 / 3.0;
         let initial_pose = Pose {
             position: path.point_at(s0),
             orientation: Quat::from_yaw(path.heading_at(s0)),
         };
+        conductor
+            .add_component_at_start(
+                car,
+                Box::new(RadarSensor::new(
+                    car,
+                    path.clone(),
+                    SimDuration::from_millis(100), // scan period
+                    RADAR_RANGE,
+                    RADAR_LANE_TOLERANCE,
+                )),
+            )
+            .expect("radar path is unique per car");
         conductor
             .add_component_at_start(
                 car,
@@ -181,4 +210,46 @@ fn cars_actually_move_around_the_loop() {
     .sqrt();
     // At CAR_SPEED for 5 s along an oval: it must have gone somewhere.
     assert!(dist > 5.0, "car1 barely moved: {dist} m");
+}
+
+/// Every scan car1's radar published, in the order it published them.
+fn car1_scans(log: &EventLog) -> Vec<RadarScan> {
+    // Return the stream decoded, since what is compared below is what
+    // the radar saw rather than how its bytes were spelled.
+    log.events
+        .iter()
+        .filter_map(|e| match e {
+            LogEvent::Msg(m) if m.key.contains("/car1/radar") => {
+                Some(serde_json::from_str(m.payload.get()).expect("radar payloads deserialize"))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn two_identical_radar_runs_fingerprint_identically() {
+    let first = car1_scans(&run_world(5, 42));
+    let second = car1_scans(&run_world(5, 42));
+    assert_eq!(first, second, "car1 scanned a different road");
+    assert!(!first.is_empty(), "expected a scan stream");
+
+    // And it saw something, since a radar reporting an empty road
+    // forever would compare equal to itself just as well. The car in
+    // front is in range and the one beyond it is not, and all three hold
+    // the speed they were built with, so no gap is closing.
+    for scan in &first {
+        assert_eq!(
+            scan.detections.len(),
+            1,
+            "expected the car in front: {scan:?}"
+        );
+        let found = scan.detections[0];
+        assert!(
+            found.range > 0.0 && found.range < RADAR_RANGE,
+            "the car in front is {} m away",
+            found.range
+        );
+        assert_eq!(found.range_rate, 0.0, "nobody here changes speed");
+    }
 }

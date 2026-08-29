@@ -23,11 +23,16 @@ from .scene import Actor, Scene
 
 # Nominal car footprint in meters, length by width.
 #
+# `CAR_LENGTH` must move together with the constant of the same name in
+# `crates/continuo-actors/src/lib.rs`, where it is the body a radar
+# measures its range to. Two constants rather than one because the viewer
+# reads a recorded log rather than that crate.
+#
 # TODO(PLAN "World and map"): the simulation does not publish extents. A
 # pose is a position and an orientation, so every drawn body is this one
 # guess. The deferred `continuo/{world}/map` and its scene graph are where
-# a real size comes from; until then a lorry and a hatchback are the same
-# rectangle.
+# a real size comes from; until then a semi truck and a compact car are
+# the same rectangle.
 #
 # Extents are also what occlusion would need, whenever a world has anything to
 # occlude. Poses carry a `z`, but `PoseTopDown` drops it because physics
