@@ -1271,3 +1271,52 @@ it got there, including the roads not taken.
     waits for its instant. Nothing accumulates in the gap because a car
     subscribes only to keys under its own actor name, and the siblings
     publishing them do not exist until it is admitted.
+
+- **2026-08-28**: **A controller asks for a fraction of what its plant
+  can do, and the FMU is told what that is.** Commands became normalized
+  when the plant took over acceleration, and the exported controller went
+  on publishing an acceleration in m/s^2 and a yaw rate in rad/s. Nothing
+  failed: no car runs on the FMU yet, and the comparison against the laws
+  runs both sides through the same unconverted numbers, so the two agreed
+  with each other while both disagreed with the plant. Wired into a car, a
+  rate of 1 m/s^2 would have arrived as 3, and anything past 1 as the
+  whole pedal.
+  - **Normalizing is a control law**, so `accel_fraction` and
+    `steer_fraction` sit beside the laws whose answers they convert, and
+    the native controller and the FMU call the same two. Writing the
+    division at each publisher instead is what that module exists to
+    avoid: one implementation rather than two kept in step by hand.
+  - **A law's limits are not the plant's**, which is why the FMU gains
+    `plant_accel_max` and `plant_decel_max` and steering gains nothing.
+    IDM accelerates at 1.5 m/s^2 and brakes at 2.0 against a plant whose
+    limits are 3.0 and 5.0, because a law's pair says what a driver finds
+    comfortable rather than what the plant allows, so a fraction taken
+    against them would send a full brake pedal where the law asked for
+    less than half of one. Pure pursuit's `max_yaw_rate` is the plant's
+    `yaw_rate_max` already, by construction and for the reason its own
+    tuning gives, so one number is both where the law stops and what the
+    command is a fraction of.
+  - **Those two are fixed rather than tunable.** A driver changes their
+    mind between steps, which is what the law parameters are tunable for.
+    A car does not become a different car, and driving a different one is
+    a different instance, which membership already is.
+  - **`yaw_rate_cmd` becomes `steer_cmd`**, which settles the contract as
+    well as the unit. An FMU's variable name is the payload path its
+    output publishes at, so under the old name a plant would have been
+    handed `{"yaw_rate_cmd": ...}` and refused to decode it, and a mapping
+    would have carried a pointer saying what the name should have said.
+  - **`max_yaw_rate` now has to be positive.** As a clamp a zero is a
+    harmless zero command; as a divisor it is a NaN reaching a car. It
+    joins the parameters the FMU refuses at initialization, beside the
+    two new ones.
+  - **The check is a round trip through the plant.** A controller dividing
+    by the limits and a plant multiplying by them is the one place the two
+    halves meet, so
+    `a_command_made_from_an_acceleration_drives_that_acceleration` and its
+    steering twin hand a plant what a law asked for and read the rate back
+    off it. A sign or a limit taken for the other fails there. What they
+    cannot check is that a scenario handed both halves of a car one
+    `DriveLimits`, which is the cost the 2026-08-19 entry already records.
+  - `DEMO_WORLD_HASH` does not move. The native controller runs the
+    division it ran before, under a name now, and nothing in the demo is
+    an FMU yet.

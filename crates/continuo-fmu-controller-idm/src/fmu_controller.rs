@@ -8,9 +8,10 @@
 //! because somebody keeps them in step.
 
 use continuo_actors::control_laws::{
-    FREE_ROAD, IdmParams, PurePursuitParams, idm_accel, nearest_detection, pure_pursuit_yaw_rate,
+    FREE_ROAD, IdmParams, PurePursuitParams, accel_fraction, idm_accel, nearest_detection,
+    pure_pursuit_yaw_rate, steer_fraction,
 };
-use continuo_actors::{MAX_DETECTIONS, Waypoints};
+use continuo_actors::{DriveLimits, MAX_DETECTIONS, Waypoints};
 use continuo_core::{Detection, Pose, Quat, Vec3};
 use fmi::fmi3::{Fmi3Error, Fmi3Res};
 use fmi_export::FmuModel;
@@ -46,7 +47,10 @@ const DEFAULT_IDM: IdmParams = IdmParams::highway_car(DEFAULT_TARGET_SPEED);
 /// holding the road's own centerline.
 const DEFAULT_PURSUIT: PurePursuitParams = PurePursuitParams::highway_car(0.0);
 
-/// A parameter the laws divide by, checked before they see it.
+/// What the car's limits hold until a host sets them.
+const DEFAULT_LIMITS: DriveLimits = DriveLimits::highway_car();
+
+/// A parameter something divides by, checked before it gets there.
 ///
 /// Rejects a zero, a negative, an infinity and a NaN alike, since what
 /// they have in common is that no answer computed from them means
@@ -161,7 +165,14 @@ pub struct FmuController {
     #[variable(causality = Parameter, variability = Tunable, start = Self::default().b_decel_comfort)]
     b_decel_comfort: f64,
 
-    /// Acceleration to hold, m/s^2.
+    /// The car's acceleration at a full command of +1.0, in m/s^2.
+    #[variable(causality = Parameter, variability = Fixed, start = Self::default().plant_accel_max)]
+    plant_accel_max: f64,
+    /// The car's deceleration at a full command of -1.0, in m/s^2 and positive.
+    #[variable(causality = Parameter, variability = Fixed, start = Self::default().plant_decel_max)]
+    plant_decel_max: f64,
+
+    /// The normalized acceleration command, -1.0 to +1.0, no unit.
     ///
     /// `initial = Calculated`, since it is worked out from the inputs
     /// rather than begun at anything. Saying so is what lists it under
@@ -170,9 +181,9 @@ pub struct FmuController {
     /// checking importer refuses to load.
     #[variable(causality = Output, initial = Calculated)]
     accel_cmd: f64,
-    /// Yaw rate to hold, rad/s, positive counter-clockwise.
+    /// The normalized steering command, -1.0 for full right lock.
     #[variable(causality = Output, initial = Calculated)]
-    yaw_rate_cmd: f64,
+    steer_cmd: f64,
 
     /// The road, built from the parameters above and kept.
     ///
@@ -215,8 +226,10 @@ impl Default for FmuController {
             s0_gap_min: DEFAULT_IDM.s0_gap_min,
             a_accel_max: DEFAULT_IDM.a_accel_max,
             b_decel_comfort: DEFAULT_IDM.b_decel_comfort,
+            plant_accel_max: DEFAULT_LIMITS.accel_max,
+            plant_decel_max: DEFAULT_LIMITS.decel_max,
             accel_cmd: 0.0,
-            yaw_rate_cmd: 0.0,
+            steer_cmd: 0.0,
             road: None,
         }
     }
@@ -288,14 +301,15 @@ impl FmuController {
     /// would take the change and act on the old value, and checking once
     /// would let a new zero through.
     fn pursuit_params(&self) -> Result<PurePursuitParams, BadInput> {
-        // Return the set, once the aim point is somewhere ahead. An aim
-        // point on top of the follower gives no direction to steer
-        // toward, and one behind it gives the wrong one.
+        // Return the set, once the two it cannot work without are
+        // positive: an aim point at or behind the follower steers it the
+        // wrong way, and a hardest turn of nothing divides a command to
+        // an infinity.
         Ok(PurePursuitParams {
             lateral_tgt: self.lateral_tgt,
             lookahead: require_positive("lookahead", self.lookahead)?,
             gain_yaw_rate: self.gain_yaw_rate,
-            max_yaw_rate: self.max_yaw_rate,
+            max_yaw_rate: require_positive("max_yaw_rate", self.max_yaw_rate)?,
         })
     }
 
@@ -313,11 +327,12 @@ impl FmuController {
         })
     }
 
-    /// What the laws command, given the road they command along.
+    /// What to ask the plant for, given the road the laws command along.
     ///
-    /// Every number here comes from [`continuo_actors::control_laws`].
-    /// What this adds is the translation either side of it: a pose out of
-    /// seven scalars, and a scan out of two arrays.
+    /// Every number here comes from [`continuo_actors::control_laws`]
+    /// including the normalization. What this adds is the type conversions
+    /// between them: a pose out of seven scalars, and a scan out of two
+    /// detection arrays.
     fn calculate_commands(&self, road: &Waypoints) -> Result<(f64, f64), BadInput> {
         let pose = Pose {
             position: Vec3::new(self.position_x, self.position_y, 0.0),
@@ -328,7 +343,9 @@ impl FmuController {
                 z: self.orientation_z,
             },
         };
-        let yaw_rate_cmd = pure_pursuit_yaw_rate(road, pose, self.pursuit_params()?);
+        let pursuit_params = self.pursuit_params()?;
+        let yaw_rate = pure_pursuit_yaw_rate(road, pose, pursuit_params);
+        let steer_cmd = steer_fraction(yaw_rate, pursuit_params.max_yaw_rate);
 
         // The two arrays back into the detections they were taken from,
         // which is the shape the law reads. Padding loses to anything
@@ -340,10 +357,16 @@ impl FmuController {
         let lead = nearest_detection(&scan);
         // A range closes as it falls and an approach rate rises as it
         // closes, so each is the other's negative.
-        let accel_cmd = idm_accel(self.speed, lead.range, -lead.range_rate, self.idm_params()?);
+        let accel = idm_accel(self.speed, lead.range, -lead.range_rate, self.idm_params()?);
 
-        // Return what to hold: how hard to push, and how fast to turn.
-        Ok((accel_cmd, yaw_rate_cmd))
+        let accel_cmd = accel_fraction(
+            accel,
+            require_positive("plant_accel_max", self.plant_accel_max)?,
+            require_positive("plant_decel_max", self.plant_decel_max)?,
+        );
+
+        // Return what to command: normalized acceleration and steering.
+        Ok((accel_cmd, steer_cmd))
     }
 }
 
@@ -384,12 +407,12 @@ impl UserModel for FmuController {
         let Some(road) = self.road.as_ref() else {
             return Ok(Fmi3Res::OK);
         };
-        let (accel_cmd, yaw_rate_cmd) = self
+        let (accel_cmd, steer_cmd) = self
             .calculate_commands(road)
             .map_err(|bad| self.refuse(context, bad))?;
 
         self.accel_cmd = accel_cmd;
-        self.yaw_rate_cmd = yaw_rate_cmd;
+        self.steer_cmd = steer_cmd;
 
         Ok(Fmi3Res::OK)
     }
@@ -549,7 +572,7 @@ mod tests {
     }
 
     #[test]
-    fn a_parameter_the_laws_divide_by_is_refused_unless_it_is_positive() {
+    fn a_parameter_used_for_division_is_refused_unless_it_is_positive() {
         let road = Waypoints::build_straight((0.0, 0.0), (100.0, 0.0));
 
         // A host in another tool can send any of these, and the model
@@ -571,6 +594,19 @@ mod tests {
             let mut aim_point = controller_given(&road);
             aim_point.lookahead = given;
             check_refusal(&aim_point, &road, "lookahead", given);
+
+            // The three the normalizing divides by
+            let mut turn = controller_given(&road);
+            turn.max_yaw_rate = given;
+            check_refusal(&turn, &road, "max_yaw_rate", given);
+
+            let mut plant_accel = controller_given(&road);
+            plant_accel.plant_accel_max = given;
+            check_refusal(&plant_accel, &road, "plant_accel_max", given);
+
+            let mut plant_braking = controller_given(&road);
+            plant_braking.plant_decel_max = given;
+            check_refusal(&plant_braking, &road, "plant_decel_max", given);
         }
     }
 
@@ -601,14 +637,47 @@ mod tests {
     }
 
     #[test]
-    fn every_parameter_the_laws_divide_by_is_checked() {
-        // The commands come out finite for the defaults, so the check
-        // above is refusing what is wrong rather than everything.
+    fn the_default_parameters_pass_every_check() {
+        // The commands come out finite for the defaults, so the checks
+        // above should not refuse them.
         let road = Waypoints::build_straight((0.0, 0.0), (100.0, 0.0));
-        let (accel_cmd, yaw_rate_cmd) = controller_given(&road)
+        let (accel_cmd, steer_cmd) = controller_given(&road)
             .calculate_commands(&road)
             .expect("the defaults are a set the laws can run on");
-        assert!(accel_cmd.is_finite() && yaw_rate_cmd.is_finite());
+        assert!(accel_cmd.is_finite() && steer_cmd.is_finite());
+    }
+
+    #[test]
+    fn the_commands_are_fractions_of_the_limits_rather_than_rates() {
+        const HALF_A_PEDAL: f64 = 0.5;
+
+        let road = Waypoints::build_straight((0.0, 0.0), (1000.0, 0.0));
+        let mut controller = controller_given(&road);
+        // At rest with nothing ahead, the law asks for exactly its own
+        // `a_accel_max`, so a `plant_accel_max` of twice that has to be
+        // asked for half a pedal.
+        controller.speed = 0.0;
+        controller.plant_accel_max = DEFAULT_IDM.a_accel_max / HALF_A_PEDAL;
+
+        let (accel_cmd, _) = controller
+            .calculate_commands(&road)
+            .expect("the defaults are a set the laws can run on");
+        assert!(
+            (accel_cmd - HALF_A_PEDAL).abs() < 1e-12,
+            "a law at its limit against twice it: {accel_cmd}"
+        );
+
+        // Twice `plant_accel_max` again for the same rate, which is what
+        // names the divisor: a conversion taking the law's own limit
+        // instead would answer 1.0 both times.
+        controller.plant_accel_max *= 2.0;
+        let (on_twice_the_limit, _) = controller
+            .calculate_commands(&road)
+            .expect("the defaults are a set the laws can run on");
+        assert!(
+            (on_twice_the_limit - HALF_A_PEDAL / 2.0).abs() < 1e-12,
+            "{on_twice_the_limit}"
+        );
     }
 
     #[test]
@@ -635,7 +704,7 @@ mod tests {
         controller.range[SLOT] = GAP;
         controller.range_rate[SLOT] = -CLOSING_AT;
 
-        let (accel_cmd, yaw_rate_cmd) = controller
+        let (accel_cmd, steer_cmd) = controller
             .calculate_commands(&road)
             .expect("the defaults are a set the laws can run on");
 
@@ -648,22 +717,34 @@ mod tests {
                 z: ORIENTATION.1,
             },
         };
-        let expected_yaw_rate = pure_pursuit_yaw_rate(
-            &road,
-            pose,
-            PurePursuitParams {
-                lateral_tgt: LANE,
-                ..DEFAULT_PURSUIT
-            },
+        let expected_steer = steer_fraction(
+            pure_pursuit_yaw_rate(
+                &road,
+                pose,
+                PurePursuitParams {
+                    lateral_tgt: LANE,
+                    ..DEFAULT_PURSUIT
+                },
+            ),
+            DEFAULT_PURSUIT.max_yaw_rate,
         );
-        let expected_accel = idm_accel(SPEED, GAP, CLOSING_AT, DEFAULT_IDM);
+        let expected_accel = accel_fraction(
+            idm_accel(SPEED, GAP, CLOSING_AT, DEFAULT_IDM),
+            DEFAULT_LIMITS.accel_max,
+            DEFAULT_LIMITS.decel_max,
+        );
 
-        assert_eq!(yaw_rate_cmd.to_bits(), expected_yaw_rate.to_bits());
+        assert_eq!(steer_cmd.to_bits(), expected_steer.to_bits());
         assert_eq!(accel_cmd.to_bits(), expected_accel.to_bits());
         // The approach rate is the range rate's negative, so a lead
         // closing must not read as one pulling away.
         assert!(
-            accel_cmd < idm_accel(SPEED, GAP, -CLOSING_AT, DEFAULT_IDM),
+            accel_cmd
+                < accel_fraction(
+                    idm_accel(SPEED, GAP, -CLOSING_AT, DEFAULT_IDM),
+                    DEFAULT_LIMITS.accel_max,
+                    DEFAULT_LIMITS.decel_max,
+                ),
             "a closing lead should be braked for harder than a receding one"
         );
     }
@@ -685,7 +766,12 @@ mod tests {
         // the answer is the one an open road gives at this speed.
         assert_eq!(
             accel_cmd.to_bits(),
-            idm_accel(speed, FREE_ROAD.range, 0.0, DEFAULT_IDM).to_bits()
+            accel_fraction(
+                idm_accel(speed, FREE_ROAD.range, 0.0, DEFAULT_IDM),
+                DEFAULT_LIMITS.accel_max,
+                DEFAULT_LIMITS.decel_max,
+            )
+            .to_bits()
         );
         assert!(accel_cmd > 0.0, "below its target it should accelerate");
     }
