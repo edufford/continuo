@@ -646,7 +646,8 @@ mod tests {
             let (_, worst) = largest_step(road, center, radius);
             assert!(
                 worst <= moved + 1e-9,
-                "offset jumped {worst} at {what}, r = {radius},                  where the point moved {moved}"
+                "offset jumped {worst} at {what}, r = {radius}, \
+                 where the point moved {moved}"
             );
         };
 
