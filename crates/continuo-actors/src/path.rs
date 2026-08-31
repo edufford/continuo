@@ -284,10 +284,9 @@ impl Waypoints {
         (best_s, best_lateral)
     }
 
-    /// Arc length of the closest point on the path to `(x, y)`, for a
-    /// caller with no use for the lateral half of
-    /// [`frenet`](Self::frenet()).
-    pub fn project(&self, x: f64, y: f64) -> f64 {
+    /// How far along the path `(x, y)` sits, for a caller with no use
+    /// for the lateral half of [`frenet`](Self::frenet()).
+    pub fn project_arc_length(&self, x: f64, y: f64) -> f64 {
         self.frenet(x, y).0
     }
 }
@@ -337,13 +336,13 @@ mod tests {
         //   bottom (0,0)→(10,0) s=[0,10), right (10,0)→(10,10) s=[10,20),
         //   top (10,10)→(0,10) s=[20,30), left (0,10)→(0,0) s=[30,40).
         let p = square();
-        let s = p.project(7.0, -1.0); // below the bottom edge
+        let s = p.project_arc_length(7.0, -1.0); // below the bottom edge
         assert!((s - 7.0).abs() < 1e-12);
-        let s = p.project(11.0, 3.0); // right of the right edge
+        let s = p.project_arc_length(11.0, 3.0); // right of the right edge
         assert!((s - 13.0).abs() < 1e-12);
-        let s = p.project(4.0, 11.0); // above the top edge (runs right-to-left)
+        let s = p.project_arc_length(4.0, 11.0); // above the top edge (runs right-to-left)
         assert!((s - 26.0).abs() < 1e-12);
-        let s = p.project(-1.0, 3.0); // left of the left edge (runs top-to-bottom)
+        let s = p.project_arc_length(-1.0, 3.0); // left of the left edge (runs top-to-bottom)
         assert!((s - 37.0).abs() < 1e-12);
     }
 
@@ -373,12 +372,12 @@ mod tests {
         let road = Waypoints::build_open(vec![(0.0, 0.0), (100.0, 0.0), (100.0, 50.0)]);
         assert_eq!(road.total_length(), 150.0);
 
-        assert!((road.project(30.0, 5.0) - 30.0).abs() < 1e-12);
-        assert!((road.project(100.0, 20.0) - 120.0).abs() < 1e-12);
+        assert!((road.project_arc_length(30.0, 5.0) - 30.0).abs() < 1e-12);
+        assert!((road.project_arc_length(100.0, 20.0) - 120.0).abs() < 1e-12);
         // Off either end, projection lands on the nearest end point rather
         // than round the other side.
-        assert!(road.project(-20.0, 0.0).abs() < 1e-12);
-        assert!((road.project(100.0, 80.0) - 150.0).abs() < 1e-12);
+        assert!(road.project_arc_length(-20.0, 0.0).abs() < 1e-12);
+        assert!((road.project_arc_length(100.0, 80.0) - 150.0).abs() < 1e-12);
     }
 
     #[test]
@@ -388,10 +387,10 @@ mod tests {
         // segment (t=1, s=10) and the right segment (t=0, s=10): both give
         // the same distance and the same arc length here, and the strict
         // '<' tie-break keeps the bottom (earliest) segment's answer.
-        let s = p.project(11.0, -1.0);
+        let s = p.project_arc_length(11.0, -1.0);
         assert!((s - 10.0).abs() < 1e-12);
         // A point exactly on a corner projects to that corner.
-        let s = p.project(0.0, 10.0);
+        let s = p.project_arc_length(0.0, 10.0);
         assert!((s - 30.0).abs() < 1e-12);
     }
 
@@ -492,8 +491,8 @@ mod tests {
                 for j in -3..=3 {
                     let (x, y) = (10.0 * i as f64, 5.0 * j as f64);
                     assert_eq!(
-                        copy.project(x, y).to_bits(),
-                        road.project(x, y).to_bits(),
+                        copy.project_arc_length(x, y).to_bits(),
+                        road.project_arc_length(x, y).to_bits(),
                         "({x}, {y})"
                     );
                 }

@@ -57,7 +57,7 @@ impl PurePursuitParams {
 /// from the one road everything on it shares.
 pub fn pure_pursuit_yaw_rate(road: &Waypoints, pose: Pose, params: PurePursuitParams) -> f64 {
     let position = pose.position;
-    let s = road.project(position.x, position.y);
+    let s = road.project_arc_length(position.x, position.y);
     let target = road.point_at_offset(s + params.lookahead, params.lateral_tgt);
     let desired_heading = libm::atan2(target.y - position.y, target.x - position.x);
     let heading_error = wrap_to_pi(desired_heading - pose.orientation.yaw());
