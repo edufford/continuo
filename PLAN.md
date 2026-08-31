@@ -10,8 +10,8 @@ be split into separate processes over Zenoh without changing component code.
 
 ## Goals
 
-- **Deterministic**: same seed + same scenario → bit-identical runs, verifiable
-  by a per-tick state hash.
+- **Deterministic**: same seed + same scenario -> bit-identical runs,
+  verifiable by a per-tick state hash.
 - **Event-scheduled lockstep orchestration** with runtime component join/leave:
   each component reports the next sim time it should step; the conductor
   advances time to the earliest due time and barriers on the components due.
@@ -84,20 +84,20 @@ runs in its own process bridging over Zenoh. Component code never changes.
 
 Components form a tree. The first layer under the world is actor-level
 (vehicles, traffic manager, ego); an actor may be a **composite** containing an
-ordered list of sub-components (e.g. `sensors → controller → physics →
-actuators`). The same `Component` trait and the same transport pub/sub are used
-at every level, since a composite is itself just a component whose `step` runs
-its children in declared order.
+ordered list of sub-components (e.g.
+`sensors -> controller -> physics -> actuators`). The same `Component` trait
+and the same transport pub/sub are used at every level, since a composite is
+itself just a component whose `step` runs its children in declared order.
 
 **Message visibility rule** (replaces a single flat rule):
 
-- **Across the world level** (actor ↔ actor): outputs published at time T are
+- **Across the world level** (actor <-> actor): outputs published at time T are
   visible at the consumer's next step after T. This is the lockstep barrier
   semantics that makes distribution and determinism-under-parallelism
   possible.
 - **Inside a composite**: children step in declared order, and messages
   published by an earlier child are delivered to later children *within the
-  same step*. This gives the sensor → controller → physics pipeline its
+  same step*. This gives the sensor -> controller -> physics pipeline its
   intra-step data flow. Order is explicit configuration, so it is fully
   deterministic.
 
@@ -112,9 +112,9 @@ phases into the tick protocol; instead, an expensive self-contained
 sub-component (camera renderer, lidar) can be declared **decoupled**: it
 keeps its place in the actor's namespace and lifecycle but uses cross-actor
 (next-step) visibility, so it can be placed on any host. Decoupled sensors
-also *pipeline*, computing step T while consumers use T−1, which beats
+also *pipeline*, computing step T while consumers use T-1, which beats
 serializing the instant for throughput and matches real sensor latency.
-Coupled same-instant pipelines (controller → physics) are for tight, cheap
+Coupled same-instant pipelines (controller -> physics) are for tight, cheap
 loops and stay co-located. The coupling flag becomes part of registration
 metadata (milestone 4).
 
@@ -232,14 +232,14 @@ All transport payloads are JSON via `serde_json`:
   schema never changes when models go 3D.
 - **Euler angles at the human boundaries only.** User config and
   orientation-related APIs accept Euler angles with one standardized
-  convention: **roll-pitch-yaw about body X, Y, Z as intrinsic Z-Y-X**
-  (apply yaw, then pitch, then roll, the REP-103/aerospace convention),
-  named fields `{roll, pitch, yaw}`. `continuo-core` provides the canonical
-  Euler ↔ quaternion conversions (radians in API; config uses degrees via
-  explicit `rpy_deg` naming). **Wire messages carry quaternions only**, so Euler
-  never enters hashed payloads, avoiding gimbal ambiguity (quaternion → Euler
-  is only unique with pitch constrained to ±90°) and keeping one canonical
-  orientation encoding.
+  convention: **roll-pitch-yaw about body X, Y, Z as intrinsic Z-Y-X** (apply
+  yaw, then pitch, then roll, the REP-103/aerospace convention), named fields
+  `{roll, pitch, yaw}`. `continuo-core` provides the canonical Euler <->
+  quaternion conversions (radians in API; config uses degrees via explicit
+  `rpy_deg` naming). **Wire messages carry quaternions only**, so Euler never
+  enters hashed payloads, avoiding gimbal ambiguity (quaternion -> Euler is
+  only unique with pitch constrained to +/-90 degrees) and keeping one
+  canonical orientation encoding.
 - **Time on the wire is decimal seconds** (e.g. `"sim_time": 1.234567891`) for
   human readability, with at most 9 fractional digits (nanosecond precision).
   Internally `SimTime` stays integer nanoseconds; serialization and parsing go
@@ -249,7 +249,7 @@ All transport payloads are JSON via `serde_json`:
   form: trailing zeros trimmed, at least one fractional digit (`1.5`, `2.0`,
   `0.033333333`).
 - Message schemas are versioned and kept flat/simple (poses, scalars) so the
-  keyexpr ↔ FMU-variable binding stays a config file, not code.
+  keyexpr <-> FMU-variable binding stays a config file, not code.
 - Cost: encode/decode throughput at high actor counts. Acceptable at this scale;
   a binary format could be reintroduced per-transport later without touching
   components.
@@ -265,7 +265,7 @@ advances sim time to the earliest due time each iteration.
   reporting. Scheduling comparisons are then exact integer comparisons, with no
   float-equality hazards and no rational/multi-clock bookkeeping.
 - **Strict advance guard**: `next_due` must be strictly greater than the
-  current sim time (≥ 1 ns ahead). Reporting a time at or before "now" would
+  current sim time (>= 1 ns ahead). Reporting a time at or before "now" would
   allow a zero-time livelock; the conductor treats it as a component error.
 - **Phase alignment caveat**: components co-step only when their integer
   nanosecond times are *exactly* equal. A rounded 1/30 s period
@@ -402,9 +402,9 @@ component in particular.
 ## FMI 3.0 CS support
 
 - `continuo-fmi` crate providing `FmuComponent`: an adapter that on each step
-  reads its inbox → sets FMU input variables, calls `fmi3DoStep(t, dt)` with
+  reads its inbox -> sets FMU input variables, calls `fmi3DoStep(t, dt)` with
   `dt` = elapsed sim time since its last step (FMI 3.0 CS supports variable
-  communication step sizes), gets outputs → publishes them. The FMU's period
+  communication step sizes), gets outputs -> publishes them. The FMU's period
   comes from its mapping config and is reported as its next-step time.
 - FMI **3.0 Co-Simulation only**, with no 2.0 shims, native arrays, `float64`
   value references.
@@ -480,7 +480,7 @@ component in particular.
   here is deliberately an observation, which is the stream a re-run is free
   to differ on.
 - One conductor per world; remote processes run **hosts** (component
-  container + transport bridge + publish stamping). Data flows host↔host
+  container + transport bridge + publish stamping). Data flows host<->host
   over pub/sub without routing through the conductor. Because same-instant
   delivery never crosses hosts (see Hierarchy), the remote inbox release
   rule is simply `msg.time < now`, and sibling-order knowledge never leaves
@@ -570,7 +570,7 @@ owning an async runtime later.
 1. **Skeleton ticks**: workspace, core types, `InProcTransport`, conductor
    loop with composite components and next-step-time scheduling, static
    component set, free-run. Demo: cars circulating on a path, each a composite
-   (`controller → physics`) with the controller at a slower period than the
+   (`controller -> physics`) with the controller at a slower period than the
    physics; poses logged.
 2. **Determinism harness**: seeding, per-tick state hash (state-hash vs.
    output-hash per component), record/replay, CI test asserting identical hash
@@ -690,8 +690,8 @@ under "Wire format", rather than churning the fingerprint once apiece.
   Python viewer needs no generated schema. Naming CBOR does **not** pin the
   bytes, which was measured: encoding `Vec3 { x: 40.0, y: 0.0, z: 0.0 }` gives
   16 bytes under `ciborium` (which narrows floats to f16 when lossless, per RFC
-  8949 §4.2.2) and 34 under `minicbor-serde` (which always emits f64), sharing
-  no bytes. So the crate and version become part of the fingerprint's
+  8949 section 4.2.2) and 34 under `minicbor-serde` (which always emits f64),
+  sharing no bytes. So the crate and version become part of the fingerprint's
   definition. **Prefer owning the encoder** and using a crate only to decode,
   since determinism constrains only the bytes we produce, and a pinned crate
   version is the coupling the project deliberately removed for the hash and the
@@ -799,8 +799,8 @@ under "Wire format", rather than churning the fingerprint once apiece.
   trying not to watch.
 
   Measured on the demo's pose logger, which sees a sim-second of poses at once:
-  `drain` costs ~155 µs for that batch and the logger's step ~231 µs, against
-  ~14 µs if it decoded only the last message per key. Sixteen times less work
+  `drain` costs ~155 us for that batch and the logger's step ~231 us, against
+  ~14 us if it decoded only the last message per key. Sixteen times less work
   for the same result, since it keeps only the latest anyway.
 
   A `Transport` question rather than a component one, and it interacts with

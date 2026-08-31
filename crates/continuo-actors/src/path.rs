@@ -484,8 +484,8 @@ mod tests {
     #[test]
     fn projection_recovers_arc_length() {
         // Square loop, counter-clockwise from the origin:
-        //   bottom (0,0)→(10,0) s=[0,10), right (10,0)→(10,10) s=[10,20),
-        //   top (10,10)→(0,10) s=[20,30), left (0,10)→(0,0) s=[30,40).
+        //   bottom (0,0)->(10,0) s=[0,10), right (10,0)->(10,10) s=[10,20),
+        //   top (10,10)->(0,10) s=[20,30), left (0,10)->(0,0) s=[30,40).
         let p = square();
         let s = p.project_arc_length(7.0, -1.0); // below the bottom edge
         assert!((s - 7.0).abs() < 1e-12);
