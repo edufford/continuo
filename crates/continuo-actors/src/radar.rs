@@ -74,6 +74,19 @@ pub struct RadarScan {
 /// is what keeps the sensor rate independent: one sample per car is
 /// enough, so a car joining mid-run is in the very next scan.
 ///
+/// **The road's own corners put a floor under how exact a range can
+/// be.** An arc length comes from projecting onto the nearest segment,
+/// and at a vertex the nearest segment changes, stepping a car's arc
+/// length by `2 * |d| * tan(theta / 2)` for its lateral offset and the
+/// angle the road turns through. A car on the centerline has none of
+/// it, and a finely drawn road has little: two cars a true 30 m apart
+/// in a lane 3.5 m out swing 1.26 m over the determinism ellipse's 72
+/// samples, and 0.29 m over 360 of them. Reporting the straight line
+/// between the two instead would trade that for something worse, a
+/// chord across a bend not being the road a follower has to cover, so
+/// what answers this is a road drawn more finely. See
+/// [`Waypoints::frenet`](crate::Waypoints::frenet()).
+///
 /// It keeps nothing between steps. Each scan is built from the poses in
 /// that step's inbox and nothing else, so there is no freshness rule to
 /// tune and no per-actor state to clear out when a car leaves, which a

@@ -746,6 +746,34 @@ under "Wire format", rather than churning the fingerprint once apiece.
   reads it as one, so a third stretch of that message would be the dishonest
   version of this. `CarState` carries the TODO pointing here.
 
+- **A road built from curves rather than corners.** `Waypoints` is a polyline,
+  so its heading steps at every vertex and its curvature is unbounded there.
+  Three things follow. An arc length recovered by projection steps at a vertex,
+  which causes discontinuities in a radar's range calculated from it;
+  `RadarSensor` quantifies this. And a lane walked out at a fixed offset along
+  that arc length traces no continuous curve at all: each of its points is the
+  road's displaced along the heading's normal, so where the heading steps the
+  displacement swings and the point jumps with it, doubling back inside a bend
+  and gapping outside it. **Both want only a heading that does not step**,
+  which adding curvature instead of raw polylines gives.
+
+  The third wants more, and a heading that does not step is one derivative
+  short of it. Curvature is how fast the heading turns, so a road of straights
+  and circular arcs has a continuous heading and a curvature that still jumps
+  where the two meet. A car holding a lane is steered at a point on it, so its
+  commanded yaw rate follows that curvature and jumps with it. **That needs the
+  curvature itself to be continuous**, which is what a clothoid is for: ASAM
+  OpenDRIVE joins the two with one so the curvature ramps rather than leaping.
+
+  Drawing the polyline more finely shrinks all three without removing any,
+  since every vertex is still a corner. Short of the geometry, the lane half
+  can be papered over by clipping where the offsets cross inside a bend and
+  rounding the vertex outside it, which relocates the mismatch rather than
+  removing it: a lane round a corner is not the same length as the road it
+  follows, so the road's arc length cannot measure both. The planned fix
+  belongs with "World and map", where a road adopts a proper standardized
+  geometry definition, rather than as a change to `Waypoints` on its own.
+
 - **A component asking to retire itself**: `StepCtx` has no way back to the
   conductor, so nothing can say "I am done" (see `Component`'s TODO).
   Milestone 4 expected its spawner to need this and it did not. Worth
