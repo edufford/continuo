@@ -51,7 +51,52 @@ impl Waypoints {
         Self::build_open(vec![from, to])
     }
 
+    /// How short a segment may be before a road carrying it is refused.
+    ///
+    /// A millimeter is far below anything this world models, where a car
+    /// is `CAR_LENGTH` and a lane a few meters wide, and far above the
+    /// float noise and import artifacts an invalid segment could come from.
+    pub const MIN_SEGMENT_LENGTH: f64 = 1e-3;
+
+    /// Find the first waypoint too close to the one before it, if any.
+    ///
+    /// [`build_open`](Self::build_open()) and
+    /// [`build_closed`](Self::build_closed()) refuse a road with a
+    /// segment shorter than [`MIN_SEGMENT_LENGTH`](Self::MIN_SEGMENT_LENGTH),
+    /// and an external caller like the FMU controller can check before
+    /// building rather than be panicked.
+    pub fn check_for_too_short_segments(points: &[(f64, f64)], is_closed: bool) -> Option<usize> {
+        let segments = if is_closed {
+            points.len()
+        } else {
+            points.len() - 1
+        };
+
+        // Return the waypoint that's too close to its previous neighbor, since
+        // that would be the one to take out.
+        (0..segments)
+            .find(|&i| {
+                let a = points[i];
+                let b = points[(i + 1) % points.len()];
+                ((b.0 - a.0).powi(2) + (b.1 - a.1).powi(2)).sqrt() < Self::MIN_SEGMENT_LENGTH
+            })
+            .map(|i| (i + 1) % points.len())
+    }
+
     fn build(points: Vec<(f64, f64)>, is_closed: bool) -> Self {
+        // TODO(PLAN "World and map"): hand back a Result rather than
+        // panic. A road written out as a Rust literal is a bug worth
+        // halting on, but an imported map is data, and the FMU
+        // controller already has to check ahead of this call so that it
+        // can answer its host with an error instead.
+        if let Some(i) = Self::check_for_too_short_segments(&points, is_closed) {
+            panic!(
+                "waypoint {i} at {:?} is too close to the one before it, under {} m",
+                points[i],
+                Self::MIN_SEGMENT_LENGTH
+            );
+        }
+
         // A closed path has one segment per point (the last closes the
         // loop); an open one has a segment between each adjacent pair.
         let num_segments = if is_closed {
@@ -213,8 +258,7 @@ impl Waypoints {
 
     /// Where `(x, y)` sits on the path: the arc length of the closest
     /// point on it, and how far to the **left** of the path the point
-    /// lies. Deterministic: an exact tie goes to a segment holding the
-    /// projection between its ends, and failing that to the earliest.
+    /// lies. Deterministic: an exact tie goes to the earliest segment.
     ///
     /// This is the Frenet `(s, d)` pair. Both halves are what let a lane
     /// be a number rather than a curve: two cars share a lane when their
@@ -248,8 +292,9 @@ impl Waypoints {
         // Point-to-segment projection, evaluated per segment, keeping the
         // closest hit. For each segment a -> b:
         //   (dx, dy)  segment direction vector b - a
-        //   len2      its squared length (avoids a sqrt; zero for
-        //             degenerate duplicate points)
+        //   len2      its squared length, which avoids a sqrt. `build`
+        //             holds every segment at `MIN_SEGMENT_LENGTH` or
+        //             more, so this is never zero and never near it
         //   t         where the query point projects onto the segment,
         //             as a fraction of its length:
         //             dot(p - a, b - a) / |b - a|^2, kept unclamped
@@ -265,33 +310,21 @@ impl Waypoints {
         let mut best_i = 0;
         let mut best_t = 0.0;
         let mut best_d2 = f64::INFINITY;
-        let mut best_holds_the_projection = false;
         for i in 0..self.num_segments() {
             let a = self.points[i];
             let b = self.points[(i + 1) % self.points.len()];
             let (dx, dy) = (b.0 - a.0, b.1 - a.1);
             let len2 = dx * dx + dy * dy;
-            let t = if len2 > 0.0 {
-                ((x - a.0) * dx + (y - a.1) * dy) / len2
-            } else {
-                0.0
-            };
+            let t = ((x - a.0) * dx + (y - a.1) * dy) / len2;
             let (px, py) = (a.0 + dx * t.clamp(0.0, 1.0), a.1 + dy * t.clamp(0.0, 1.0));
             let d2 = (x - px).powi(2) + (y - py).powi(2);
-            // A tie goes to a segment the point projects inside, and
-            // only then to the earliest. Two segments meeting at a
-            // vertex tie for every point beyond it, and one of them can
-            // be tying on its own extension line while the other holds a
-            // real perpendicular. The extension knows nothing about
-            // which side of the road the point is on, so the segment the
-            // projection lands inside answers.
-            let holds_the_projection = (0.0..=1.0).contains(&t);
-            if d2 < best_d2 || (d2 == best_d2 && holds_the_projection && !best_holds_the_projection)
-            {
+            // An exact tie goes to the earliest segment. Two segments
+            // tie only where the nearest point on both is the vertex they
+            // share, so they have the same distance anyway.
+            if d2 < best_d2 {
                 best_d2 = d2;
                 best_i = i;
                 best_t = t;
-                best_holds_the_projection = holds_the_projection;
             }
         }
 
@@ -299,10 +332,10 @@ impl Waypoints {
         let seg_len = self.cumulative[best_i + 1] - seg_start;
         // Signed distance from the winning segment's line, positive to
         // the left: the 2D cross product of the direction with p - a,
-        // over the segment's length. This is the only sqrt any of it
-        // needs, and the winner alone pays it. A degenerate segment has
-        // no direction to be left of, so its offset is zero.
-        let offset = self.side_of(best_i, x, y) / seg_len.max(f64::MIN_POSITIVE);
+        // over the segment's length, which the arc-length table already
+        // holds. `build` already checks that every segment has a minimum
+        // length, so this division needs no guard under it.
+        let offset = self.side_of(best_i, x, y) / seg_len;
 
         // A projection past either end of a segment means the road
         // stopped before the point did. Off an open path that is the road
@@ -680,11 +713,11 @@ mod tests {
         //
         // The offset is the half that holds, reading alike either side
         // because both points really are the same distance from the road.
-        // The jump is the two feet either side of the corner, so it grows
-        // with the turn and vanishes as the road straightens.
-        // The pair straddles the bisector as closely as it can: far
-        // enough apart that which segment is nearer is not in doubt, near
-        // enough that the feet have barely moved off it.
+        // The jump spans the two nearest points either side of the
+        // corner, so it grows with the turn and vanishes as the road
+        // straightens. The pair straddles the bisector as closely as it
+        // can: far enough apart that which segment is nearer is not in
+        // doubt, near enough that neither has moved far off it.
         const RADIUS: f64 = 0.5;
         const NUDGE: f64 = 0.02;
         for turn in TURNS {
@@ -934,5 +967,53 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn only_waypoints_closer_than_the_threshold_are_refused() {
+        const UNDER: f64 = Waypoints::MIN_SEGMENT_LENGTH / 10.0;
+        const OVER: f64 = Waypoints::MIN_SEGMENT_LENGTH * 10.0;
+        let corner = |third: (f64, f64)| vec![(0.0, 0.0), (10.0, 0.0), third, (20.0, 10.0)];
+        for (points, is_closed, expected) in [
+            (corner((10.0, 0.0)), false, Some(2)),
+            (corner((10.0 + UNDER, UNDER)), false, Some(2)),
+            (corner((10.0 + OVER, OVER)), false, None),
+            (corner((12.0, 3.0)), false, None),
+            (
+                vec![(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 0.0)],
+                true,
+                Some(0),
+            ),
+            (
+                vec![(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)],
+                true,
+                None,
+            ),
+        ] {
+            assert_eq!(
+                Waypoints::check_for_too_short_segments(&points, is_closed),
+                expected,
+                "{points:?}, closed = {is_closed}"
+            );
+        }
+
+        // This project's demo roads should not have any segments
+        // that are too short.
+        for road in [
+            Waypoints::ellipse((0.0, 0.0), 30.0, 20.0, 72),
+            Waypoints::build_straight((0.0, 0.0), (1200.0, 0.0)),
+            square(),
+        ] {
+            assert_eq!(
+                Waypoints::check_for_too_short_segments(road.points(), road.is_closed()),
+                None
+            );
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "waypoint 2 at (10.0, 0.0) is too close to the one before it")]
+    fn building_a_road_checks_its_own_segment_lengths() {
+        Waypoints::build_open(vec![(0.0, 0.0), (10.0, 0.0), (10.0, 0.0), (10.0, 10.0)]);
     }
 }

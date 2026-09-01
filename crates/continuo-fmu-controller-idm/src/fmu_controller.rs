@@ -248,8 +248,8 @@ impl FmuController {
     /// A road of no length is refused for a plainer reason. The point
     /// arrays start full of zeros, so a host that sets the count and
     /// forgets the points sends a road whose every point is the origin.
-    /// Nothing in `Waypoints` objects to that, and a car steering along
-    /// it holds still at a single spot. Better to say so.
+    /// `Waypoints` panics on that rather than building it, so the
+    /// points are checked first and the host gets an error it can read.
     fn road_from_parameters(&self) -> Result<Waypoints, BadInput> {
         let given = self.road_point_count as usize;
         let (least, kind) = if self.road_closed {
@@ -263,14 +263,14 @@ impl FmuController {
         let points: Vec<(f64, f64)> = (0..given)
             .map(|i| (self.road_x[i], self.road_y[i]))
             .collect();
+        if Waypoints::check_for_too_short_segments(&points, self.road_closed).is_some() {
+            return Err(BadInput::RoadOfNoLength { count: given });
+        }
         let road = if self.road_closed {
             Waypoints::build_closed(points)
         } else {
             Waypoints::build_open(points)
         };
-        if road.total_length() <= 0.0 {
-            return Err(BadInput::RoadOfNoLength { count: given });
-        }
 
         // Return the road, built by the code that built the native
         // controller's road, so the two are one geometry rather than two

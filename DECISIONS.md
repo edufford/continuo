@@ -1384,17 +1384,10 @@ it got there, including the roads not taken.
   the whole way.
 
   Which side of the road that distance falls on is a second question, and in
-  the wedge the point cannot answer it:
-
-  - An extension line says nothing about which side of the road a point is
-    on, so only a segment the point projects inside has a perpendicular
-    worth reading. That is why an exact tie goes to a segment holding the
-    projection between its own ends and only ties after that go to the
-    earliest.
-  - In the wedge outside of a corner neither segment holds it, so the side
-    belongs to the corner rather than to the point: the outside of a left
-    turn is the right. One cross product of the two segment directions gives
-    it, with the point playing no part.
+  the wedge the point cannot answer it. Neither segment holds the projection
+  there, so the side belongs to the corner rather than to the point: the
+  outside of a left turn is the right. One cross product of the two segment
+  directions gives it, with the point playing no part.
 
   Either way the offset distance itself is `cross / len`. It is written as a
   cross product but computes a dot product: the same one that gives the arc
@@ -1468,3 +1461,29 @@ it got there, including the roads not taken.
     nothing reads a scan, so a radar publishing beside a car cannot
     steer it.
 
+- **2026-09-01**: **A road is refused where one waypoint sits closer to
+  the one before it than `MIN_SEGMENT_LENGTH`**, one millimeter, which
+  sits below any road feature and above the noise that makes such a
+  segment. `build_open` and `build_closed` panic on one, and
+  `Waypoints::check_for_too_short_segments` is public so a caller can
+  ask first. The FMU controller does: it rebuilds a road from arrays a
+  host filled in, where a count set over the points sent leaves the tail
+  repeating, and it answers with an error rather than a panic.
+
+  - A segment of no length has no direction, so `frenet` answers zero
+    for the offset rather than a distance. Both its ends are the vertex
+    it shares with a neighbor, so it is exactly as near and wins the tie
+    wherever it is the earlier. A road repeating its first point reads
+    every car as sitting on the centerline.
+
+  - The check is for a min length rather than for equal points, because a
+    heading uses the segment's direction and is directly affected by even
+    tiny deviations in the segment points. A jitter of a nanometer still
+    points where it points, so the heading there can vary by large amounts
+    such as 45 degrees off the road, or 135 for a spike doubling back, and
+    `traffic_spawner` faces a car that way.
+
+  - Two guards inside `frenet` go with it: the projection always has a
+    length to divide by, and the arc-length table cannot lose one. A
+    `TODO` records that the panic wants to be a `Result` once roads
+    arrive as imported data rather than Rust literals.
