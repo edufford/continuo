@@ -338,12 +338,6 @@ impl Waypoints {
 
         let seg_start = self.cumulative[best_i];
         let seg_len = self.cumulative[best_i + 1] - seg_start;
-        // Signed distance from the winning segment's line, positive to
-        // the left: the 2D cross product of the direction with p - a,
-        // over the segment's length, which the arc-length table already
-        // holds. `build` already checks that every segment has a minimum
-        // length, so this division needs no guard under it.
-        let offset = self.side_of(best_i, x, y) / seg_len;
 
         // A projection past either end of a segment means the road
         // stopped before the point did. Off an open path that is the road
@@ -352,32 +346,43 @@ impl Waypoints {
         let ran_out_of_road = !self.is_closed
             && ((best_i == 0 && best_t < 0.0)
                 || (best_i + 1 == self.num_segments() && best_t > 1.0));
-
-        // Return where the closest road is, and which side of it the
-        // query point lies on.
-        if !(0.0..=1.0).contains(&best_t) && !ran_out_of_road {
+        let (arc_length, lat_offset) = if !(0.0..=1.0).contains(&best_t) && !ran_out_of_road {
+            // The road turned, so the arc length pins at the vertex
+            // and the offset is the distance out to the point.
             (
                 seg_start + seg_len * best_t.clamp(0.0, 1.0),
-                self.outside_of_the_bend(best_i, best_t) * best_d2.sqrt(),
+                self.lateral_offset_sign(best_i, best_t) * best_d2.sqrt(),
             )
         } else {
-            (seg_start + seg_len * best_t, offset)
-        }
+            // Alongside the segment, or off the end of an open road
+            // holding its line, and both measure across that line.
+            (
+                seg_start + seg_len * best_t,
+                self.lateral_offset(best_i, x, y),
+            )
+        };
+
+        // Return how far along the road the point is, and how far to the
+        // left of it.
+        (arc_length, lat_offset)
     }
 
-    /// Twice the signed area of the triangle on segment `i` and
-    /// `(x, y)`: positive with the point left of the segment, zero with
-    /// the three in line.
+    /// How far to the left of segment `i`'s line the point `(x, y)`
+    /// lies, negative to the right.
     ///
-    /// Divided by the segment's length this is the signed distance from
-    /// its line, which is the same dot product that gives the arc length
-    /// taken against the normal instead of along the segment.
-    fn side_of(&self, i: usize, x: f64, y: f64) -> f64 {
+    /// The same dot product that gives the arc length, taken against
+    /// the segment's normal rather than along it, which is all the 2D
+    /// cross product is when written out. Dividing by the length is
+    /// what makes that normal a unit vector. The length comes off the
+    /// arc-length table, and `build` has already refused a segment
+    /// short enough to make the division a hazard.
+    fn lateral_offset(&self, i: usize, x: f64, y: f64) -> f64 {
         let a = self.points[i];
-        let (dx, dy) = self.direction(i);
+        let (dx, dy) = self.segment_dir(i);
+        let seg_len = self.cumulative[i + 1] - self.cumulative[i];
 
-        // Return the cross product of the segment with a -> (x, y).
-        dx * (y - a.1) - dy * (x - a.0)
+        // Return the signed distance from that segment's line.
+        (dx * (y - a.1) - dy * (x - a.0)) / seg_len
     }
 
     /// Which side of the road the wedge outside a bend is on, as `1.0`
@@ -394,31 +399,25 @@ impl Waypoints {
     /// the segment it ran past, which is a car carrying straight on
     /// where the road turned. Two segments in line have no bend and no
     /// wedge, so the zero this would give is unreachable.
-    fn outside_of_the_bend(&self, i: usize, t: f64) -> f64 {
+    fn lateral_offset_sign(&self, i: usize, t: f64) -> f64 {
         let segments = self.num_segments();
         let (arriving, leaving) = if t > 1.0 {
             (i, (i + 1) % segments)
         } else {
             ((i + segments - 1) % segments, i)
         };
-        let (ax, ay) = self.direction(arriving);
-        let (bx, by) = self.direction(leaving);
+        let (ax, ay) = self.segment_dir(arriving);
+        let (bx, by) = self.segment_dir(leaving);
 
         // Return the far side of the turn the road makes here.
         -(ax * by - ay * bx).signum()
     }
 
     /// The direction segment `i` runs in, as `b - a`.
-    fn direction(&self, i: usize) -> (f64, f64) {
+    fn segment_dir(&self, i: usize) -> (f64, f64) {
         let a = self.points[i];
         let b = self.points[(i + 1) % self.points.len()];
         (b.0 - a.0, b.1 - a.1)
-    }
-
-    /// How far along the path `(x, y)` sits, for a caller with no use
-    /// for the lateral half of [`frenet`](Self::frenet()).
-    pub fn project_arc_length(&self, x: f64, y: f64) -> f64 {
-        self.frenet(x, y).0
     }
 }
 
@@ -520,13 +519,13 @@ mod tests {
         //   bottom (0,0)->(10,0) s=[0,10), right (10,0)->(10,10) s=[10,20),
         //   top (10,10)->(0,10) s=[20,30), left (0,10)->(0,0) s=[30,40).
         let p = square();
-        let s = p.project_arc_length(7.0, -1.0); // below the bottom edge
+        let s = p.frenet(7.0, -1.0).0; // below the bottom edge
         assert!((s - 7.0).abs() < 1e-12);
-        let s = p.project_arc_length(11.0, 3.0); // right of the right edge
+        let s = p.frenet(11.0, 3.0).0; // right of the right edge
         assert!((s - 13.0).abs() < 1e-12);
-        let s = p.project_arc_length(4.0, 11.0); // above the top edge (runs right-to-left)
+        let s = p.frenet(4.0, 11.0).0; // above the top edge (runs right-to-left)
         assert!((s - 26.0).abs() < 1e-12);
-        let s = p.project_arc_length(-1.0, 3.0); // left of the left edge (runs top-to-bottom)
+        let s = p.frenet(-1.0, 3.0).0; // left of the left edge (runs top-to-bottom)
         assert!((s - 37.0).abs() < 1e-12);
     }
 
@@ -556,13 +555,13 @@ mod tests {
         let road = Waypoints::build_open(vec![(0.0, 0.0), (100.0, 0.0), (100.0, 50.0)]);
         assert_eq!(road.total_length(), 150.0);
 
-        assert!((road.project_arc_length(30.0, 5.0) - 30.0).abs() < 1e-12);
-        assert!((road.project_arc_length(100.0, 20.0) - 120.0).abs() < 1e-12);
+        assert!((road.frenet(30.0, 5.0).0 - 30.0).abs() < 1e-12);
+        assert!((road.frenet(100.0, 20.0).0 - 120.0).abs() < 1e-12);
         // Off either end the arc length carries on rather than wrapping
         // round to the other one, so a point 20 m before the start is at
         // -20 and one 30 m past the end is at 180.
-        assert!((road.project_arc_length(-20.0, 0.0) + 20.0).abs() < 1e-12);
-        assert!((road.project_arc_length(100.0, 80.0) - 180.0).abs() < 1e-12);
+        assert!((road.frenet(-20.0, 0.0).0 + 20.0).abs() < 1e-12);
+        assert!((road.frenet(100.0, 80.0).0 - 180.0).abs() < 1e-12);
     }
 
     #[test]
@@ -572,10 +571,10 @@ mod tests {
         // segment (t=1, s=10) and the right segment (t=0, s=10): both give
         // the same distance and the same arc length here, and the strict
         // '<' tie-break keeps the bottom (earliest) segment's answer.
-        let s = p.project_arc_length(11.0, -1.0);
+        let s = p.frenet(11.0, -1.0).0;
         assert!((s - 10.0).abs() < 1e-12);
         // A point exactly on a corner projects to that corner.
-        let s = p.project_arc_length(0.0, 10.0);
+        let s = p.frenet(0.0, 10.0).0;
         assert!((s - 30.0).abs() < 1e-12);
     }
 
@@ -856,8 +855,8 @@ mod tests {
                 for j in -3..=3 {
                     let (x, y) = (10.0 * i as f64, 5.0 * j as f64);
                     assert_eq!(
-                        copy.project_arc_length(x, y).to_bits(),
-                        road.project_arc_length(x, y).to_bits(),
+                        copy.frenet(x, y).0.to_bits(),
+                        road.frenet(x, y).0.to_bits(),
                         "({x}, {y})"
                     );
                 }

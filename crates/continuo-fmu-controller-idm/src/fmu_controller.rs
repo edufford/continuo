@@ -25,7 +25,7 @@ use crate::error::BadInput;
 /// about roads: `fmi-export` 0.3.0 cannot size an array by a parameter,
 /// so the array is fixed and `road_point_count` says how much of it is
 /// real. Padding the tail by repeating the last point instead would hand
-/// [`Waypoints::project_arc_length`] a segment of no length, so the
+/// [`Waypoints::frenet`] a segment of no length, so the
 /// padding has to be ignored rather than read.
 ///
 /// It covers the demo's two points with room for a polyline drawn by
