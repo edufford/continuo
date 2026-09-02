@@ -41,6 +41,10 @@ left to be discovered.
   rate in it is exactly zero and every transcendental is evaluated where all
   implementations agree anyway. The ellipse in `continuo-actors`' determinism
   test is the one that steers, and it is pinned for that reason.
+- **A new component joins the determinism world.** Two runs agreeing is
+  only evidence about what the world contained, so a feature left out of
+  it is one the check cannot speak for. `continuo-actors`' determinism
+  test is where that happens, and it is worth the components it costs.
 - The workspace contains no `unsafe`.
 
 ## Scale and churn are design constraints
