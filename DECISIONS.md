@@ -1316,7 +1316,6 @@ it got there, including the roads not taken.
   - `DEMO_WORLD_HASH` does not move. Every default is the number it was, and
     nothing in the demo is an FMU yet.
 
-<<<<<<< HEAD
 - **2026-08-29**: **`Waypoints::frenet` returns an arc length along the
   road and a lateral offset across it, both measured to the nearest road,
   and both carrying on past the end of an open one.** A point whose
@@ -1407,8 +1406,6 @@ it got there, including the roads not taken.
 
   `DEMO_WORLD_HASH` and the ellipse's `CAR1_TRAJECTORY` do not move.
 
-=======
->>>>>>> origin/main
 - **2026-09-01**: **A road is refused where one waypoint sits closer to
   the one before it than `MIN_SEGMENT_LENGTH`**, one millimeter, which
   sits below any road feature and above the noise that makes such a
