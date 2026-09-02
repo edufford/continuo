@@ -165,7 +165,7 @@ until the day it does not.
 ## Prose style
 
 The same rules everywhere: code comments, doc comments, Markdown, commit
-messages, PR descriptions, console strings.
+messages, PR titles and descriptions, console strings.
 
 - **American English.** "behavior", "initialize", "center".
 - **No dash grammar.** Do not join clauses with an em dash, an en dash, or a
@@ -184,6 +184,13 @@ messages, PR descriptions, console strings.
   what an earlier version got wrong. That history belongs in git and the PR.
   Saying why an alternative was rejected is welcome, in the conditional:
   "Keeping the previous one would go on steering from it without saying so."
+- **Name the work, not the writing.** "Improved Frenet coordinate handling",
+  not "What a road can be asked"; "Test coverage for the sensor and the
+  road", not "What proves it"; "the deferred list gains a road built from
+  curves rather than corners", not "the deferred list carries it". A title,
+  a heading, a comment or a sentence shaped as a question or a pointer reads
+  the same whatever it turns out to be about, so a reader skimming learns
+  nothing from it.
 - **Short and direct.** Plain terms over jargon, the shorter sentence over
   the cleverer one, and the subject doing the acting rather than a noun built
   out of a verb. A sentence that has to be read twice wants rewriting, not
