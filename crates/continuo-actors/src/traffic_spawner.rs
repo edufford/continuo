@@ -185,7 +185,7 @@ impl Component for TrafficSpawner {
             // coordinate: cars sit in different lanes, so only a shared
             // arc length makes "ahead" and "behind" mean the same thing
             // for all of them, whatever shape the road is.
-            let actor_s = self.road.project(pose.position.x, pose.position.y);
+            let actor_s = self.road.frenet(pose.position.x, pose.position.y).0;
             if actor_name == self.ego_name {
                 self.ego_s = actor_s;
             } else if let Some(traffic_s) = self.live_traffic.get_mut(&actor_name) {

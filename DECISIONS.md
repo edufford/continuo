@@ -1316,6 +1316,96 @@ it got there, including the roads not taken.
   - `DEMO_WORLD_HASH` does not move. Every default is the number it was, and
     nothing in the demo is an FMU yet.
 
+- **2026-08-29**: **`Waypoints::frenet` returns an arc length along the
+  road and a lateral offset across it, both measured to the nearest road,
+  and both carrying on past the end of an open one.** A point whose
+  projection lands past a segment's end means one of two things:
+
+  1. Off either end of an open path, the road ran out so the arc length
+     carries on past the end or below zero before the start, and the offset
+     goes on measuring across the extension line the road was holding.
+  2. Everywhere else, the road turned and on a closed path that is wherever
+     the projection gets clamped to a segment's vertex: the point sits in
+     the wedge outside the bend that neither segment's perpendicular
+     reaches, and the vertex between them is the nearest road, so the offset
+     becomes the direct distance to it instead of a perpendicular.
+
+  Case 1 is where the arc length calculation method needed improvement:
+
+  - Stopping it at an open road's end puts every car that has driven past
+    that end on one value, so none is ahead of another and a radar sees none
+    of them.
+  - It still jumps when inside a corner point, where the segment
+    perpendiculars overlap and the nearest point crosses between the
+    segments at the bisecting line before reaching the end of the first
+    segment. That is inherent to following the nearest segment on a raw
+    polyline with no curvature. `frenet`'s doc says what the step is,
+    twice the point's distance to the segment that lost, rather than a
+    test pinning a number a curved road removes.
+  - Using the straight line between two cars instead of the arc length
+    projection was considered but rejected: a chord understates the road a
+    follower has to cover and swings as the pair rounds a bend so it does
+    not improve the following distance accuracy. highway-env and SUMO both
+    measure arc length along lanes and avoid this in other ways, highway-env
+    by fitting a spline before projecting onto a polyline lane and SUMO by
+    never projecting at all, carrying a vehicle's lane position as state.
+    A range read as the difference of two arc lengths inherits the step,
+    which is the cost a radar on this road pays.
+  - A caller with no use for the offset reads `frenet(x, y).0` at the
+    call site rather than through a wrapper, since both halves are worked
+    out anyway and a wrapper would hide that.
+
+  Case 2 is where the offset calculation method needed improvement. The
+  initial implementation measured the perpendicular to that segment's
+  extension line, but was replaced by the direct distance to the vertex for
+  the reason below:
+
+  ```
+                    |
+                    | the road, turning north at B
+                    |
+                    |           R2
+        ------------B- - - - - -+- - - - -    the extension line
+                     . \ . . .  ^  . . . . . .
+                     . .  \  .  |  . . . . . .  the wedge: past the end
+                     . . . . \  |  . . . . . .  of both segments, so the
+                     . . . . .  R1 . . . . . .  vertex is the nearest
+                     . . . . . . . . . . . . .  road there is
+
+          \   to the vertex, direct distance to the road    (current)
+          |   to the extension line                         (initial)
+  ```
+
+  For example, take a car from R1 up to R2. Measured to the extension line,
+  the offset distance reduces to zero exactly where the car crosses that
+  line, then steps straight up to the offset it should have had all along. A
+  lane band watching that sees a car drift onto the centerline and jump back
+  out again. Measured as direct distance to the vertex B, the offset value
+  stays continuous around the corner and matches the distance to the road
+  the whole way.
+
+  Which side of the road that distance falls on is a second question, and in
+  the wedge the point cannot answer it. Neither segment holds the projection
+  there, so the side belongs to the corner rather than to the point: the
+  outside of a left turn is the right. One cross product of the two segment
+  directions gives it, with the point playing no part.
+
+  Either way the offset distance itself is `cross / len`. It is written as a
+  cross product but computes a dot product: the same one that gives the arc
+  length, taken against the normal rather than along the segment, the normal
+  being the segment turned a quarter circle. `sqrt(dist^2 - proj^2)` gives
+  the same number but loses more digits as the square of the along-to-across
+  ratio, where this loses them in proportion to it.
+
+  `Waypoints::point_at_offset` runs the other way, from an arc length and
+  offset back to a point, and is left alone. A lane round a corner is not
+  the same length as the road it follows, so measuring both by the road's
+  arc length breaks down at a vertex and the two are not inverses there.
+  Fixing that belongs to the road's geometry rather than either call, and
+  PLAN.md's deferred list has it.
+
+  `DEMO_WORLD_HASH` and the ellipse's `CAR1_TRAJECTORY` do not move.
+
 - **2026-09-01**: **A road is refused where one waypoint sits closer to
   the one before it than `MIN_SEGMENT_LENGTH`**, one millimeter, which
   sits below any road feature and above the noise that makes such a
