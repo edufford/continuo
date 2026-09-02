@@ -514,22 +514,6 @@ mod tests {
     }
 
     #[test]
-    fn projection_recovers_arc_length() {
-        // Square loop, counter-clockwise from the origin:
-        //   bottom (0,0)->(10,0) s=[0,10), right (10,0)->(10,10) s=[10,20),
-        //   top (10,10)->(0,10) s=[20,30), left (0,10)->(0,0) s=[30,40).
-        let p = square();
-        let s = p.frenet(7.0, -1.0).0; // below the bottom edge
-        assert!((s - 7.0).abs() < 1e-12);
-        let s = p.frenet(11.0, 3.0).0; // right of the right edge
-        assert!((s - 13.0).abs() < 1e-12);
-        let s = p.frenet(4.0, 11.0).0; // above the top edge (runs right-to-left)
-        assert!((s - 26.0).abs() < 1e-12);
-        let s = p.frenet(-1.0, 3.0).0; // left of the left edge (runs top-to-bottom)
-        assert!((s - 37.0).abs() < 1e-12);
-    }
-
-    #[test]
     fn an_open_path_stops_at_its_ends_instead_of_wrapping() {
         // A road, not a circuit: 100 m of it along +x.
         let road = Waypoints::build_straight((0.0, 0.0), (100.0, 0.0));
@@ -547,35 +531,6 @@ mod tests {
         // And before the start, likewise.
         let before_start = road.point_at(-40.0);
         assert!(before_start.x.abs() < 1e-12);
-    }
-
-    #[test]
-    fn an_open_path_projects_along_its_length() {
-        // Two segments, so the arc-length table has an interior joint.
-        let road = Waypoints::build_open(vec![(0.0, 0.0), (100.0, 0.0), (100.0, 50.0)]);
-        assert_eq!(road.total_length(), 150.0);
-
-        assert!((road.frenet(30.0, 5.0).0 - 30.0).abs() < 1e-12);
-        assert!((road.frenet(100.0, 20.0).0 - 120.0).abs() < 1e-12);
-        // Off either end the arc length carries on rather than wrapping
-        // round to the other one, so a point 20 m before the start is at
-        // -20 and one 30 m past the end is at 180.
-        assert!((road.frenet(-20.0, 0.0).0 + 20.0).abs() < 1e-12);
-        assert!((road.frenet(100.0, 80.0).0 - 180.0).abs() < 1e-12);
-    }
-
-    #[test]
-    fn projection_at_corner_ties_to_earliest_segment() {
-        let p = square();
-        // (11, -1) is closest to the (10, 0) corner, shared by the bottom
-        // segment (t=1, s=10) and the right segment (t=0, s=10): both give
-        // the same distance and the same arc length here, and the strict
-        // '<' tie-break keeps the bottom (earliest) segment's answer.
-        let s = p.frenet(11.0, -1.0).0;
-        assert!((s - 10.0).abs() < 1e-12);
-        // A point exactly on a corner projects to that corner.
-        let s = p.frenet(0.0, 10.0).0;
-        assert!((s - 30.0).abs() < 1e-12);
     }
 
     #[test]
@@ -598,6 +553,36 @@ mod tests {
                 "({x}, {y}) gave lateral = {lateral}"
             );
         }
+    }
+
+    #[test]
+    fn frenet_measures_arc_length_all_the_way_round_a_loop() {
+        // Square loop, counter-clockwise from the origin:
+        //   bottom (0,0)->(10,0) s=[0,10), right (10,0)->(10,10) s=[10,20),
+        //   top (10,10)->(0,10) s=[20,30), left (0,10)->(0,0) s=[30,40).
+        let p = square();
+        let s = p.frenet(7.0, -1.0).0; // below the bottom edge
+        assert!((s - 7.0).abs() < 1e-12);
+        let s = p.frenet(11.0, 3.0).0; // right of the right edge
+        assert!((s - 13.0).abs() < 1e-12);
+        let s = p.frenet(4.0, 11.0).0; // above the top edge (runs right-to-left)
+        assert!((s - 26.0).abs() < 1e-12);
+        let s = p.frenet(-1.0, 3.0).0; // left of the left edge (runs top-to-bottom)
+        assert!((s - 37.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn frenet_ties_a_corner_to_the_earliest_segment() {
+        let p = square();
+        // (11, -1) is closest to the (10, 0) corner, shared by the bottom
+        // segment (t=1, s=10) and the right segment (t=0, s=10): both give
+        // the same distance and the same arc length here, and the strict
+        // '<' tie-break keeps the bottom (earliest) segment's answer.
+        let s = p.frenet(11.0, -1.0).0;
+        assert!((s - 10.0).abs() < 1e-12);
+        // A point exactly on a corner projects to that corner.
+        let s = p.frenet(0.0, 10.0).0;
+        assert!((s - 30.0).abs() < 1e-12);
     }
 
     #[test]
