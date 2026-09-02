@@ -281,6 +281,14 @@ impl Waypoints {
     /// behind it, where stopping `s` at the end would pile every car
     /// beyond it onto one arc length and hide them from each other.
     ///
+    /// **Inside a bend the arc length steps.** Both segments reach a
+    /// point there and the nearer one changes at the bisector, so `s`
+    /// jumps as a point crosses it, by twice that point's distance to
+    /// the segment that lost. The offset holds across the same
+    /// crossing, both segments being equally near just there. Nothing
+    /// smooths this away, since it is what nearest means on a polyline,
+    /// and `RadarSensor` records what it costs a range.
+    ///
     /// **Everywhere else, a point beyond a segment's end is measured to
     /// the vertex the road turns at**, which is the nearest road there
     /// is. Measuring across the segment's extension line instead would
@@ -418,58 +426,50 @@ impl Waypoints {
 mod tests {
     use super::*;
 
-    /// Every turn the corner tests below run over, in degrees, positive
-    /// to the left: gentle, square and sharp, each way round.
+    /// A road running 10 m east from the origin, then turning a right
+    /// angle north for another 10 m, its corner at R below.
     ///
-    /// A corner rule has to hold at any angle and either direction, and
-    /// the gentle pair is the shape a road drawn finely enough to look
-    /// smooth actually makes. The determinism ellipse's 72 samples turn
-    /// 5 degrees apiece.
-    const TURNS: [f64; 6] = [-135.0, -90.0, -11.0, 11.0, 90.0, 135.0];
-
-    /// A road running 10 m east from the origin, then turning through
-    /// `turn` degrees for another 10 m.
-    fn corner(turn: f64) -> Waypoints {
-        let angle = turn.to_radians();
-
-        // Return the two-segment road, its corner at (10, 0).
-        Waypoints::build_open(vec![
-            (0.0, 0.0),
-            (10.0, 0.0),
-            (10.0 + 10.0 * libm::cos(angle), 10.0 * libm::sin(angle)),
-        ])
+    /// It leaves two regions either side of it: the overlap, where both
+    /// segments reach a point, and the wedge, where neither does. The
+    /// tests cross both, and `(13, -4)` marks where they probe the
+    /// wedge, whole meters from R so its distance is exact.
+    ///
+    /// ```text
+    ///                                     ^ (10, 10)
+    ///                                     |  north: the leaving segment
+    ///         the overlap: both           |
+    ///         segments reach a  \ ' ' ' ' |
+    ///         point here, and   ' \ ' ' ' |
+    ///         the nearer swaps  ' ' \ ' ' |
+    ///         at the bisector   ' ' ' \ ' |
+    ///                           ' ' ' ' \ | (10, 0)
+    ///   east >----------------------------R - - - - - - -
+    ///      (0, 0)                         : . . . . . . .  the wedge:
+    ///                                     : . . . . . . .  neither segment
+    ///                                     : . (13, -4). .  reaches it, so R
+    ///                                     : . . . . . . .  is the nearest
+    ///                                     : . . . . . . .  road point
+    /// ```
+    fn left_corner() -> Waypoints {
+        Waypoints::build_open(vec![(0.0, 0.0), (10.0, 0.0), (10.0, 10.0)])
     }
 
-    /// A point `radius` from that corner, down the middle of the wedge
-    /// outside it.
-    ///
-    /// The wedge runs from square across the arriving segment round to
-    /// square across the leaving one, so it is the turn's own angle wide
-    /// and a gentle bend leaves a sliver. Its middle is half the turn off
-    /// the perpendicular, on the outside: below a road turning left.
-    fn in_the_wedge(turn: f64, radius: f64) -> (f64, f64) {
-        let bisector = (-90.0f64.copysign(turn) + turn / 2.0).to_radians();
-
-        // Return the point, off the corner at (10, 0).
-        (
-            10.0 + radius * libm::cos(bisector),
-            radius * libm::sin(bisector),
-        )
+    /// The same road turning south instead, so its corner turns right
+    /// where [`left_corner`]'s turns left and the wedge sits above the
+    /// road rather than below it.
+    fn right_corner() -> Waypoints {
+        Waypoints::build_open(vec![(0.0, 0.0), (10.0, 0.0), (10.0, -10.0)])
     }
 
-    /// A point `radius` from that corner, `nudge` degrees off the middle
-    /// of the overlap inside the bend, where both segments reach it.
-    ///
-    /// The opposite region to [`in_the_wedge`], which is where neither
-    /// does. A corner leaves exactly those two.
-    fn in_the_overlap(turn: f64, radius: f64, nudge: f64) -> (f64, f64) {
-        let bisector = (90.0f64.copysign(turn) + turn / 2.0 + nudge).to_radians();
+    /// A road bending gently left rather than turning: 10 m east, then
+    /// 25 m along a 7-24-25 triangle, about 16 degrees off.
+    fn gentle_left_corner() -> Waypoints {
+        Waypoints::build_open(vec![(0.0, 0.0), (10.0, 0.0), (34.0, 7.0)])
+    }
 
-        // Return the point, off the corner at (10, 0).
-        (
-            10.0 + radius * libm::cos(bisector),
-            radius * libm::sin(bisector),
-        )
+    /// The same gentle bend the other way.
+    fn gentle_right_corner() -> Waypoints {
+        Waypoints::build_open(vec![(0.0, 0.0), (10.0, 0.0), (34.0, -7.0)])
     }
 
     fn square() -> Waypoints {
@@ -623,217 +623,100 @@ mod tests {
         assert!((outside + 1.0).abs() < 1e-12 && (inside - 1.0).abs() < 1e-12);
     }
 
-    /// The shortest way round a loop of `total` from `from` to `to`.
-    ///
-    /// Arc length is continuous around a closed path but its *number*
-    /// is not, since the seam is where 40 becomes 0, so steps across it
-    /// are compared the way the path sees them.
-    fn arc_step(total: f64, from: f64, to: f64) -> f64 {
-        let half = total / 2.0;
-
-        // Return the signed step, whichever way round is shorter.
-        (to - from + half).rem_euclid(total) - half
-    }
-
-    /// Sweeps a point once around `center` at `radius` and returns the
-    /// largest step each half of the pair takes between samples.
-    ///
-    /// On a closed path the offset is 1-Lipschitz in the position of the
-    /// point, being a distance to the path, so a step larger than the
-    /// point itself moved is a discontinuity. The arc length is not, and
-    /// `arc_length_skips_the_inside_of_a_corner` says why.
-    fn largest_step(road: &Waypoints, center: (f64, f64), radius: f64) -> (f64, f64) {
-        const SAMPLES: usize = 1440;
-        let total = road.total_length();
-        let at = |i: usize| {
-            let angle = std::f64::consts::TAU * i as f64 / SAMPLES as f64;
-            road.frenet(
-                center.0 + radius * libm::cos(angle),
-                center.1 + radius * libm::sin(angle),
-            )
-        };
-        let (mut worst_s, mut worst_lateral) = (0.0f64, 0.0f64);
-        let mut previous = at(0);
-        for i in 1..=SAMPLES {
-            let current = at(i);
-            worst_s = worst_s.max(arc_step(total, previous.0, current.0).abs());
-            worst_lateral = worst_lateral.max((current.1 - previous.1).abs());
-            previous = current;
-        }
-
-        // Return the worst step either half took.
-        (worst_s, worst_lateral)
-    }
-
     #[test]
-    fn a_corner_reads_continuously_all_the_way_around_its_wedge() {
-        // Outside a corner is the one place a projection stops at a
-        // vertex rather than on a segment, and the two segments meeting
-        // there have to agree about what the point is.
+    fn frenet_offset_is_continuous_all_around_a_corner() {
+        // A full circle, so it crosses the wedge where neither segment
+        // reaches, runs alongside each of them in turn, and passes
+        // through the overlap inside the bend. The offset holds across
+        // all of it, the bisector included: the nearer segment changes
+        // there, but both are the same distance away, which is what
+        // makes it the bisector.
         //
-        // The radii bracket the corner: inside it, across it, and wide
-        // enough to sweep past whatever else is near.
+        // Every corner shape a road makes: a right angle either way, a
+        // gentle bend either way, and a loop's seam either way round,
+        // where the arc length wraps as well. The radii bracket the
+        // corner: inside it, across it, and wide enough to sweep past
+        // whatever else is near.
+        //
+        // The offset shouldn't change faster than the point moves, so a
+        // step larger than the point itself took is a discontinuity
+        // rather than a coarse sweep. The arc length carries no such
+        // bound, and `frenet`'s own docs say why.
         const RADII: [f64; 3] = [0.5, 3.0, 12.0];
-        let check = |road: &Waypoints, center: (f64, f64), radius: f64, what: String| {
-            let moved = std::f64::consts::TAU * radius / 1440.0;
-            let (_, worst) = largest_step(road, center, radius);
-            assert!(
-                worst <= moved + 1e-9,
-                "offset jumped {worst} at {what}, r = {radius}, \
-                 where the point moved {moved}"
-            );
-        };
-
-        // Every turn, each way round.
-        for turn in TURNS {
-            let road = corner(turn);
-            for radius in RADII {
-                check(&road, (10.0, 0.0), radius, format!("a turn of {turn}"));
-            }
-        }
-
-        // And round a closed loop both ways, where the seam at (0, 0) is
-        // a corner like any other and the arc length wraps through it.
-        for (square, name) in [(square(), "ccw"), (square_clockwise(), "cw")] {
-            for center in [(10.0, 0.0), (0.0, 0.0)] {
-                for radius in RADII {
-                    check(&square, center, radius, format!("{name} {center:?}"));
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn arc_length_skips_the_inside_of_a_corner() {
-        // Inside a bend both segments reach the point, and the corner's
-        // bisector is where they are equally near. The nearest one
-        // crosses there, so the arc length naming it jumps the corner
-        // with it. That is what nearest means on a polyline, and it is
-        // why the sweep above asks continuity of the offset alone.
-        //
-        // The offset is the half that holds, reading alike either side
-        // because both points really are the same distance from the road.
-        // The jump spans the two nearest points either side of the
-        // corner, so it grows with the turn and vanishes as the road
-        // straightens. The pair straddles the bisector as closely as it
-        // can: far enough apart that which segment is nearer is not in
-        // doubt, near enough that neither has moved far off it.
-        const RADIUS: f64 = 0.5;
-        const NUDGE: f64 = 0.02;
-        for turn in TURNS {
-            let road = corner(turn);
-            let half = (turn / 2.0).to_radians().abs();
-            let (before_x, before_y) = in_the_overlap(turn, RADIUS, -NUDGE);
-            let (after_x, after_y) = in_the_overlap(turn, RADIUS, NUDGE);
-            let (before, before_offset) = road.frenet(before_x, before_y);
-            let (after, after_offset) = road.frenet(after_x, after_y);
-
-            let jump = 2.0 * RADIUS * libm::sin(half);
-            assert!(
-                ((after - before).abs() - jump).abs() < 1e-3,
-                "turn {turn}: {before} to {after}, expected a jump of {jump}"
-            );
-
-            let off_the_road = (RADIUS * libm::cos(half)).copysign(turn);
-            for offset in [before_offset, after_offset] {
-                assert!(
-                    (offset - off_the_road).abs() < 1e-3,
-                    "turn {turn}: offset {offset}, expected {off_the_road}"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn a_point_beyond_a_corner_is_measured_to_the_corner() {
-        // Past the corner the road has turned away, so the nearest road
-        // is the corner itself rather than anywhere on the line the
-        // arriving segment was holding. The arc length pins there however
-        // far past it the point gets, and the offset is the distance to
-        // it, signed to the outside of the bend.
-        //
-        // Every turn, because the answer belongs to the corner: a rule
-        // that only held at a right angle, or only one way round, would
-        // pass on a square alone.
-        for turn in TURNS {
-            let road = corner(turn);
-            for radius in [0.5, 3.0, 40.0] {
-                let (x, y) = in_the_wedge(turn, radius);
-                let (s, lateral) = road.frenet(x, y);
-                assert!(
-                    (s - 10.0).abs() < 1e-12,
-                    "turn {turn}, radius {radius}: arc length {s}"
-                );
-                assert!(
-                    (lateral + radius.copysign(turn)).abs() < 1e-9,
-                    "turn {turn}, radius {radius}: offset {lateral}"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn a_car_carrying_straight_on_where_the_road_turned_ends_up_outside_the_bend() {
-        // Dead in line with the segment it came in on, so that segment's
-        // own perpendicular reads zero and cannot say which side of the
-        // road the car ended up. The corner answers instead, and it puts
-        // the car outside the bend, a vertex's distance away: right of a
-        // road that turned left, left of one that turned right.
-        //
-        // Both directions, because that sign is the whole of what the
-        // corner decides, and a rule answering "right" for every wedge
-        // would pass on left turns alone. Both angles too, because they
-        // arrive differently: at a right angle the leaving segment still
-        // holds the projection, at its very start, so it takes the tie
-        // and its own perpendicular answers, while past a right angle it
-        // stops short as well and the point is in the wedge proper.
-        let corner = |to: (f64, f64)| Waypoints::build_open(vec![(0.0, 0.0), (10.0, 0.0), to]);
-        for (road, outside) in [
-            (corner((10.0, 10.0)), -1.0),
-            (corner((5.0, 5.0)), -1.0),
-            (corner((10.0, -10.0)), 1.0),
-            (corner((5.0, -5.0)), 1.0),
+        // A quarter of a degree apart, once around.
+        const SAMPLES: usize = 1440;
+        for (road, center, what) in [
+            (left_corner(), (10.0, 0.0), "a right angle left"),
+            (right_corner(), (10.0, 0.0), "a right angle right"),
+            (gentle_left_corner(), (10.0, 0.0), "a gentle bend left"),
+            (gentle_right_corner(), (10.0, 0.0), "a gentle bend right"),
+            (square(), (0.0, 0.0), "a loop's seam"),
+            (square_clockwise(), (0.0, 0.0), "a loop's seam, clockwise"),
         ] {
-            for x in [12.0, 20.0, 40.0] {
-                let (s, lateral) = road.frenet(x, 0.0);
-                assert!((s - 10.0).abs() < 1e-12, "{x} gave {s}");
+            for radius in RADII {
+                // Where the point sits on this sample of the circle,
+                // and how far off the road the sweep reads it as being.
+                let offset_at = |sample: usize| {
+                    let angle = std::f64::consts::TAU * sample as f64 / SAMPLES as f64;
+                    road.frenet(
+                        center.0 + radius * libm::cos(angle),
+                        center.1 + radius * libm::sin(angle),
+                    )
+                    .1
+                };
+
+                // How far the point itself travels between two samples,
+                // which is the most its offset may change between them.
+                let step_distance = std::f64::consts::TAU * radius / SAMPLES as f64;
+
+                // The largest the offset moves between two neighbors.
+                let mut largest_change = 0.0f64;
+                let mut previous = offset_at(0);
+                for sample in 1..=SAMPLES {
+                    let current = offset_at(sample);
+                    largest_change = largest_change.max((current - previous).abs());
+                    previous = current;
+                }
+
                 assert!(
-                    (lateral - outside * (x - 10.0)).abs() < 1e-12,
-                    "{x} gave {lateral}"
+                    largest_change <= step_distance + 1e-9,
+                    "offset jumped {largest_change} at {what}, r = {radius}, \
+                     where the point moved {step_distance}"
                 );
             }
         }
     }
 
     #[test]
-    fn passing_the_end_of_a_closed_roads_last_segment_lands_on_its_seam() {
-        // The last segment ends where the first begins, so passing its
-        // end arrives at the seam, where the total and zero are the same
-        // place. The tie there goes to the earlier segment, the one
-        // starting at zero.
-        //
-        // A closed path has no ends to run off, so this is the corner
-        // rule and nothing else: the offset is the distance to the seam
-        // vertex. Both ways round the loop, since the side is the
-        // corner's to give, and the two points in each are mirror images
-        // about it and read alike.
-        for (square, outside) in [(square(), -1.0), (square_clockwise(), 1.0)] {
-            let (s, lateral) = square.frenet(-2.0, -2.0);
-            assert_eq!(s, 0.0);
-            assert!(
-                (lateral - outside * 8.0f64.sqrt()).abs() < 1e-12,
-                "{lateral}"
-            );
+    fn frenet_keeps_one_side_of_the_road_all_round_a_corner() {
+        // Which side a car is on is the whole of what a lane band reads,
+        // and past a corner that answer comes from the corner rather
+        // than from either segment. It has to agree with the segments
+        // either side of it, or a car would read as swapping lanes by
+        // rounding a bend.
+        for mirror in [1.0, -1.0] {
+            let road = if mirror > 0.0 {
+                left_corner()
+            } else {
+                right_corner()
+            };
 
-            let (s, lateral) = square.frenet(-6.0, -1.0);
-            assert_eq!(s, 0.0);
-            assert!(
-                (lateral - outside * 37.0f64.sqrt()).abs() < 1e-12,
-                "{lateral}"
-            );
-            let (mirrored_s, mirrored_lateral) = square.frenet(-1.0, -6.0);
-            assert_eq!(mirrored_s, s);
-            assert!((mirrored_lateral - lateral).abs() < 1e-12);
+            // Outside the bend the whole way: alongside the arriving
+            // segment, through the wedge past the corner, then alongside
+            // the leaving one.
+            for (x, y) in [(5.0, -2.0), (13.0, -4.0), (12.0, 5.0)] {
+                let (_, lateral) = road.frenet(x, y * mirror);
+                assert!(lateral * -mirror > 0.0, "({x}, {y}) read {lateral}");
+            }
+
+            // And down the other side, which takes the three other ways
+            // an answer comes back: a segment's own perpendicular, the
+            // overlap where both reach and the nearer one wins, and past
+            // the end of the road.
+            for (x, y) in [(5.0, 2.0), (9.0, 5.0), (8.0, 12.0)] {
+                let (_, lateral) = road.frenet(x, y * mirror);
+                assert!(lateral * mirror > 0.0, "({x}, {y}) read {lateral}");
+            }
         }
     }
 
@@ -844,7 +727,7 @@ mod tests {
         // inside the bend's reach, which is where every lane on a road
         // sits, and both ways of failing past it are here so that neither
         // is rediscovered from inside a planner.
-        let road = corner(90.0);
+        let road = left_corner();
 
         // Inside the reach, and the pair comes back as it went in.
         for (s, lane) in [(5.0, 3.5), (5.0, -3.5), (15.0, 2.0)] {
@@ -857,18 +740,11 @@ mod tests {
             );
         }
 
-        // Outside the bend one pair answers for a whole arc, since the
-        // points a given distance from the vertex all sit at that distance
-        // across the wedge. So the map is not one to one, and
-        // `point_at_offset` can only ever hand back one of them.
-        const RADIUS: f64 = 3.5;
-        for degrees in [-90.0_f64, -60.0, -30.0, 0.0] {
-            let angle = degrees.to_radians();
-            let (x, y) = (10.0 + RADIUS * libm::cos(angle), RADIUS * libm::sin(angle));
-            let (s, lane) = road.frenet(x, y);
-            assert!((s - 10.0).abs() < 1e-9, "{degrees} deg gave s {s}");
-            assert!((lane + RADIUS).abs() < 1e-9, "{degrees} deg gave {lane}");
-        }
+        // Outside the bend one pair answers for a whole arc, since every
+        // point 5 m from the corner is 5 m from the road. So the map is
+        // not one to one, and `point_at_offset` can only ever hand back
+        // one of them.
+        assert_eq!(road.frenet(15.0, 0.0), road.frenet(13.0, -4.0));
 
         // And inside it the two offsets overlap, so a point placed at one
         // arc length is nearer another stretch of road and answers with
@@ -879,9 +755,29 @@ mod tests {
         assert!((s - 13.5).abs() < 1e-12, "{s}");
         assert!((lane - 3.0).abs() < 1e-12, "{lane}");
     }
+    #[test]
+    fn frenet_wraps_to_zero_at_a_closed_roads_seam() {
+        // The last segment ends where the first begins, so the arc
+        // length has to come back to zero there rather than carry on
+        // past the total. Following the road through the seam is what
+        // pins that: just before it reads near the total, at it exactly
+        // zero, and just after it a little above zero.
+        //
+        // Both ways round the loop, since the two arrive at the seam
+        // along different segments.
+        for road in [square(), square_clockwise()] {
+            let total = road.total_length();
+            for expected in [total - 0.5, 0.0, 0.5] {
+                let on_the_road = road.point_at(expected);
+                let (s, lateral) = road.frenet(on_the_road.x, on_the_road.y);
+                assert!((s - expected).abs() < 1e-12, "{expected} came back {s}");
+                assert!(lateral.abs() < 1e-12, "{expected} read {lateral} off it");
+            }
+        }
+    }
 
     #[test]
-    fn an_open_road_goes_on_measuring_past_either_of_its_ends() {
+    fn frenet_goes_on_measuring_past_either_end_of_an_open_road() {
         // A road that has run out is the one case where a projection
         // stopping short does not mean a corner, so both halves carry on:
         // the arc length runs past the end or below zero, and the offset
