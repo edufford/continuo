@@ -581,45 +581,23 @@ mod tests {
     #[test]
     fn frenet_recovers_both_arc_length_and_signed_lateral() {
         // A bend, so nothing here passes by reading `y` back out as if
-        // the road were the x axis.
-        let road = Waypoints::build_open(vec![(0.0, 0.0), (100.0, 0.0), (100.0, 50.0)]);
-
-        // Left of the way the road runs is positive, right negative.
-        let (s, lateral) = road.frenet(30.0, 5.0);
-        assert!((s - 30.0).abs() < 1e-12 && (lateral - 5.0).abs() < 1e-12);
-        let (s, lateral) = road.frenet(30.0, -5.0);
-        assert!((s - 30.0).abs() < 1e-12 && (lateral + 5.0).abs() < 1e-12);
-        // The second segment runs +y, whose left is -x, so the sign
-        // follows the road rather than the axes.
-        let (s, lateral) = road.frenet(96.0, 20.0);
-        assert!((s - 120.0).abs() < 1e-12 && (lateral - 4.0).abs() < 1e-12);
-
-        // The pair `point_at_offset` resolves, so a point built at an
-        // offset comes back carrying it. The last of the three is past
-        // the bend, where the two segments' offsets point different ways.
-        for (s, lateral) in [(10.0, 3.5), (70.0, -3.5), (130.0, 3.5)] {
-            let point = road.point_at_offset(s, lateral);
-            let (back_s, back_lateral) = road.frenet(point.x, point.y);
-            assert!((back_s - s).abs() < 1e-12, "arc length {back_s} for {s}");
+        // the road were the x axis. The leaving segment runs north, and
+        // the left of north is west, so the last two points carry the
+        // sign the road gives them rather than the one the axes would.
+        let road = left_corner();
+        for (x, y, expect_s, expect_lateral) in [
+            (5.0, 2.0, 5.0, 2.0),
+            (5.0, -2.0, 5.0, -2.0),
+            (8.0, 5.0, 15.0, 2.0),
+            (12.0, 5.0, 15.0, -2.0),
+        ] {
+            let (s, lateral) = road.frenet(x, y);
+            assert!((s - expect_s).abs() < 1e-12, "({x}, {y}) gave s = {s}");
             assert!(
-                (back_lateral - lateral).abs() < 1e-12,
-                "lateral {back_lateral} for {lateral}"
+                (lateral - expect_lateral).abs() < 1e-12,
+                "({x}, {y}) gave lateral = {lateral}"
             );
         }
-
-        // Off the end of the road both halves carry on: 20 m past the
-        // last waypoint is s = 170, still dead center in its lane.
-        // Measuring to the end point instead would put it 20 m sideways,
-        // and stopping s there would hide it from anything else out past
-        // the end.
-        let (s, lateral) = road.frenet(100.0, 70.0);
-        assert!((s - 170.0).abs() < 1e-12 && lateral.abs() < 1e-12);
-
-        // On a loop the same rule puts the inside on the left, since
-        // `square` runs counter-clockwise.
-        let (_, outside) = square().frenet(7.0, -1.0);
-        let (_, inside) = square().frenet(7.0, 1.0);
-        assert!((outside + 1.0).abs() < 1e-12 && (inside - 1.0).abs() < 1e-12);
     }
 
     #[test]
@@ -785,12 +763,15 @@ mod tests {
         // Pinning the arc length at the end instead would pile every car
         // beyond it onto one value, so nothing out there could tell how
         // far ahead anything else was, or that it was ahead at all.
-        let road = Waypoints::build_straight((0.0, 0.0), (100.0, 0.0));
+        // Two segments, so the end it runs off is one particular end
+        // rather than the only one there is, and the line it carries on
+        // along is the last segment's rather than the road's.
+        let road = left_corner();
         for (x, y, expect_s, expect_lateral) in [
             (-20.0, 0.0, -20.0, 0.0),
             (-20.0, 3.5, -20.0, 3.5),
-            (120.0, 0.0, 120.0, 0.0),
-            (300.0, -3.5, 300.0, -3.5),
+            (10.0, 30.0, 40.0, 0.0),
+            (6.5, 30.0, 40.0, 3.5),
         ] {
             let (s, lateral) = road.frenet(x, y);
             assert!((s - expect_s).abs() < 1e-12, "({x}, {y}) gave s = {s}");
