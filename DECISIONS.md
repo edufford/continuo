@@ -99,9 +99,9 @@ it got there, including the roads not taken.
     acronym), with the module following the type: `core::random`.
   - **Seed derivation is its own concern**, `continuo-core::seed`: it uses
     the hash to fold names down to 64 bits and the generator's scrambler to
-    combine values, and belongs to neither. `mix` → `mix_seeds`;
+    combine values, and belongs to neither. `mix` -> `mix_seeds`;
     `derive_component_seed` and the new `derive_step_seed` live there.
-    `StepCtx::rng()` → `step_random()`.
+    `StepCtx::rng()` -> `step_random()`.
   - The world's two identifying values are named for what they hold, and
     named the same way everywhere (**`world_name` and `world_seed`**) in
     `ConductorConfig`, the event-log header, `StepCtx`, and the derivation
@@ -534,7 +534,7 @@ it got there, including the roads not taken.
     the `libm` crate is therefore deferred on evidence rather than on hope.
 - **2026-08-08**: **Non-finite floats are rejected where they are published**,
   rather than reaching the wire as `null`.
-  - `serde_json` writes `NaN` and `±inf` as `null` without complaint, so a
+  - `serde_json` writes `NaN` and `+/-inf` as `null` without complaint, so a
     component whose arithmetic diverged published a payload that decodes
     nowhere, and the first sign of it was a decode failure at a different
     component, at a later instant.
@@ -572,8 +572,8 @@ it got there, including the roads not taken.
     non-finite guard halts through the error path rather than by unwinding past
     a conductor that has a standing `TODO(M7)` saying it cannot catch a panic.
   - Swallowing stays available by matching on the `Result`, which is a
-    component saying so where a reader can see it, rather than an `if let
-    Ok(..)` that says nothing.
+    component saying so where a reader can see it, rather than an
+    `if let Ok(..)` that says nothing.
   - Sites outside a step have nowhere to return to. The demo's
     `MonitorTransport` callback records the first failure and the next thing
     downstream with an error channel reports it, which stops the run at the
@@ -585,10 +585,11 @@ it got there, including the roads not taken.
     variable-length fields touched, moving a byte from the end of one to the
     start of the next gave the identical byte stream. Two different worlds
     hashed alike.
-  - A component contributes `path | next_due | [key | seq | payload]* |
-    state?`. The touching pairs are payload to the next message's key, payload
-    to the state after it, and one component's last field to the next
-    component's path. Only the middle one had a separator.
+  - A component contributes
+    `path | next_due | [key | seq | payload]* | state?`. The touching pairs
+    are payload to the next message's key, payload to the state after it,
+    and one component's last field to the next component's path. Only the
+    middle one had a separator.
   - PLAN.md justified the change by calling the marker unsound, and that
     overstated it. In principle it is right, since a separator must be a
     sequence the content cannot contain and payloads are arbitrary bytes. In
@@ -618,8 +619,8 @@ it got there, including the roads not taken.
     pacing, always at the pose logger's instant. PLAN.md attributed it to that
     logger's accumulated inbox and the `(publisher, seq)` sort in `drain`.
   - That is not what it was, which measuring settled. Per-instant work at the
-    second boundary and the logger's instant is 82 µs and 91 µs; `drain` of a
-    sim-second of poses costs ~155 µs and the logger's whole step ~231 µs. None
+    second boundary and the logger's instant is 82 us and 91 us; `drain` of a
+    sim-second of poses costs ~155 us and the logger's whole step ~231 us. None
     of it approaches the 1 to 2 ms being reported.
   - The cause is the schedule meeting the timer. The logger samples 1 ns past
     each second boundary, and a coarse sleep aimed at the boundary overshoots
@@ -992,9 +993,9 @@ it got there, including the roads not taken.
     a single target resolves fewer packages**: 142 units against 399 here,
     the whole Zenoh tree among the missing. Their dependencies then unify
     features differently, so the crate links a different `thiserror` and
-    every crate between the two rebuilds, which cargo reports as `info of
-    dependency thiserror changed`. That cost 12 to 31 seconds a run on every
-    agent until the steps were reordered.
+    every crate between the two rebuilds, which cargo reports as
+    `info of dependency thiserror changed`. That cost 12 to 31 seconds a run
+    on every agent until the steps were reordered.
   - Worth knowing before optimizing anything else here: the same step
     measured 79, 70, 71, 37 and 92 seconds across five runs of materially
     identical work, so a single run says almost nothing.
@@ -1137,15 +1138,16 @@ it got there, including the roads not taken.
     as one. Nothing needs it yet.
 
 - **2026-08-19**: **A plant's initial state is one deserializable struct
-  rather than positional arguments.** `CarState { position, orientation,
-  speed }`, and since the constructor was changing anyway it cost nothing.
-  It names the integrator state in one place, a later model adds a field
-  rather than a fifth argument, and when scenarios come from files it is
-  what those files carry, with no signature to change. The FMU side already
-  works this way, since initial values are name-keyed data checked against
-  each variable's declared type, so both paths are converging on the shape
-  scenario configuration needs: a registry instantiating component types
-  from data cannot know any model's state layout.
+  rather than positional arguments.**
+  `CarState { position, orientation, speed }`, and since the constructor was
+  changing anyway it cost nothing. It names the integrator state in one
+  place, a later model adds a field rather than a fifth argument, and when
+  scenarios come from files it is what those files carry, with no signature
+  to change. The FMU side already works this way, since initial values are
+  name-keyed data checked against each variable's declared type, so both
+  paths are converging on the shape scenario configuration needs: a registry
+  instantiating component types from data cannot know any model's state
+  layout.
   - **Named for its contents rather than for the model.** A `UnicycleState`
     would be renamed by the first plant that is not a unicycle, and renamed
     for nothing, since where a car is and how fast it is going is what any
