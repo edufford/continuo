@@ -1339,8 +1339,9 @@ it got there, including the roads not taken.
     perpendiculars overlap and the nearest point crosses between the
     segments at the bisecting line before reaching the end of the first
     segment. That is inherent to following the nearest segment on a raw
-    polyline with no curvature, so a test pins the expected magnitude of
-    this type of arc length discontinuity.
+    polyline with no curvature. `frenet`'s doc says what the step is,
+    twice the point's distance to the segment that lost, rather than a
+    test pinning a number a curved road removes.
   - Using the straight line between two cars instead of the arc length
     projection was considered but rejected: a chord understates the road a
     follower has to cover and swings as the pair rounds a bend so it does
@@ -1348,11 +1349,11 @@ it got there, including the roads not taken.
     measure arc length along lanes and avoid this in other ways, highway-env
     by fitting a spline before projecting onto a polyline lane and SUMO by
     never projecting at all, carrying a vehicle's lane position as state.
-    For now, `RadarSensor` documents the impact of arc length deviation from
-    inside corner points on its range values.
-  - `project_arc_length` is the same call's arc length half, for a caller
-    with no use for the offset, so the two cannot disagree about which
-    segment won.
+    A range read as the difference of two arc lengths inherits the step,
+    which is the cost a radar on this road pays.
+  - A caller with no use for the offset reads `frenet(x, y).0` at the
+    call site rather than through a wrapper, since both halves are worked
+    out anyway and a wrapper would hide that.
 
   Case 2 is where the offset calculation method needed improvement. The
   initial implementation measured the perpendicular to that segment's
@@ -1470,11 +1471,10 @@ it got there, including the roads not taken.
   host filled in, where a count set over the points sent leaves the tail
   repeating, and it answers with an error rather than a panic.
 
-  - A segment of no length has no direction, so `frenet` answers zero
-    for the offset rather than a distance. Both its ends are the vertex
-    it shares with a neighbor, so it is exactly as near and wins the tie
-    wherever it is the earlier. A road repeating its first point reads
-    every car as sitting on the centerline.
+  - A segment of no length has no direction, so nothing built from its
+    direction means anything. Both its ends are the vertex it shares with
+    a neighbor, so it is exactly as near and wins the tie wherever it is
+    the earlier, and `project` had a guard answering that vertex for it.
 
   - The check is for a min length rather than for equal points, because a
     heading uses the segment's direction and is directly affected by even
@@ -1483,7 +1483,7 @@ it got there, including the roads not taken.
     such as 45 degrees off the road, or 135 for a spike doubling back, and
     `traffic_spawner` faces a car that way.
 
-  - Two guards inside `frenet` go with it: the projection always has a
-    length to divide by, and the arc-length table cannot lose one. A
-    `TODO` records that the panic wants to be a `Result` once roads
-    arrive as imported data rather than Rust literals.
+  - The guard inside `project` goes with it, since the projection always
+    has a length to divide by. A `TODO` records that the panic wants to
+    be a `Result` once roads arrive as imported data rather than Rust
+    literals.

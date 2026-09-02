@@ -54,7 +54,7 @@ impl Waypoints {
     /// How short a segment may be before a road carrying it is refused.
     ///
     /// A millimeter is far below anything this world models, where a car
-    /// is `CAR_LENGTH` and a lane a few meters wide, and far above the
+    /// is meters long and a lane a few meters wide, and far above the
     /// float noise and import artifacts an invalid segment could come from.
     pub const MIN_SEGMENT_LENGTH: f64 = 1e-3;
 
