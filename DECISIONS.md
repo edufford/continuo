@@ -1315,3 +1315,29 @@ it got there, including the roads not taken.
     entry already records.
   - `DEMO_WORLD_HASH` does not move. Every default is the number it was, and
     nothing in the demo is an FMU yet.
+
+- **2026-09-01**: **A road is refused where one waypoint sits closer to
+  the one before it than `MIN_SEGMENT_LENGTH`**, one millimeter, which
+  sits below any road feature and above the noise that makes such a
+  segment. `build_open` and `build_closed` panic on one, and
+  `Waypoints::check_for_too_short_segments` is public so a caller can
+  ask first. The FMU controller does: it rebuilds a road from arrays a
+  host filled in, where a count set over the points sent leaves the tail
+  repeating, and it answers with an error rather than a panic.
+
+  - A segment of no length has no direction, so nothing built from its
+    direction means anything. Both its ends are the vertex it shares with
+    a neighbor, so it is exactly as near and wins the tie wherever it is
+    the earlier, and `project` had a guard answering that vertex for it.
+
+  - The check is for a min length rather than for equal points, because a
+    heading uses the segment's direction and is directly affected by even
+    tiny deviations in the segment points. A jitter of a nanometer still
+    points where it points, so the heading there can vary by large amounts
+    such as 45 degrees off the road, or 135 for a spike doubling back, and
+    `traffic_spawner` faces a car that way.
+
+  - The guard inside `project` goes with it, since the projection always
+    has a length to divide by. A `TODO` records that the panic wants to
+    be a `Result` once roads arrive as imported data rather than Rust
+    literals.

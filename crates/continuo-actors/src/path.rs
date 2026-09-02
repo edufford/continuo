@@ -51,7 +51,52 @@ impl Waypoints {
         Self::build_open(vec![from, to])
     }
 
+    /// How short a segment may be before a road carrying it is refused.
+    ///
+    /// A millimeter is far below anything this world models, where a car
+    /// is meters long and a lane a few meters wide, and far above the
+    /// float noise and import artifacts an invalid segment could come from.
+    pub const MIN_SEGMENT_LENGTH: f64 = 1e-3;
+
+    /// Find the first waypoint too close to the one before it, if any.
+    ///
+    /// [`build_open`](Self::build_open()) and
+    /// [`build_closed`](Self::build_closed()) refuse a road with a
+    /// segment shorter than [`MIN_SEGMENT_LENGTH`](Self::MIN_SEGMENT_LENGTH),
+    /// and an external caller like the FMU controller can check before
+    /// building rather than be panicked.
+    pub fn check_for_too_short_segments(points: &[(f64, f64)], is_closed: bool) -> Option<usize> {
+        let segments = if is_closed {
+            points.len()
+        } else {
+            points.len() - 1
+        };
+
+        // Return the waypoint that's too close to its previous neighbor, since
+        // that would be the one to take out.
+        (0..segments)
+            .find(|&i| {
+                let a = points[i];
+                let b = points[(i + 1) % points.len()];
+                ((b.0 - a.0).powi(2) + (b.1 - a.1).powi(2)).sqrt() < Self::MIN_SEGMENT_LENGTH
+            })
+            .map(|i| (i + 1) % points.len())
+    }
+
     fn build(points: Vec<(f64, f64)>, is_closed: bool) -> Self {
+        // TODO(PLAN "World and map"): hand back a Result rather than
+        // panic. A road written out as a Rust literal is a bug worth
+        // halting on, but an imported map is data, and the FMU
+        // controller already has to check ahead of this call so that it
+        // can answer its host with an error instead.
+        if let Some(i) = Self::check_for_too_short_segments(&points, is_closed) {
+            panic!(
+                "waypoint {i} at {:?} is too close to the one before it, under {} m",
+                points[i],
+                Self::MIN_SEGMENT_LENGTH
+            );
+        }
+
         // A closed path has one segment per point (the last closes the
         // loop); an open one has a segment between each adjacent pair.
         let num_segments = if is_closed {
@@ -217,8 +262,9 @@ impl Waypoints {
         // Point-to-segment projection, evaluated per segment, keeping the
         // closest hit. For each segment a→b:
         //   (dx, dy)  segment direction vector b - a
-        //   len2      its squared length (avoids a sqrt; zero for
-        //             degenerate duplicate points)
+        //   len2      its squared length, which avoids a sqrt. `build`
+        //             holds every segment at `MIN_SEGMENT_LENGTH` or
+        //             more, so this is never zero and never near it
         //   t         the query point's position along the segment as a
         //             fraction in [0, 1]: the perpendicular-foot parameter
         //             dot(p - a, b - a) / |b - a|^2, clamped so points
@@ -236,11 +282,7 @@ impl Waypoints {
             let b = self.points[(i + 1) % self.points.len()];
             let (dx, dy) = (b.0 - a.0, b.1 - a.1);
             let len2 = dx * dx + dy * dy;
-            let t = if len2 > 0.0 {
-                (((x - a.0) * dx + (y - a.1) * dy) / len2).clamp(0.0, 1.0)
-            } else {
-                0.0
-            };
+            let t = (((x - a.0) * dx + (y - a.1) * dy) / len2).clamp(0.0, 1.0);
             let (px, py) = (a.0 + dx * t, a.1 + dy * t);
             let d2 = (x - px).powi(2) + (y - py).powi(2);
             // Strict '<': on an exact tie (e.g. a shared corner) the
@@ -420,5 +462,53 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn only_waypoints_closer_than_the_threshold_are_refused() {
+        const UNDER: f64 = Waypoints::MIN_SEGMENT_LENGTH / 10.0;
+        const OVER: f64 = Waypoints::MIN_SEGMENT_LENGTH * 10.0;
+        let corner = |third: (f64, f64)| vec![(0.0, 0.0), (10.0, 0.0), third, (20.0, 10.0)];
+        for (points, is_closed, expected) in [
+            (corner((10.0, 0.0)), false, Some(2)),
+            (corner((10.0 + UNDER, UNDER)), false, Some(2)),
+            (corner((10.0 + OVER, OVER)), false, None),
+            (corner((12.0, 3.0)), false, None),
+            (
+                vec![(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 0.0)],
+                true,
+                Some(0),
+            ),
+            (
+                vec![(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)],
+                true,
+                None,
+            ),
+        ] {
+            assert_eq!(
+                Waypoints::check_for_too_short_segments(&points, is_closed),
+                expected,
+                "{points:?}, closed = {is_closed}"
+            );
+        }
+
+        // This project's demo roads should not have any segments
+        // that are too short.
+        for road in [
+            Waypoints::ellipse((0.0, 0.0), 30.0, 20.0, 72),
+            Waypoints::build_straight((0.0, 0.0), (1200.0, 0.0)),
+            square(),
+        ] {
+            assert_eq!(
+                Waypoints::check_for_too_short_segments(road.points(), road.is_closed()),
+                None
+            );
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "waypoint 2 at (10.0, 0.0) is too close to the one before it")]
+    fn building_a_road_checks_its_own_segment_lengths() {
+        Waypoints::build_open(vec![(0.0, 0.0), (10.0, 0.0), (10.0, 0.0), (10.0, 10.0)]);
     }
 }
