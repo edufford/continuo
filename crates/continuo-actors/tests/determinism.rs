@@ -24,8 +24,7 @@ const CAR_LIMITS: PlantLimits = PlantLimits::highway_car();
 /// and still count as sharing it.
 ///
 /// The three cars are spread evenly around a loop of about 205 m, so at
-/// this range each of them sees the car in front and not the one beyond
-/// that.
+/// this range each sees the car in front and not the one beyond it.
 const RADAR_RANGE: f64 = 120.0;
 const RADAR_LANE_TOLERANCE: f64 = 1.75;
 
@@ -47,18 +46,16 @@ fn run_world(sim_seconds: i64, world_seed: u64) -> EventLog {
         Conductor::new(config, transport).expect("free-run config is always accepted");
     conductor.add_tick_callback(recorder.tick_callback());
 
-    // Each car is registered as a composite
-    // `carN = [radar, controller, physics]`. Registration order is
-    // declared sibling order, which fixes both the execution order at
-    // shared instants and the visibility rule's "earlier sibling": the
-    // controller steps after the radar and before the physics, so its
-    // command reaches the physics in the same step, and the physics'
-    // pose reaches both of the others at their next step.
+    // Each car is a composite `carN = [radar, controller, physics]`.
+    // Registration order is sibling order, which fixes both the
+    // execution order at shared instants and the visibility rule's
+    // "earlier sibling": the controller's command reaches the physics
+    // in the same step, and the physics' pose reaches the radar and the
+    // controller at their next step.
     //
-    // Nothing reads the scans. The radars are aboard so that two runs
-    // have them to compare, and so that the loop's wrap around its own
-    // seam is exercised under the conductor rather than only in a unit
-    // test.
+    // Nothing reads the scans. The radars are here so that two runs have
+    // scans to compare, and so that a loop's wrap around its seam runs
+    // under the conductor and not only in a unit test.
     for (i, car) in ["car1", "car2", "car3"].into_iter().enumerate() {
         let s0 = path.total_length() * i as f64 / 3.0;
         let initial_pose = Pose {
@@ -212,10 +209,9 @@ fn cars_actually_move_around_the_loop() {
     assert!(dist > 5.0, "car1 barely moved: {dist} m");
 }
 
-/// Every scan car1's radar published, in the order it published them.
+/// Every scan car1's radar published, in order.
 fn car1_scans(log: &EventLog) -> Vec<RadarScan> {
-    // Return the stream decoded, since what is compared below is what
-    // the radar saw rather than how its bytes were spelled.
+    // Return them decoded, since the comparison is on what the radar saw.
     log.events
         .iter()
         .filter_map(|e| match e {
@@ -234,10 +230,9 @@ fn two_identical_radar_runs_fingerprint_identically() {
     assert_eq!(first, second, "car1 scanned a different road");
     assert!(!first.is_empty(), "expected a scan stream");
 
-    // And it saw something, since a radar reporting an empty road
-    // forever would compare equal to itself just as well. The car in
-    // front is in range and the one beyond it is not, and all three hold
-    // the speed they were built with, so no gap is closing.
+    // It also has to have seen something, since two empty streams compare
+    // equal too. The car in front is in range, the one beyond is not, and
+    // all three hold the same speed, so no gap is closing.
     for scan in &first {
         assert_eq!(
             scan.detections.len(),

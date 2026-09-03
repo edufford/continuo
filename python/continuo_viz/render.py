@@ -23,10 +23,10 @@ from .scene import Actor, Scene
 
 # Nominal car footprint in meters, length by width.
 #
-# `CAR_LENGTH` must move together with the constant of the same name in
-# `crates/continuo-actors/src/lib.rs`, where it is the body a radar
-# measures its range to. Two constants rather than one because the viewer
-# reads a recorded log rather than that crate.
+# `CAR_LENGTH` must stay equal to the constant of the same name in
+# `crates/continuo-actors/src/lib.rs`, which the radar measures range
+# with. They are two constants because the viewer reads a recorded log,
+# not that crate.
 #
 # TODO(PLAN "World and map"): the simulation does not publish extents. A
 # pose is a position and an orientation, so every drawn body is this one

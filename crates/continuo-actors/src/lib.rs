@@ -17,12 +17,10 @@
 //! command to the physics within the same step.
 //!
 //! [`RadarSensor`] is what lets one car follow another. It reads every
-//! pose in the world and publishes what is ahead of its own car in its
-//! own lane, as ranges and closing rates rather than as positions, so a
-//! follower is told the two quantities its law wants and nothing about
-//! where anybody is. A car that follows carries one ahead of its
-//! controller in the composite, which puts a scan in front of the
-//! controller in the same instant it was made.
+//! pose in the world and publishes the cars ahead in its own lane as
+//! ranges and range rates, which is what a following law wants. A car
+//! that follows puts one ahead of its controller in the composite, so
+//! the scan reaches the controller in the same instant it was made.
 //!
 //! [`TrafficSpawner`] is what makes a world of those cars *dynamic*. It
 //! watches poses and publishes requests to add and remove cars, deciding
@@ -72,15 +70,14 @@ pub const MAX_DETECTIONS: usize = 64;
 /// How long a car is, nose to tail, in meters.
 ///
 /// One number for every car, because nothing publishes an extent: a
-/// vehicle reaches the wire as a pose and a speed, so how big it is
-/// lives here instead. Anything measuring between two cars measures
-/// with it, starting with a radar's range to the car ahead.
+/// vehicle reaches the wire as a pose and a speed. The radar subtracts
+/// it from the distance between two car origins to get a bumper-to-bumper
+/// range.
 ///
-/// It moves together with `CAR_LENGTH` in
-/// `python/continuo_viz/render.py`, which draws the body this
-/// measures. Two constants rather than one because the viewer reads a
-/// recorded log rather than this crate, and PLAN.md's "World and map"
-/// work is where an extent starts traveling and both of them go.
+/// `CAR_LENGTH` in `python/continuo_viz/render.py` draws the same body
+/// and must stay equal to this. They are two constants because the
+/// viewer reads a recorded log, not this crate. Both go away when
+/// PLAN.md's "World and map" work publishes extents.
 pub const CAR_LENGTH: f64 = 4.5;
 
 /// Key for an actor's pose in `world`.

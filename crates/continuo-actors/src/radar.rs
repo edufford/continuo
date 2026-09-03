@@ -1,19 +1,11 @@
-//! A forward-looking radar, and what it reports.
+//! A forward-looking radar and the scan it publishes.
 //!
-//! The sensor reads ground truth: it is handed every pose in the world
-//! and works out what is ahead of its own car from the road's geometry.
-//! That is the simplest thing producing the quantities a follower wants,
-//! and it is deliberately not a sensor model. A real one would add a
-//! mounting pose on the car carrying it, extents on the things it
-//! measures to, noise, a field of view, occlusion, several returns per
-//! vehicle needing clustering before anything is an object at all, and
-//! tracking before those objects have identity between scans.
-//!
-//! **One detection per car is itself the idealization**, not only the
-//! values inside it. What has to survive a real sensor model is the
-//! interface rather than the arithmetic: a scan carries relative
-//! measurements and nothing else, because a radar knows nothing about
-//! the car it is bolted to.
+//! The sensor reads ground truth. It is handed every pose in the world
+//! and uses the road's geometry to find the cars ahead of its own. It is
+//! a simplified sensor model. A more realistic one would add a mounting
+//! pose, extents on the cars it measures, noise, a field of view,
+//! occlusion, several returns per vehicle that need clustering, and
+//! tracking to give those returns identity between scans.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -27,75 +19,59 @@ use crate::path::Waypoints;
 use crate::physics::CarState;
 use crate::{CAR_LENGTH, MAX_DETECTIONS};
 
-/// What one radar found this scan.
+/// What one radar found in one scan.
 ///
-/// **The order means nothing**, and neither does a slot: the same car
-/// can arrive in a different place next scan, and nothing says it is the
-/// same car. That is what a detection is, a measurement taken this
-/// instant rather than an object being tracked, and identity would have
-/// to come from a tracker that does not exist here.
-///
-/// No consumer wants one anyway. A following law takes the nearest
-/// detection, and a learned one either sorts the set itself or encodes
-/// it so the order cannot matter. Determinism needs only that two runs
-/// build the same scan, which comes from reading the inbox in its own
-/// order rather than from sorting on a float.
+/// The order is arbitrary and a slot carries no identity: the same car
+/// can land in a different slot next scan. A detection is a measurement
+/// taken this instant, not a tracked object, and nothing here tracks.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct RadarScan {
-    /// What is ahead, nearest first only by accident.
+    /// Every car ahead in this lane and within range.
     pub detections: Vec<Detection>,
 }
 
-/// Reports what is ahead of one car in its own lane, as a range and a
-/// closing rate per car found.
+/// Reports the cars ahead of one car in its own lane, as a range and a
+/// range rate each.
 ///
-/// Lanes and "ahead" both come from the road: every pose is projected
-/// onto it, a car counts as in the same lane when its lateral offset is
-/// within `lane_tolerance` of this one's, and it is ahead when its arc
-/// length is larger. A closed road wraps, so on a loop everything is
-/// ahead of everything and `max_range` alone decides what is reported.
+/// Lanes and "ahead" both come from the road. Every pose is projected
+/// onto it with [`Waypoints::frenet`](crate::Waypoints::frenet()). A
+/// car is in the same lane when its lateral offset is within
+/// `lane_tolerance` of this car's, and ahead when its arc length is
+/// larger. On a closed road the arc length wraps, so every car is ahead
+/// of every other and `max_range` alone decides what is reported.
 ///
-/// **Range is bumper to bumper**, the arc length between the two cars
-/// less one [`CAR_LENGTH`]. That single subtraction stands in for two
-/// things a sensor model owes: a radar sits somewhere on the car
-/// carrying it rather than at its origin, and it measures to where the
-/// line between them meets the other car's body rather than to that
-/// car's origin. Collapsing both into one constant is right only while
-/// every car is the same length, the radar sits at the front bumper, and
-/// the two are lined up along the road. Doing it properly needs the
-/// simulation to publish extents, which is PLAN.md's "World and map"
-/// work. A range below zero is two cars overlapping, and it is reported
-/// as it stands, since a follower being told it has run into something
-/// is the answer that deserves.
+/// Range is bumper to bumper: the arc length between the two cars less
+/// one [`CAR_LENGTH`]. That subtraction stands in for two things a real
+/// sensor model would have, the radar's mounting position on its own
+/// car and the extent of the car it measures to. It is right only while
+/// every car is the same length and both are lined up along the road.
+/// Doing it properly needs the simulation to publish extents, which is
+/// PLAN.md's "World and map" work. A range below zero means the two
+/// cars overlap and is reported as is, so a follower is not told the
+/// road is clear.
 ///
-/// **Range rate is the other car's published speed less this one's**,
-/// negative while closing, which is the sign a Doppler radar measures
-/// directly. Reading it off the poses rather than differencing two scans
-/// is what keeps the sensor rate independent: one sample per car is
-/// enough, so a car joining mid-run is in the very next scan.
+/// Range rate is the other car's published speed minus this one's,
+/// negative while closing, which is the sign a Doppler radar measures.
+/// Reading it from the poses rather than differencing two sequential
+/// scans means one sample per car is enough, so a car joining mid-run
+/// is in the next scan.
 ///
-/// **The road's own corners put a floor under how exact a range can
-/// be.** An arc length comes from projecting onto the nearest segment,
-/// and at a vertex the nearest segment changes, stepping a car's arc
-/// length by `2 * |d| * tan(theta / 2)` for its lateral offset and the
-/// angle the road turns through. A car on the centerline has none of
-/// it, and a finely drawn road has little: two cars a true 30 m apart
-/// in a lane 3.5 m out swing 1.26 m over the determinism ellipse's 72
-/// samples, and 0.29 m over 360 of them. Reporting the straight line
-/// between the two instead would trade that for something worse, a
-/// chord across a bend not being the road a follower has to cover, so
-/// what answers this is a road drawn more finely. See
-/// [`Waypoints::frenet`](crate::Waypoints::frenet()).
+/// The road's corners limit how exact a range can be. `frenet` projects
+/// onto the nearest segment, and at a vertex the nearest segment
+/// changes, which jumps a car's arc length by `2 * |d| * tan(theta / 2)`
+/// for lateral offset `d` and turn angle `theta`. Two cars 30 m apart in
+/// a lane 3.5 m out read up to 1.26 m off over the determinism ellipse's
+/// 72 samples, and 0.29 m over 360. The straight-line distance would be
+/// worse, since a chord across a bend is not the road a follower has to
+/// cover. A road geometry that accounts for curvature is the deferred
+/// fix.
 ///
-/// It keeps nothing between steps. Each scan is built from the poses in
-/// that step's inbox and nothing else, so there is no freshness rule to
-/// tune and no per-actor state to clear out when a car leaves, which a
-/// scan spanning steps would need. What that costs is a bound rather
-/// than a guarantee, and it is worth naming: a departed car ghosts for
-/// at most one scan, since its last pose can still be in the window read
-/// after it left. It also means **anything being watched has to publish
-/// at least once per radar period**, or it blinks in and out of the
-/// scans.
+/// The sensor keeps no state between steps. Each scan is built from the
+/// poses in that step's inbox, so there is no freshness rule to tune and
+/// nothing to clear when a car leaves. The cost is a bound rather than a
+/// guarantee: a departed car can appear in one more scan, since its last
+/// pose can still be in the next window, and a car must publish at
+/// least once per radar period or it drops out of the scans between.
 pub struct RadarSensor {
     actor_name: String,
     road: Arc<Waypoints>,
@@ -106,8 +82,8 @@ pub struct RadarSensor {
 }
 
 impl RadarSensor {
-    /// A radar on `actor_name`, scanning every `period` out to
-    /// `max_range` meters, counting a car as sharing its lane when the
+    /// A radar on `actor_name` that scans every `period`, sees out to
+    /// `max_range` meters, and counts a car as sharing its lane when the
     /// two lateral offsets are within `lane_tolerance`.
     pub fn new(
         actor_name: impl Into<String>,
@@ -126,11 +102,11 @@ impl RadarSensor {
         }
     }
 
-    /// Caps the scan at something other than [`MAX_DETECTIONS`].
+    /// Caps the scan below [`MAX_DETECTIONS`].
     ///
-    /// The default is the constant a fixed-length consumer builds its
-    /// arrays from, so the two cannot drift apart. Lowering it is for
-    /// tests, and for a sensor whose returns are genuinely fewer.
+    /// The default is the constant a fixed-length consumer sizes its
+    /// arrays by, so the two cannot drift apart. Lowering it with this
+    /// function is for tests.
     pub fn with_max_detections(mut self, max_detections: usize) -> Self {
         self.max_detections = max_detections;
         self
@@ -138,24 +114,22 @@ impl RadarSensor {
 
     /// The newest pose per actor in this step's inbox.
     ///
-    /// The inbox is `(publisher, seq)`-sorted, so reading it forwards and
-    /// overwriting leaves each actor's latest. Two runs read the same
-    /// order, which is where the scan's determinism comes from.
+    /// The inbox is sorted by `(publisher, seq)`, so reading it forward
+    /// and overwriting leaves each actor's latest. Two runs read the
+    /// same order, which is what makes the scan deterministic.
     fn latest_poses(ctx: &StepCtx) -> Result<BTreeMap<String, CarState>, CoreError> {
         let mut latest = BTreeMap::new();
         for message in ctx.inbox() {
-            // A pose that cannot be read stops the world. Scanning past
-            // it would report a road with one fewer car on it, and a
-            // follower would accelerate into the space it left.
+            // A pose that cannot be decoded stops the world.
             let state = message.decode::<CarState>()?;
             latest.insert(actor_of(message.key.as_str()).to_string(), state);
         }
 
-        // Return one pose per actor, the newest each published.
+        // Return the newest pose per actor.
         Ok(latest)
     }
 
-    /// The scan `own` sees of everything else in `poses`.
+    /// The scan `own` car sees of the other cars in `poses`.
     fn scan(&self, own: &CarState, poses: &BTreeMap<String, CarState>) -> RadarScan {
         let (own_s, own_lateral) = self.road.frenet(own.position.x, own.position.y);
         let mut detections = Vec::new();
@@ -182,20 +156,19 @@ impl RadarSensor {
         }
         self.cap(&mut detections);
 
-        // Return what that leaves, in the order the actors came in.
+        // Return what survives the cap, in the order the actors came in.
         RadarScan { detections }
     }
 
-    /// How far ahead of `own_s` the arc length `other_s` is, following
-    /// the road's own idea of what comes after what.
+    /// How far ahead of `own_s` the arc length `other_s` is.
     ///
-    /// A loop wraps, so a car just behind is most of a lap ahead and
-    /// `max_range` is what rules it out. A road does not, so a car
-    /// behind stays behind and comes back negative.
+    /// On a loop the difference wraps, so a car just behind reads as
+    /// most of a lap ahead and `max_range` rules it out. On an open road
+    /// a car behind comes back negative.
     fn arc_ahead(&self, own_s: f64, other_s: f64) -> f64 {
         let along = other_s - own_s;
 
-        // Return it brought back onto the road, which only a loop can do.
+        // Return the difference, wrapped onto a loop.
         if self.road.is_closed() {
             along.rem_euclid(self.road.total_length())
         } else {
@@ -203,23 +176,20 @@ impl RadarSensor {
         }
     }
 
-    /// Drops whatever will not fit in a scan.
+    /// Drops the farthest detections when more were found than fit.
     ///
-    /// A road here never fills one, so this is a bound rather than a
-    /// working limit. Which detections go still has to be decided rather
-    /// than left to whichever happened to be found first: the farthest
-    /// go, because a follower needs the nearest and would rather lose a
-    /// car it was never going to follow. Membership is all this decides.
-    /// What survives keeps the order it was found in, so nothing
-    /// downstream can start reading a scan as though it were sorted.
+    /// No road in the demo currently fills a scan, so this is a bound
+    /// rather than a working limit. The farthest go because a follower
+    /// needs the nearest. Only membership is decided here: what survives
+    /// keeps the order it was found in, so nothing downstream can start
+    /// reading a scan as pre-sorted.
     fn cap(&self, detections: &mut Vec<Detection>) {
         if detections.len() <= self.max_detections {
             return;
         }
         let mut slots: Vec<usize> = (0..detections.len()).collect();
-        // `total_cmp` because it orders every pair of floats there is,
-        // and a stable sort then leaves equal ranges in the order the
-        // actors came in.
+        // `total_cmp` orders every pair of floats, and a stable sort
+        // keeps equal ranges in the order the actors came in.
         slots.sort_by(|&a, &b| detections[a].range.total_cmp(&detections[b].range));
         slots.truncate(self.max_detections);
         slots.sort_unstable();
@@ -228,10 +198,10 @@ impl RadarSensor {
     }
 }
 
-/// The actor a pose key belongs to.
+/// The actor name in a pose key.
 ///
-/// The subscription delivers `.../actor/{name}/pose` and nothing else,
-/// so the segment before the last one is the name.
+/// The subscription delivers only `.../actor/{name}/pose`, so the name
+/// is the second segment from the end.
 fn actor_of(key: &str) -> &str {
     key.rsplit('/')
         .nth(1)
@@ -245,17 +215,17 @@ impl Component for RadarSensor {
 
     fn subscriptions(&self) -> Vec<KeyExpr> {
         // Every actor's pose, since a sensor cannot know in advance what
-        // it will find. World segment wildcarded for the reason
-        // `PathFollowController` gives, and its TODO covers this one too.
+        // it will find. The world segment is wildcarded for the reason
+        // given in `PathFollowController`, and its TODO covers this too.
         vec![KeyExpr::new_rooted("*/actor/*/pose").expect("valid key")]
     }
 
     fn step(&mut self, ctx: &mut StepCtx) -> Result<SimTime, CoreError> {
         let poses = Self::latest_poses(ctx)?;
-        // Nothing goes out until this car's own pose has arrived. A radar
-        // that does not know where it is measures nothing, where an empty
-        // scan would say the road ahead is clear. On the first step that
-        // is the whole of it, the inbox starting empty.
+        // Nothing is published until this car's own pose has arrived. A
+        // radar that does not know where it is measures nothing, and an
+        // empty scan would say the road ahead is clear. The first step's
+        // inbox is empty, so it always publishes nothing.
         if let Some(own) = poses.get(&self.actor_name) {
             let scan = self.scan(own, &poses);
             ctx.publish(crate::radar_key(ctx.world_name(), &self.actor_name), &scan)?;
@@ -272,7 +242,7 @@ mod tests {
 
     use super::*;
 
-    /// The scan period, which is the period a follower controls at.
+    /// The scan period, matching the controller's.
     const PERIOD: SimDuration = SimDuration::from_millis(100);
 
     /// Half a lane, so a car one lane over is out and a car wandering
@@ -282,8 +252,8 @@ mod tests {
     /// One lane over.
     const LANE_WIDTH: f64 = 3.5;
 
-    /// Far enough that nothing here is ruled out by range, except in the
-    /// test that is about range.
+    /// Far enough that range currently rules nothing out, except in the
+    /// test about range.
     const MAX_RANGE: f64 = 200.0;
 
     /// Half a kilometer of road along +x.
@@ -291,7 +261,7 @@ mod tests {
         Arc::new(Waypoints::build_straight((0.0, 0.0), (500.0, 0.0)))
     }
 
-    /// A radar on the car every test here scans from.
+    /// A radar on the ego car, which every test scans from.
     fn radar_on(road: Arc<Waypoints>) -> RadarSensor {
         RadarSensor::new("ego", road, PERIOD, MAX_RANGE, LANE_TOLERANCE)
     }
@@ -308,10 +278,10 @@ mod tests {
 
     /// One pose message per car, as the transport would deliver them.
     ///
-    /// Each car publishes its own, so the inbox arrives in name order and
-    /// the callers below list their cars that way.
+    /// The inbox arrives in publisher order, so the callers list their
+    /// cars by name.
     fn poses(cars: &[(&str, CarState)]) -> Vec<Message> {
-        // Return the window a step would be handed.
+        // Return the inbox a step would be handed.
         cars.iter()
             .map(|(name, state)| Message {
                 key: KeyExpr::new_rooted(format!("w/actor/{name}/pose")).expect("valid key"),
@@ -323,7 +293,7 @@ mod tests {
             .collect()
     }
 
-    /// Steps `radar` once and hands back what it published, if anything.
+    /// Steps `radar` once and returns what it published, if anything.
     fn step_once(radar: &mut RadarSensor, now: SimTime, inbox: Vec<Message>) -> Option<RadarScan> {
         let mut ctx = StepCtx::new(now, Some(PERIOD), "w", 0, inbox);
         radar
@@ -332,7 +302,7 @@ mod tests {
         let mut outbox = ctx.take_outbox();
         assert!(outbox.len() <= 1, "a step publishes at most one scan");
 
-        // Return the scan as it went out, read back from its own bytes.
+        // Return the scan decoded from its published bytes.
         outbox.pop().map(|(key, payload)| {
             assert_eq!(key.as_str(), "continuo/w/actor/ego/radar");
             serde_json::from_slice(&payload).expect("a scan")
@@ -341,19 +311,19 @@ mod tests {
 
     /// What a radar on `road` sees of `cars`.
     fn scan_of(road: Arc<Waypoints>, cars: &[(&str, CarState)]) -> RadarScan {
-        // Return the scan, which there always is once the ego's own pose
-        // is in the window.
+        // Return the scan, which exists whenever the ego's pose is in the
+        // inbox.
         step_once(&mut radar_on(road), SimTime::ZERO, poses(cars))
             .expect("the ego published its own pose, so it scanned")
     }
 
-    /// The ranges in a scan, nearest first, since the order a scan comes
-    /// in is not part of what it promises.
+    /// The ranges in a scan, sorted, since a scan's order is not part of
+    /// its contract.
     fn ranges(scan: &RadarScan) -> Vec<f64> {
         let mut ranges: Vec<f64> = scan.detections.iter().map(|found| found.range).collect();
         ranges.sort_by(f64::total_cmp);
 
-        // Return them ordered, for a test to compare against.
+        // Return them sorted for comparison.
         ranges
     }
 
@@ -361,7 +331,7 @@ mod tests {
     fn only(scan: &RadarScan) -> Detection {
         assert_eq!(scan.detections.len(), 1, "expected one detection");
 
-        // Return it, for a test checking what is inside it.
+        // Return it.
         scan.detections[0]
     }
 
@@ -379,8 +349,8 @@ mod tests {
             ],
         );
 
-        // The three ahead in lane and nothing twice, compared as a set,
-        // because which slot a car lands in promises nothing.
+        // The three cars ahead in lane, each once. Compared sorted, since
+        // slot order is not part of the contract.
         assert_eq!(
             ranges(&scan),
             vec![20.0 - CAR_LENGTH, 60.0 - CAR_LENGTH, 110.0 - CAR_LENGTH]
@@ -402,8 +372,7 @@ mod tests {
             over.detections
         );
 
-        // The tolerance is what says so, and the same car half a lane
-        // over is a car wandering inside its own.
+        // The same car half a lane over is within the tolerance.
         let inside = scan_of(
             road(),
             &[
@@ -413,8 +382,8 @@ mod tests {
         );
         assert_eq!(ranges(&inside), vec![40.0 - CAR_LENGTH]);
 
-        // The band sits around this car rather than around the road, so
-        // a radar in an outside lane watches that lane and not the road.
+        // The band is centered on this car, not the road, so a radar in
+        // an outside lane watches that lane.
         let outside = scan_of(
             road(),
             &[
@@ -428,12 +397,12 @@ mod tests {
 
     #[test]
     fn cars_behind_are_not_detected() {
-        // A car abreast is not ahead either, which is also what keeps a
-        // car from finding itself when another shares its arc length.
+        // A car alongside is not ahead either. The same rule keeps a car
+        // from detecting itself.
         let scan = scan_of(
             road(),
             &[
-                ("abreast", car(50.0, 0.0, 20.0)),
+                ("alongside", car(50.0, 0.0, 20.0)),
                 ("behind", car(10.0, 0.0, 20.0)),
                 ("ego", car(50.0, 0.0, 20.0)),
             ],
@@ -471,8 +440,8 @@ mod tests {
 
     #[test]
     fn range_and_range_rate_match_the_known_geometry_of_a_staged_pair() {
-        // Fifty meters of road between the two origins, so a car length
-        // less than that between the bumpers, and a lead twelve slower.
+        // Fifty meters between the two origins, so a car length less
+        // between the bumpers, and a lead 12 m/s slower.
         let scan = scan_of(
             road(),
             &[
@@ -491,9 +460,9 @@ mod tests {
 
     #[test]
     fn an_overlapping_car_reports_a_negative_range() {
-        // Nearer than a car length is two cars in the same place. The
-        // scan says so rather than flooring at zero, since a follower
-        // told the road ahead was clear would drive further into it.
+        // Closer than a car length means the cars overlap. The range goes
+        // negative rather than flooring at zero, so a follower is not
+        // told the road is clear.
         let scan = scan_of(
             road(),
             &[("ego", car(0.0, 0.0, 20.0)), ("hit", car(3.0, 0.0, 20.0))],
@@ -503,8 +472,8 @@ mod tests {
 
     #[test]
     fn a_car_beyond_the_radars_range_is_not_detected() {
-        // Range is what the radar measures, so the cut is bumper to
-        // bumper: the car a car length past the limit is the last one in.
+        // The cut is on the bumper-to-bumper range, so the car exactly a
+        // car length past `MAX_RANGE` is the last one in.
         let scan = scan_of(
             road(),
             &[
@@ -527,7 +496,7 @@ mod tests {
         ]);
         let scan = step_once(&mut radar, SimTime::ZERO, cars).expect("the ego scanned");
 
-        // The two nearest, and the farthest is what went.
+        // The two nearest survive and the farthest is dropped.
         assert_eq!(ranges(&scan), vec![50.0 - CAR_LENGTH, 100.0 - CAR_LENGTH]);
     }
 
@@ -538,8 +507,8 @@ mod tests {
         let scan = step_once(&mut radar, SimTime::ZERO, both).expect("the ego scanned");
         assert_eq!(ranges(&scan), vec![40.0 - CAR_LENGTH]);
 
-        // The next window carries no pose from it, and that is the whole
-        // of the cleanup: nothing was kept, so nothing has to be dropped.
+        // The next inbox has no pose from it, and nothing was kept, so
+        // it is gone.
         let alone = poses(&[("ego", car(2.0, 0.0, 20.0))]);
         let scan =
             step_once(&mut radar, SimTime::from_millis(100), alone).expect("the ego scanned");
@@ -552,9 +521,8 @@ mod tests {
 
     #[test]
     fn a_loop_scans_across_its_own_seam() {
-        // On a ring the car behind is the car most of a lap ahead, so
-        // range is what rules it out rather than the sign of a
-        // subtraction. A road would answer both the other way round.
+        // On a ring the car behind is most of a lap ahead, so range rules
+        // it out rather than the sign of the difference.
         let ring = Arc::new(Waypoints::ellipse((0.0, 0.0), 40.0, 40.0, 360));
         let total = ring.total_length();
         let at = |s: f64, speed: f64| {
@@ -574,8 +542,8 @@ mod tests {
         let scan = step_once(&mut radar, SimTime::ZERO, cars).expect("the ego scanned");
 
         // Thirty meters of ring between them, ten of it past the seam.
-        // Approximate because a ring here is a polygon, so a point put on
-        // it at an arc length comes back off it a few bits away.
+        // Approximate because the ring is a polygon, so a point placed at
+        // an arc length projects back a few bits away.
         assert!(
             (only(&scan).range - (30.0 - CAR_LENGTH)).abs() < 1e-9,
             "across the seam: {:?}",
@@ -585,8 +553,8 @@ mod tests {
 
     #[test]
     fn the_first_step_publishes_nothing_rather_than_guessing() {
-        // A first step is handed an empty inbox, so the radar does not
-        // know where its own car is, let alone anyone else's.
+        // The first step's inbox is empty, so the radar does not know
+        // where its own car is.
         let mut radar = radar_on(road());
         let mut ctx = StepCtx::new(SimTime::ZERO, None, "w", 0, vec![]);
         radar
@@ -597,9 +565,9 @@ mod tests {
             "an empty scan would have said the road ahead was clear"
         );
 
-        // It is the ego's own pose that decides rather than the inbox
-        // being empty: a window carrying everyone else is still a radar
-        // with no idea where it is.
+        // The ego's own pose is what decides, not whether the inbox is
+        // empty: an inbox with everyone else's pose still leaves the
+        // radar without its own position.
         let others = poses(&[("lead", car(60.0, 0.0, 20.0))]);
         assert!(step_once(&mut radar, SimTime::from_millis(100), others).is_none());
     }

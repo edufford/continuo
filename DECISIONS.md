@@ -1406,61 +1406,53 @@ it got there, including the roads not taken.
 
   `DEMO_WORLD_HASH` and the ellipse's `CAR1_TRAJECTORY` do not move.
 
-- **2026-08-29**: **A detection is a measurement rather than a tracked
-  object, so the radar reports what it found and chooses nothing.** A
-  scan carries a range and a closing rate per car ahead, in no order the
-  type promises, and a slot means nothing from one scan to the next.
-  Identity would have to come from a tracker, which does not exist here,
-  and no consumer wants one anyway: `nearest_detection` takes the
-  minimum, and a learned follower will encode the set so that its order
-  cannot matter. Determinism comes from reading the inbox in its own
-  order rather than from sorting on a float, so there is no tiebreak to
-  get wrong.
-  - **Except at the cap, where the farthest go.** Which detections a
-    full scan drops still has to be decided, and dropping whichever were
-    found last would sometimes lose the car being followed. So there is
-    one sort, on range and by `total_cmp`, and it decides membership
-    alone: what survives keeps the order it was found in, so nothing
-    downstream can start reading a scan as though it were sorted. No
-    road here fills a scan, which makes this a bound rather than a
+- **2026-08-29**: **A detection is a measurement, not a tracked object.**
+  A scan carries a range and a range rate per car ahead. Its order means
+  nothing, and a slot carries no identity from one scan to the next.
+  Identity would need a tracker, which does not exist yet, and no
+  consumer needs one so far: `nearest_detection` takes the closest. The
+  scan is deterministic because the inbox is read in its own order, so
+  there is no sort on a float and no tiebreak to get wrong.
+  - **Except at the `MAX_DETECTIONS` cap, where sorting by distance allows
+    the farthest to be dropped.** Which detections a full scan drops has
+    to be decided, and dropping the last found could drop the car being
+    followed. So there is one sort, on range by `total_cmp`, and it
+    decides membership only: the survivors keep the order they were
+    found in, so nothing downstream can read a scan as pre-sorted. No
+    road here fills a scan yet, so the cap is a bound rather than a
     working limit.
-  - **A scan is a `Vec<Detection>` on the type core already owns**,
-    where the plan had a `RadarDetection` of its own. The exported FMU
-    controller has read `Detection` since it was written, so a second
-    type would have been two names for the same two numbers.
+  - **A scan is a `Vec<Detection>`**, the type `continuo-core` already
+    has, where the plan had a `RadarDetection` of its own. The exported
+    FMU controller has read `Detection` since it was written, and a
+    second type would be two names for the same two numbers.
 
-- **2026-08-29**: **The radar keeps nothing between steps, and the inbox
-  window is the whole of its freshness rule.** Each scan is built from
-  the poses delivered for that step and nothing else. So `state_bytes`
-  is `None`, no age horizon has to be given a value nothing argues for,
-  and a car that leaves needs no cleaning up after, because nothing was
-  kept. What that costs is a bound rather than a guarantee: a departed
-  car ghosts for at most one scan, its last pose still being in the
-  window read after it left. It also requires anything watched to
-  publish at least once per radar period, or it blinks.
-  - **Range and range rate are read off ground truth**, the arc length
-    between two projected positions less one `CAR_LENGTH`, and the other
-    car's published speed less this one's. Reading the rate rather than
-    differencing two scans is what makes one sample per car enough, so a
-    car joining mid-run is in the very next scan. A real sensor model
-    replaces the arithmetic and keeps the interface: relative
-    measurements only, since a radar knows nothing about the car it is
-    bolted to.
-  - **That one subtraction stands in for two things**, and a car length
-    is neither of them. A radar sits somewhere on its own car rather
-    than at its origin, and it measures to where the line between them
-    meets the other car's body rather than to that car's origin. Both
-    wait on the simulation publishing extents, which is why `CAR_LENGTH`
-    is a constant here and an invented rectangle in the viewer. A range
-    below zero is reported as it stands, since a follower told the road
-    ahead was clear would drive further into what it has already hit.
-  - **`DEMO_WORLD_HASH` does not move**, nothing in the demo carrying a
-    radar yet. The determinism test's cars do carry one, so that two
-    runs have scans to compare and so a loop's wrap around its own seam
-    is exercised under the conductor rather than only in a unit test.
-    `CAR1_TRAJECTORY` not moving is the proof they changed no car:
-    nothing reads a scan, so a radar publishing beside a car cannot
-    steer it.
+- **2026-08-29**: **The radar keeps no state between steps. The inbox
+  window is its whole freshness rule.** Each scan is built from the poses
+  delivered for that step. So `state_bytes` is `None`, there is no age
+  horizon to pick a value for, and a car that leaves needs no cleanup
+  because nothing was kept. The cost is a bound rather than a guarantee:
+  a departed car can appear in one more scan, since its last pose can
+  still be in the next window, and a car must publish at least once per
+  radar period or it drops out of the scans between.
+  - **Range and range rate come from ground truth**: the arc length
+    between the two projected positions less one `CAR_LENGTH`, and the
+    other car's published speed minus this one's. Reading the rate
+    rather than differencing two sequential scans means one sample per
+    car is enough, so a car joining mid-run is in the next scan. A real
+    sensor model would replace this arithmetic and just keep the
+    interface: relative measurements only, since a radar knows nothing
+    about the car it is mounted on.
+  - **Subtracting one car length stands in for two things**: the radar's
+    mounting position on its own car, and the extent of the car it
+    measures to. Both wait on the simulation publishing extents, which is
+    why `CAR_LENGTH` is a constant here and an invented rectangle in the
+    viewer. A range below zero is reported as is, so a follower is not
+    told the road is clear when it has already hit something.
+  - **`DEMO_WORLD_HASH` does not move**, since nothing in the demo
+    carries a radar yet. The determinism test's cars do, so two runs have
+    scans to compare and a loop's wrap around its seam is tested by
+    running it with the conductor. `CAR1_TRAJECTORY` not moving shows
+    the radars steer nothing: no component reads a scan yet.
 
 - **2026-09-01**: **A road is refused where one waypoint sits closer to
   the one before it than `MIN_SEGMENT_LENGTH`**, one millimeter, which

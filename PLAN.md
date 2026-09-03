@@ -794,14 +794,14 @@ under "Wire format", rather than churning the fingerprint once apiece.
 - **A spatial index, so a sensor asks what is near it.** `RadarSensor`
   projects every pose in the world onto the road and filters, which is
   work proportional to the population for every sensor at every scan. A
-  quadtree, or a per-lane sort by arc length, answers the same question
-  against what is local instead, and the collision monitor's pair scan
-  wants the same structure. It is also what would bound a scan honestly:
-  `MAX_DETECTIONS` is a defensive cap that sorts by range to choose what
-  to drop, where locality would have decided it already. Deferred
-  because no world here reaches the cap, and because it belongs with the
-  consolidated scene view above, which is the other consumer that wants
-  the world rather than every message in it.
+  quadtree, or a per-lane sort by arc length, would answer against what
+  is local instead, and the collision monitor's pair scan wants the same
+  structure. It would also bound a scan properly: `MAX_DETECTIONS` is a
+  defensive cap that sorts by range to choose what to drop, where
+  locality would have decided already. Deferred because no world here
+  reaches the cap, and because it belongs with the consolidated scene
+  view above, the other consumer that wants the world rather than every
+  message in it.
 
 - **A subscriber cannot ask for only the latest message per key.** The
   visibility rule queues every message until the subscriber next runs, so a
