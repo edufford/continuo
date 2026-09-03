@@ -29,6 +29,10 @@ fmi-export = "0.3"
 # rounds to. Pinned through Cargo.lock, since a different version of it is
 # a different fingerprint.
 libm = "0.2"
+# Property-based testing: a strategy generates the cases and a failure
+# shrinks to the smallest one it can find. Test-only, so nothing it draws
+# reaches a fingerprint.
+proptest = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["arbitrary_precision", "raw_value"] }
 thiserror = "2"

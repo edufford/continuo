@@ -13,8 +13,10 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
 
-# Dev-dependencies serve the determinism integration test.
+# The conductor and the transport serve the determinism integration test,
+# and proptest the property tests on the road.
 [dev-dependencies]
 continuo-conductor = { workspace = true }
 continuo-transport = { workspace = true }
+proptest = { workspace = true }
 serde_json = { workspace = true }
