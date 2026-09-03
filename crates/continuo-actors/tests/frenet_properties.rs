@@ -2,12 +2,13 @@
 //! than on the handful of fixtures the unit tests in `path.rs` draw by
 //! hand.
 //!
-//! Every road here is generated so that it cannot cross itself. A crossing
-//! puts one point on two stretches of road at once, and which of them is
-//! nearer is then a matter of rounding. An open road is a walk that never
-//! turns back along one axis, and a closed one is a star-shaped polygon
-//! around a center, and both are then turned and moved anywhere in the
-//! plane so that no property passes by leaning on an axis.
+//! Every road here keeps its segments a road's width clear of one
+//! another except where they meet, since two segments closer than that
+//! share lane space, and a lane point beside one is then beside the
+//! other too. An open road is a random walk, turning as sharply as a
+//! road can, and a closed one is a star-shaped polygon around a center.
+//! Both lie anywhere in the plane facing any way, so no property passes
+//! by leaning on an axis.
 
 use std::f64::consts::TAU;
 
@@ -22,6 +23,77 @@ use proptest::test_runner::FileFailurePersistence;
 /// near a nanometer.
 const TOLERANCE: f64 = 1e-9;
 
+/// The width of a lane: three and a half meters, a standard lane and
+/// what the unit tests place one at.
+const LANE_WIDTH: f64 = 3.5;
+
+/// How close two segments of one road that do not meet may come: three
+/// lane widths, which is what a road carrying a lane each side of its
+/// centerline spans. Closer than that they would share lane space, and
+/// a lane point beside one would be beside the other too, so nothing
+/// said here about the nearest segment could hold.
+const CLEARANCE: f64 = 3.0 * LANE_WIDTH;
+
+/// How far from the road a point still counts as beside it: half the
+/// clearance, the far edge of the lane each side. Any two segments both
+/// within that of one point are within the clearance of each other, so
+/// they meet at a vertex, and two segments that meet agree on which side
+/// of the road the point is.
+const BESIDE_THE_ROAD: f64 = CLEARANCE / 2.0;
+
+/// The sharpest turn a road makes at a vertex: 150 degrees, so the two
+/// segments meeting there diverge by at least 30 and neither runs back
+/// along the other.
+const SHARPEST_TURN: f64 = TAU * 150.0 / 360.0;
+
+/// The distance from `(x, y)` to the nearest point of the segment from
+/// `a` to `b`, which is one of its ends when the point lies past it.
+fn distance_to_segment(a: (f64, f64), b: (f64, f64), x: f64, y: f64) -> f64 {
+    let (dx, dy) = (b.0 - a.0, b.1 - a.1);
+    let along = (((x - a.0) * dx + (y - a.1) * dy) / (dx * dx + dy * dy)).clamp(0.0, 1.0);
+    let (px, py) = (a.0 + dx * along, a.1 + dy * along);
+
+    // Return the distance to that nearest point.
+    ((x - px).powi(2) + (y - py).powi(2)).sqrt()
+}
+
+/// Whether the segment from `a` to `b` crosses the one from `c` to `d`.
+fn segments_cross(a: (f64, f64), b: (f64, f64), c: (f64, f64), d: (f64, f64)) -> bool {
+    let side = |p: (f64, f64), q: (f64, f64), r: (f64, f64)| {
+        (q.0 - p.0) * (r.1 - p.1) - (q.1 - p.1) * (r.0 - p.0)
+    };
+
+    // Return whether each segment's ends lie on opposite sides of the
+    // other's line, which is what crossing means.
+    side(a, b, c) * side(a, b, d) < 0.0 && side(c, d, a) * side(c, d, b) < 0.0
+}
+
+/// Whether every pair of segments that do not share a vertex stays the
+/// clearance apart. Two segments that do not cross are nearest at one
+/// end of one of them, so four point distances cover it.
+fn keeps_clearance(points: &[(f64, f64)], is_closed: bool) -> bool {
+    let segments = if is_closed {
+        points.len()
+    } else {
+        points.len() - 1
+    };
+    let ends = |i: usize| (points[i], points[(i + 1) % points.len()]);
+    let shares_a_vertex =
+        |i: usize, j: usize| j == i + 1 || (is_closed && i == 0 && j == segments - 1);
+
+    // Return whether no pair comes too close.
+    (0..segments).all(|i| {
+        (i + 1..segments).all(|j| {
+            let ((a, b), (c, d)) = (ends(i), ends(j));
+            shares_a_vertex(i, j)
+                || (!segments_cross(a, b, c, d)
+                    && [(a, c, d), (b, c, d), (c, a, b), (d, a, b)]
+                        .into_iter()
+                        .all(|(p, from, to)| distance_to_segment(from, to, p.0, p.1) >= CLEARANCE))
+        })
+    })
+}
+
 /// The distance from `(x, y)` to each segment of `road`, in road order.
 ///
 /// Worked out from the points on their own, so it shares nothing with
@@ -29,18 +101,26 @@ const TOLERANCE: f64 = 1e-9;
 fn distance_to_each_segment(road: &Waypoints, x: f64, y: f64) -> Vec<f64> {
     let points = road.points();
 
-    // Return one distance per segment, each to the nearest point of that
-    // segment rather than of its line.
+    // Return one distance per segment.
     (0..road.num_segments())
-        .map(|i| {
-            let (ax, ay) = points[i];
-            let (bx, by) = points[(i + 1) % points.len()];
-            let (dx, dy) = (bx - ax, by - ay);
-            let along = (((x - ax) * dx + (y - ay) * dy) / (dx * dx + dy * dy)).clamp(0.0, 1.0);
-            let (px, py) = (ax + dx * along, ay + dy * along);
-            ((x - px).powi(2) + (y - py).powi(2)).sqrt()
-        })
+        .map(|i| distance_to_segment(points[i], points[(i + 1) % points.len()], x, y))
         .collect()
+}
+
+/// The nearest segment of `road` to `(x, y)`, as its index and its
+/// distance, the earliest of any that tie.
+fn nearest_segment(road: &Waypoints, x: f64, y: f64) -> (usize, f64) {
+    // Return the first segment no other beats.
+    distance_to_each_segment(road, x, y)
+        .into_iter()
+        .enumerate()
+        .fold((0, f64::INFINITY), |best, (i, distance)| {
+            if distance < best.1 {
+                (i, distance)
+            } else {
+                best
+            }
+        })
 }
 
 /// The same distances, nearest first.
@@ -66,7 +146,7 @@ fn distance_to_line(from: (f64, f64), to: (f64, f64), x: f64, y: f64) -> f64 {
 /// Which stretch of an open road's arc length `s` falls on. The offset is
 /// continuous within each stretch and can step between two of them,
 /// where the line a road holds past its end gives way to a nearer bend.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Stretch {
     BeforeTheStart,
     OnTheRoad,
@@ -84,8 +164,8 @@ fn stretch(road: &Waypoints, s: f64) -> Stretch {
     }
 }
 
-/// A turn and a shift, taking a road drawn against the axes anywhere in
-/// the plane facing any way.
+/// A rotation and a shift, taking a road drawn against the axes anywhere
+/// in the plane facing any way.
 #[derive(Debug, Clone, Copy)]
 struct Placement {
     angle: f64,
@@ -96,7 +176,7 @@ impl Placement {
     fn apply(&self, (x, y): (f64, f64)) -> (f64, f64) {
         let (sin, cos) = (libm::sin(self.angle), libm::cos(self.angle));
 
-        // Return the point turned about the origin and then shifted.
+        // Return the point rotated about the origin and then shifted.
         (
             cos * x - sin * y + self.shift.0,
             sin * x + cos * y + self.shift.1,
@@ -111,42 +191,55 @@ fn placement() -> impl Strategy<Value = Placement> {
     })
 }
 
-/// A point anywhere a road can reach and well beyond.
+/// A point anywhere in a square three kilometers on a side around the
+/// origin. Every road here starts within half a kilometer of the origin
+/// and runs for under a kilometer, so the square holds all of them with
+/// room to spare, and a point drawn from it lands on the road, beside
+/// it, or far from it in whatever proportion the road's size gives.
 fn anywhere() -> impl Strategy<Value = (f64, f64)> {
-    (-1000.0..1000.0, -1000.0..1000.0)
+    (-1500.0..1500.0, -1500.0..1500.0)
 }
 
-/// An open road of 2 to 8 points that never turns back on itself. Each
-/// point lies at least a meter further along one axis than the last and
-/// anywhere within a hundred meters of it on the other, so a bend can be
-/// as sharp as it likes short of doubling back, and no segment can be
-/// short enough for the road to refuse.
+/// An open road of 2 to 8 points: a random walk from anywhere, facing
+/// any way, in strides of a meter to a hundred, turning at each vertex
+/// by up to the sharpest turn either way. It can turn back on itself so
+/// long as its segments keep the clearance, which the filter holds it
+/// to. Its strides keep every segment far longer than the road's
+/// minimum, and the refusal check guards the builder all the same: a
+/// road it would refuse is a case to discard rather than a panic to
+/// report.
 ///
 /// Every range here excludes what a float can otherwise be, since a
-/// road with a NaN in it is not a road, and the refusal check guards the
-/// builder all the same: a road it would refuse is a case to discard
-/// rather than a panic to report.
+/// road with a NaN in it is not a road.
 fn open_road() -> impl Strategy<Value = Waypoints> {
     (2..=8usize)
         .prop_flat_map(|n| {
             (
+                (-500.0..500.0, -500.0..500.0),
+                0.0..TAU,
+                proptest::collection::vec(-SHARPEST_TURN..SHARPEST_TURN, n - 2),
                 proptest::collection::vec(1.0..100.0f64, n - 1),
-                proptest::collection::vec(-100.0..100.0f64, n),
-                placement(),
             )
         })
-        .prop_map(|(steps, ys, placement)| {
-            let mut x = 0.0;
-            let mut points = Vec::with_capacity(ys.len());
-            for (i, y) in ys.into_iter().enumerate() {
+        .prop_map(|(start, first_heading, turns, strides)| {
+            let mut heading = first_heading;
+            let mut points = vec![start];
+            for (i, stride) in strides.into_iter().enumerate() {
                 if i > 0 {
-                    x += steps[i - 1];
+                    heading += turns[i - 1];
                 }
-                points.push(placement.apply((x, y)));
+                let (x, y) = points[i];
+                points.push((
+                    x + stride * libm::cos(heading),
+                    y + stride * libm::sin(heading),
+                ));
             }
 
-            // Return the walk, placed.
+            // Return the walk.
             points
+        })
+        .prop_filter("segments closer than the clearance", |points| {
+            keeps_clearance(points, false)
         })
         .prop_filter("a segment the road would refuse", |points| {
             Waypoints::check_for_too_short_segments(points, false).is_none()
@@ -156,8 +249,9 @@ fn open_road() -> impl Strategy<Value = Waypoints> {
 
 /// A closed road of 3 to 12 points around a center, each at its own
 /// angle and radius and walked in angular order, so it cannot cross
-/// itself. Half of them are walked the other way round, so a corner
-/// turns right as often as it turns left.
+/// itself, then rotated and shifted anywhere. Half of them are walked
+/// the other way round, so a corner turns right as often as it turns
+/// left.
 ///
 /// The angles come from proportional gaps. The widest gap is under what
 /// the others add up to, so no gap reaches half a turn: a segment
@@ -165,8 +259,8 @@ fn open_road() -> impl Strategy<Value = Waypoints> {
 /// segments on the far side, and the polygon would no longer be simple.
 /// No two points are closer than about three degrees apart at five
 /// meters out, a quarter of a meter, which keeps every segment far longer
-/// than the road's minimum. The filter guards the builder all the same,
-/// as `open_road` says.
+/// than the road's minimum. The filters hold it to the clearance and
+/// guard the builder all the same, as `open_road` says.
 fn closed_road() -> impl Strategy<Value = Waypoints> {
     (3..=12usize)
         .prop_flat_map(|n| {
@@ -196,6 +290,9 @@ fn closed_road() -> impl Strategy<Value = Waypoints> {
             // Return the polygon, placed and walked either way round.
             points
         })
+        .prop_filter("segments closer than the clearance", |points| {
+            keeps_clearance(points, true)
+        })
         .prop_filter("a segment the road would refuse", |points| {
             Waypoints::check_for_too_short_segments(points, true).is_none()
         })
@@ -211,11 +308,16 @@ fn any_road() -> impl Strategy<Value = Waypoints> {
 proptest! {
     // Each case is a few segments' worth of arithmetic, so a thousand of
     // them cost less than one compile, and every run draws a fresh
-    // thousand. A failure's seed lands in `proptest-regressions` beside
-    // this file, to be committed so the case is rerun from then on; the
-    // default location is relative to a crate root, which an integration
-    // test does not have.
+    // thousand. About a third of the open roads drawn fail the clearance
+    // and are redrawn, roughly one redraw for every two cases, which the
+    // default allowance of 65,536 redraws covers at that count but not
+    // on a stress run of a few hundred thousand cases. A million redraws
+    // suits a run of two million. A failure's seed lands in
+    // `proptest-regressions` beside this file, to be committed so the
+    // case is rerun from then on; the default location is relative to a
+    // crate root, which an integration test does not have.
     #![proptest_config(ProptestConfig {
+        max_local_rejects: 1_000_000,
         failure_persistence: Some(Box::new(FileFailurePersistence::WithSource(
             "proptest-regressions",
         ))),
@@ -249,12 +351,12 @@ proptest! {
         let on_road = road.point_at(s);
 
         // How far a lane can sit off this point of the road before some
-        // other stretch of it is nearer than the stretch it is on: half
-        // the distance to the nearest other stretch, since moving a point
+        // other segment of it is nearer than the segment it is on: half
+        // the distance to the nearest other segment, since moving a point
         // by a distance brings it at most that much closer to anything.
-        // The nearest stretch of all is the one it is on, at no distance,
+        // The nearest segment of all is the one it is on, at no distance,
         // so the runner-up is the one that bounds the reach. A point on a
-        // vertex is on two stretches at once and has no reach at all, and
+        // vertex is on two segments at once and has no reach at all, and
         // one within a micron of a vertex has none worth a lane. A road
         // with nothing else near has more reach than any lane needs.
         let distances = distances_nearest_first(&road, on_road.x, on_road.y);
@@ -307,30 +409,79 @@ proptest! {
     }
 
     #[test]
-    fn the_offset_changes_no_faster_than_the_point_moves(
+    fn the_offset_changes_no_faster_than_a_point_moving_beside_the_road(
         road in any_road(),
-        (x, y) in anywhere(),
+        fraction in 0.0..1.0f64,
+        lateral in -BESIDE_THE_ROAD..BESIDE_THE_ROAD,
         heading in 0.0..TAU,
-        step in 0.001..5.0f64,
+        step in 0.001..0.5f64,
     ) {
-        // A straight walk of a few dozen steps from anywhere, so it
-        // crosses the road, rounds corners and runs off the ends of it.
-        // The offset may change by at most as far as the point moved,
-        // except where the point steps from one stretch of an open road
-        // to another. Within the road, or within the line it holds past
-        // an end, the offset is a distance and a distance cannot step.
+        // A straight walk of a few dozen short steps from a point beside
+        // the road, so it crosses the road, rounds corners, runs off the
+        // ends, and can wander out of the band beside the road as it
+        // goes. The offset may change by at most as far as the point
+        // moved.
+        //
+        // Its magnitude is a distance, to the road or to the line the
+        // road holds past an end, and a distance stays continuous as the
+        // point moves. Its sign says which side of the nearest segment
+        // the point is on, and two segments that meet agree on that all
+        // round their vertex, where two that do not can face opposite
+        // ways. Beside the road only segments that meet can both be
+        // nearest, so the signed offset stays continuous there; far from
+        // a road that doubles back it cannot, and only the magnitude is
+        // checked.
+        //
+        // Past an end of an open road the offset measures to the line
+        // the end segment holds. Where the walk crosses the perpendicular
+        // at that end, the line and the segment meet, so both checks hold
+        // across it. Where a nearer segment takes over from the line
+        // instead, the offset steps by the difference between the two,
+        // so a pair that changes stretch and nearest segment at once is
+        // the one pair left unchecked.
         const STEPS: usize = 64;
+        struct Sample {
+            at: (f64, f64),
+            stretch: Stretch,
+            nearest_segment: usize,
+            offset: f64,
+            beside: bool,
+        }
+        let start = road.point_at_offset(fraction * road.total_length(), lateral);
         let (dx, dy) = (step * libm::cos(heading), step * libm::sin(heading));
-        let mut previous = road.frenet(x, y);
+        let sample = |k: usize| {
+            let at = (start.x + dx * k as f64, start.y + dy * k as f64);
+            let (s, offset) = road.frenet(at.0, at.1);
+            let (nearest_segment, distance) = nearest_segment(&road, at.0, at.1);
+
+            // Return the sample with everything the checks below ask of it.
+            Sample {
+                at,
+                stretch: stretch(&road, s),
+                nearest_segment,
+                offset,
+                beside: distance < BESIDE_THE_ROAD,
+            }
+        };
+        let mut previous = sample(0);
         for k in 1..=STEPS {
-            let (px, py) = (x + dx * k as f64, y + dy * k as f64);
-            let current = road.frenet(px, py);
-            if stretch(&road, previous.0) == stretch(&road, current.0) {
-                let change = (current.1 - previous.1).abs();
+            let current = sample(k);
+            let at = current.at;
+            let same_stretch = current.stretch == previous.stretch;
+            let same_segment = current.nearest_segment == previous.nearest_segment;
+            if same_stretch || same_segment {
+                let change = (current.offset.abs() - previous.offset.abs()).abs();
                 prop_assert!(
                     change <= step + TOLERANCE,
-                    "offset jumped {change} at ({px}, {py}) where the point moved {step}"
+                    "offset magnitude jumped {change} at {at:?} where the point moved {step}"
                 );
+                if current.beside && previous.beside {
+                    let change = (current.offset - previous.offset).abs();
+                    prop_assert!(
+                        change <= step + TOLERANCE,
+                        "offset jumped {change} at {at:?} where the point moved {step}"
+                    );
+                }
             }
             previous = current;
         }
@@ -370,15 +521,15 @@ proptest! {
         };
 
         // Only where that end is the nearest road, with room to spare. A
-        // road bending back toward its own extension puts another stretch
-        // nearer, and a point there is in that stretch's lane instead,
+        // road bending back toward its own extension puts another segment
+        // nearer, and a point there is in that segment's lane instead,
         // which is the right answer and not this one. The room is half
-        // the distance from the end to the nearest other stretch, since
+        // the distance from the end to the nearest other segment, since
         // going that far from the end brings the point at most that much
         // closer to anything, and the two shares together stay inside it.
-        // An open road's end is at least a meter from every other stretch
-        // by construction, so there is always some, and a road with
-        // nothing else near has more than any lane needs.
+        // An end always has some: the segment before it leaves at thirty
+        // degrees or more, and every other segment keeps the clearance.
+        // A road with nothing else near has more than any lane needs.
         let mut distances = distance_to_each_segment(&road, end.0, end.1);
         distances.remove(if past_the_end { distances.len() - 1 } else { 0 });
         let nearest_other = distances.into_iter().fold(f64::INFINITY, f64::min);
