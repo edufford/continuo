@@ -141,13 +141,16 @@ fingerprint, and no compile error would say so. `.gitattributes` marks
 archive somewhere far from the cause. `DEMO_WORLD_HASH` is pinned because a
 world hash that moves quietly is a change nobody sees. CI corrupts a recorded
 log on purpose, because a verifier that accepts a tampered log fails only
-when it matters. `string-literals.yml` reads for a run of four spaces inside
-a string literal, which is what a line-continuation backslash lost from the
-end of a source line leaves behind: the literal is still valid Rust, and
-`rustfmt` does not reformat what is inside a string, so it accepts the
-over-wide line as well. Ruff's `ISC` rules are the same barrier on the
-viewer, where the mistake takes Python's own shape: a comma missing from a
-collection joins two of its entries rather than separating them.
+when it matters. CI fetches the dependency crates with `--locked` before its
+first build, because a stale `Cargo.lock` would otherwise be updated quietly
+and built against whatever it resolved. `string-literals.yml` reads for a run
+of four spaces inside a string literal, which is what a line-continuation
+backslash lost from the end of a source line leaves behind: the literal is
+still valid Rust, and `rustfmt` does not reformat what is inside a string, so
+it accepts the over-wide line as well. Ruff's `ISC` rules are the same
+barrier on the viewer, where the mistake takes Python's own shape: a comma
+missing from a collection joins two of its entries rather than separating
+them.
 
 `string-literals.yml` is a heuristic where the rest are exact, so it is a
 workflow of its own and stays out of the required checks: a rule that can be
