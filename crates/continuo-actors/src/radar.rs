@@ -271,13 +271,13 @@ mod tests {
     }
 
     /// A radar on the ego car, which every test scans from.
-    fn radar_on(road: Arc<Waypoints>) -> RadarSensor {
+    fn radar_on_ego(road: Arc<Waypoints>) -> RadarSensor {
         RadarSensor::new("ego", road, PERIOD, MAX_RANGE, LANE_TOLERANCE)
     }
 
     /// A car `x` meters along the road, `lateral` meters left of it,
     /// doing `speed`.
-    fn car(x: f64, lateral: f64, speed: f64) -> CarState {
+    fn create_car_with_state(x: f64, lateral: f64, speed: f64) -> CarState {
         CarState {
             position: Vec3::new(x, lateral, 0.0),
             orientation: Quat::from_yaw(0.0),
@@ -289,7 +289,7 @@ mod tests {
     ///
     /// The inbox arrives in publisher order, so the callers list their
     /// cars by name.
-    fn poses(cars: &[(&str, CarState)]) -> Vec<Message> {
+    fn get_poses(cars: &[(&str, CarState)]) -> Vec<Message> {
         // Return the inbox a step would be handed.
         cars.iter()
             .map(|(name, state)| Message {
@@ -322,22 +322,22 @@ mod tests {
     fn scan_of(road: Arc<Waypoints>, cars: &[(&str, CarState)]) -> RadarScan {
         // Return the scan, which exists whenever the ego's pose is in the
         // inbox.
-        step_once(&mut radar_on(road), SimTime::ZERO, poses(cars))
+        step_once(&mut radar_on_ego(road), SimTime::ZERO, get_poses(cars))
             .expect("the ego published its own pose, so it scanned")
     }
 
     /// The ranges in a scan, sorted, since a scan's order is not part of
     /// its contract.
-    fn ranges(scan: &RadarScan) -> Vec<f64> {
+    fn sorted_ranges(scan: &RadarScan) -> Vec<f64> {
         let mut ranges: Vec<f64> = scan.detections.iter().map(|found| found.range).collect();
         ranges.sort_by(f64::total_cmp);
 
-        // Return them sorted for comparison.
+        // Return them sorted for comparison tests.
         ranges
     }
 
     /// The one detection in a scan that should hold exactly one.
-    fn only(scan: &RadarScan) -> Detection {
+    fn check_single_detection(scan: &RadarScan) -> Detection {
         assert_eq!(scan.detections.len(), 1, "expected one detection");
 
         // Return it.
@@ -349,19 +349,19 @@ mod tests {
         let scan = scan_of(
             road(),
             &[
-                ("behind", car(30.0, 0.0, 20.0)),
-                ("ego", car(50.0, 0.0, 20.0)),
-                ("far", car(160.0, 0.0, 20.0)),
-                ("mid", car(110.0, 0.0, 20.0)),
-                ("near", car(70.0, 0.0, 20.0)),
-                ("wide", car(90.0, LANE_WIDTH, 20.0)),
+                ("behind", create_car_with_state(30.0, 0.0, 20.0)),
+                ("ego", create_car_with_state(50.0, 0.0, 20.0)),
+                ("far", create_car_with_state(160.0, 0.0, 20.0)),
+                ("mid", create_car_with_state(110.0, 0.0, 20.0)),
+                ("near", create_car_with_state(70.0, 0.0, 20.0)),
+                ("wide", create_car_with_state(90.0, LANE_WIDTH, 20.0)),
             ],
         );
 
         // The three cars ahead in lane, each once. Compared sorted, since
         // slot order is not part of the contract.
         assert_eq!(
-            ranges(&scan),
+            sorted_ranges(&scan),
             vec![20.0 - CAR_LENGTH, 60.0 - CAR_LENGTH, 110.0 - CAR_LENGTH]
         );
     }
@@ -371,8 +371,8 @@ mod tests {
         let over = scan_of(
             road(),
             &[
-                ("ego", car(0.0, 0.0, 20.0)),
-                ("other", car(40.0, LANE_WIDTH, 20.0)),
+                ("ego", create_car_with_state(0.0, 0.0, 20.0)),
+                ("other", create_car_with_state(40.0, LANE_WIDTH, 20.0)),
             ],
         );
         assert!(
@@ -385,23 +385,23 @@ mod tests {
         let inside = scan_of(
             road(),
             &[
-                ("ego", car(0.0, 0.0, 20.0)),
-                ("other", car(40.0, LANE_TOLERANCE, 20.0)),
+                ("ego", create_car_with_state(0.0, 0.0, 20.0)),
+                ("other", create_car_with_state(40.0, LANE_TOLERANCE, 20.0)),
             ],
         );
-        assert_eq!(ranges(&inside), vec![40.0 - CAR_LENGTH]);
+        assert_eq!(sorted_ranges(&inside), vec![40.0 - CAR_LENGTH]);
 
         // The band is centered on this car, not the road, so a radar in
         // an outside lane watches that lane.
         let outside = scan_of(
             road(),
             &[
-                ("ego", car(0.0, LANE_WIDTH, 20.0)),
-                ("middle", car(60.0, 0.0, 20.0)),
-                ("same", car(40.0, LANE_WIDTH, 20.0)),
+                ("ego", create_car_with_state(0.0, LANE_WIDTH, 20.0)),
+                ("middle", create_car_with_state(60.0, 0.0, 20.0)),
+                ("same", create_car_with_state(40.0, LANE_WIDTH, 20.0)),
             ],
         );
-        assert_eq!(ranges(&outside), vec![40.0 - CAR_LENGTH]);
+        assert_eq!(sorted_ranges(&outside), vec![40.0 - CAR_LENGTH]);
     }
 
     #[test]
@@ -411,9 +411,9 @@ mod tests {
         let scan = scan_of(
             road(),
             &[
-                ("alongside", car(50.0, 0.0, 20.0)),
-                ("behind", car(10.0, 0.0, 20.0)),
-                ("ego", car(50.0, 0.0, 20.0)),
+                ("alongside", create_car_with_state(50.0, 0.0, 20.0)),
+                ("behind", create_car_with_state(10.0, 0.0, 20.0)),
+                ("ego", create_car_with_state(50.0, 0.0, 20.0)),
             ],
         );
         assert!(
@@ -427,24 +427,33 @@ mod tests {
     fn range_rate_is_negative_when_closing_and_positive_when_opening() {
         let closing = scan_of(
             road(),
-            &[("ego", car(0.0, 0.0, 25.0)), ("lead", car(40.0, 0.0, 18.0))],
+            &[
+                ("ego", create_car_with_state(0.0, 0.0, 25.0)),
+                ("lead", create_car_with_state(40.0, 0.0, 18.0)),
+            ],
         );
-        assert_eq!(only(&closing).range_rate, -7.0);
+        assert_eq!(check_single_detection(&closing).range_rate, -7.0);
 
         let opening = scan_of(
             road(),
-            &[("ego", car(0.0, 0.0, 25.0)), ("lead", car(40.0, 0.0, 31.0))],
+            &[
+                ("ego", create_car_with_state(0.0, 0.0, 25.0)),
+                ("lead", create_car_with_state(40.0, 0.0, 31.0)),
+            ],
         );
-        assert_eq!(only(&opening).range_rate, 6.0);
+        assert_eq!(check_single_detection(&opening).range_rate, 6.0);
     }
 
     #[test]
     fn a_lead_holding_a_steady_gap_reports_zero_range_rate() {
         let scan = scan_of(
             road(),
-            &[("ego", car(0.0, 0.0, 22.5)), ("lead", car(40.0, 0.0, 22.5))],
+            &[
+                ("ego", create_car_with_state(0.0, 0.0, 22.5)),
+                ("lead", create_car_with_state(40.0, 0.0, 22.5)),
+            ],
         );
-        assert_eq!(only(&scan).range_rate, 0.0);
+        assert_eq!(check_single_detection(&scan).range_rate, 0.0);
     }
 
     #[test]
@@ -454,12 +463,12 @@ mod tests {
         let scan = scan_of(
             road(),
             &[
-                ("ego", car(10.0, 0.0, 30.0)),
-                ("lead", car(60.0, 0.0, 18.0)),
+                ("ego", create_car_with_state(10.0, 0.0, 30.0)),
+                ("lead", create_car_with_state(60.0, 0.0, 18.0)),
             ],
         );
         assert_eq!(
-            only(&scan),
+            check_single_detection(&scan),
             Detection {
                 range: 50.0 - CAR_LENGTH,
                 range_rate: -12.0,
@@ -474,9 +483,12 @@ mod tests {
         // told the road is clear.
         let scan = scan_of(
             road(),
-            &[("ego", car(0.0, 0.0, 20.0)), ("hit", car(3.0, 0.0, 20.0))],
+            &[
+                ("ego", create_car_with_state(0.0, 0.0, 20.0)),
+                ("hit", create_car_with_state(3.0, 0.0, 20.0)),
+            ],
         );
-        assert_eq!(only(&scan).range, 3.0 - CAR_LENGTH);
+        assert_eq!(check_single_detection(&scan).range, 3.0 - CAR_LENGTH);
     }
 
     #[test]
@@ -486,39 +498,51 @@ mod tests {
         let scan = scan_of(
             road(),
             &[
-                ("edge", car(MAX_RANGE + CAR_LENGTH, 0.0, 20.0)),
-                ("ego", car(0.0, 0.0, 20.0)),
-                ("past", car(MAX_RANGE + CAR_LENGTH + 0.5, 0.0, 20.0)),
+                (
+                    "edge",
+                    create_car_with_state(MAX_RANGE + CAR_LENGTH, 0.0, 20.0),
+                ),
+                ("ego", create_car_with_state(0.0, 0.0, 20.0)),
+                (
+                    "past",
+                    create_car_with_state(MAX_RANGE + CAR_LENGTH + 0.5, 0.0, 20.0),
+                ),
             ],
         );
-        assert_eq!(ranges(&scan), vec![MAX_RANGE]);
+        assert_eq!(sorted_ranges(&scan), vec![MAX_RANGE]);
     }
 
     #[test]
     fn a_scan_over_its_cap_keeps_the_nearest() {
-        let mut radar = radar_on(road()).with_max_detections(2);
-        let cars = poses(&[
-            ("ego", car(0.0, 0.0, 20.0)),
-            ("far", car(150.0, 0.0, 20.0)),
-            ("mid", car(100.0, 0.0, 20.0)),
-            ("near", car(50.0, 0.0, 20.0)),
+        let mut radar = radar_on_ego(road()).with_max_detections(2);
+        let cars = get_poses(&[
+            ("ego", create_car_with_state(0.0, 0.0, 20.0)),
+            ("far", create_car_with_state(150.0, 0.0, 20.0)),
+            ("mid", create_car_with_state(100.0, 0.0, 20.0)),
+            ("near", create_car_with_state(50.0, 0.0, 20.0)),
         ]);
         let scan = step_once(&mut radar, SimTime::ZERO, cars).expect("the ego scanned");
 
         // The two nearest survive and the farthest is dropped.
-        assert_eq!(ranges(&scan), vec![50.0 - CAR_LENGTH, 100.0 - CAR_LENGTH]);
+        assert_eq!(
+            sorted_ranges(&scan),
+            vec![50.0 - CAR_LENGTH, 100.0 - CAR_LENGTH]
+        );
     }
 
     #[test]
     fn a_departed_car_vanishes_from_the_scan_after_its_last_pose() {
-        let mut radar = radar_on(road());
-        let both = poses(&[("ego", car(0.0, 0.0, 20.0)), ("gone", car(40.0, 0.0, 20.0))]);
+        let mut radar = radar_on_ego(road());
+        let both = get_poses(&[
+            ("ego", create_car_with_state(0.0, 0.0, 20.0)),
+            ("gone", create_car_with_state(40.0, 0.0, 20.0)),
+        ]);
         let scan = step_once(&mut radar, SimTime::ZERO, both).expect("the ego scanned");
-        assert_eq!(ranges(&scan), vec![40.0 - CAR_LENGTH]);
+        assert_eq!(sorted_ranges(&scan), vec![40.0 - CAR_LENGTH]);
 
         // The next inbox has no pose from it, and nothing was kept, so
         // it is gone.
-        let alone = poses(&[("ego", car(2.0, 0.0, 20.0))]);
+        let alone = get_poses(&[("ego", create_car_with_state(2.0, 0.0, 20.0))]);
         let scan =
             step_once(&mut radar, SimTime::from_millis(100), alone).expect("the ego scanned");
         assert!(
@@ -543,7 +567,7 @@ mod tests {
             }
         };
         let mut radar = RadarSensor::new("ego", ring.clone(), PERIOD, 60.0, LANE_TOLERANCE);
-        let cars = poses(&[
+        let cars = get_poses(&[
             ("behind", at(total - 60.0, 20.0)),
             ("ego", at(total - 10.0, 20.0)),
             ("seam", at(20.0, 20.0)),
@@ -554,7 +578,7 @@ mod tests {
         // Approximate because the ring is a polygon, so a point placed at
         // an arc length projects back a few bits away.
         assert!(
-            (only(&scan).range - (30.0 - CAR_LENGTH)).abs() < 1e-9,
+            (check_single_detection(&scan).range - (30.0 - CAR_LENGTH)).abs() < 1e-9,
             "across the seam: {:?}",
             scan.detections
         );
@@ -564,7 +588,7 @@ mod tests {
     fn the_first_step_publishes_nothing_rather_than_guessing() {
         // The first step's inbox is empty, so the radar does not know
         // where its own car is.
-        let mut radar = radar_on(road());
+        let mut radar = radar_on_ego(road());
         let mut ctx = StepCtx::new(SimTime::ZERO, None, "w", 0, vec![]);
         radar
             .step(&mut ctx)
@@ -577,7 +601,7 @@ mod tests {
         // The ego's own pose is what decides, not whether the inbox is
         // empty: an inbox with everyone else's pose still leaves the
         // radar without its own position.
-        let others = poses(&[("lead", car(60.0, 0.0, 20.0))]);
+        let others = get_poses(&[("lead", create_car_with_state(60.0, 0.0, 20.0))]);
         assert!(step_once(&mut radar, SimTime::from_millis(100), others).is_none());
     }
 }
