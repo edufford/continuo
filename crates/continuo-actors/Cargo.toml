@@ -14,7 +14,7 @@ serde_json = { workspace = true }
 tracing = { workspace = true }
 
 # The conductor and the transport serve the determinism integration test,
-# and proptest the property tests on the road.
+# and proptest the property tests.
 [dev-dependencies]
 continuo-conductor = { workspace = true }
 continuo-transport = { workspace = true }
