@@ -187,14 +187,22 @@ impl RadarSensor {
         if detections.len() <= self.max_detections {
             return;
         }
-        let mut slots: Vec<usize> = (0..detections.len()).collect();
         // `total_cmp` orders every pair of floats, and a stable sort
         // keeps equal ranges in the order the actors came in.
+        let mut slots: Vec<usize> = (0..detections.len()).collect();
         slots.sort_by(|&a, &b| detections[a].range.total_cmp(&detections[b].range));
-        slots.truncate(self.max_detections);
-        slots.sort_unstable();
-        let kept = slots.into_iter().map(|slot| detections[slot]).collect();
-        *detections = kept;
+        let mut kept = vec![false; detections.len()];
+        for &slot in &slots[..self.max_detections] {
+            kept[slot] = true;
+        }
+        // `retain` visits the detections in their original order, so the
+        // survivors keep it.
+        let mut slot = 0;
+        detections.retain(|_| {
+            let keep = kept[slot];
+            slot += 1;
+            keep
+        });
     }
 }
 
