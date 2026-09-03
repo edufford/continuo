@@ -123,14 +123,29 @@ fn nearest_segment(road: &Waypoints, x: f64, y: f64) -> (usize, f64) {
         })
 }
 
-/// The same distances, nearest first.
-fn distances_nearest_first(road: &Waypoints, x: f64, y: f64) -> Vec<f64> {
-    let mut distances = distance_to_each_segment(road, x, y);
-    distances.sort_by(f64::total_cmp);
+/// The widest road a lane is placed on: ten lanes. A segment with
+/// nothing else near it has room beyond any lane, and this is where the
+/// tests stop reaching out.
+const WIDEST_ROAD: f64 = 10.0 * LANE_WIDTH;
 
-    // Return them sorted, so the nearest segment is first and the runner-up
-    // second.
-    distances
+/// How far a lane can sit off the point `(x, y)` of segment
+/// `own_segment` before some other segment is nearer than that one: half
+/// the distance to the nearest other segment, since moving a point by a
+/// distance brings it at most that much closer to anything, and never
+/// more than the widest road. A point on a vertex is on two segments at
+/// once and has no room at all.
+fn room_for_a_lane(road: &Waypoints, x: f64, y: f64, own_segment: usize) -> f64 {
+    // The smallest of the other segments' distances, or infinity when
+    // there is no other segment, which the cap below then answers.
+    let nearest_other = distance_to_each_segment(road, x, y)
+        .into_iter()
+        .enumerate()
+        .filter(|&(i, _)| i != own_segment)
+        .map(|(_, distance)| distance)
+        .fold(f64::INFINITY, f64::min);
+
+    // Return half of it, and no more than a lane is ever placed at.
+    (nearest_other / 2.0).min(WIDEST_ROAD)
 }
 
 /// The distance from `(x, y)` to the line through `from` and `to`, rather
@@ -325,7 +340,7 @@ proptest! {
     })]
 
     #[test]
-    fn a_point_on_the_road_reads_its_own_arc_length(
+    fn frenet_recovers_the_arc_length_of_a_point_on_the_road(
         road in any_road(),
         fraction in 0.0..1.0f64,
     ) {
@@ -341,36 +356,30 @@ proptest! {
     }
 
     #[test]
-    fn a_lane_point_round_trips_within_the_bends_reach(
+    fn frenet_recovers_a_lane_point_while_the_lane_has_room(
         road in any_road(),
         fraction in 0.0..1.0f64,
-        share_of_reach in -0.95..0.95f64,
+        share_of_room in -0.95..0.95f64,
     ) {
         let s = fraction * road.total_length();
         prop_assume!(s < road.total_length());
         let on_road = road.point_at(s);
 
-        // How far a lane can sit off this point of the road before some
-        // other segment of it is nearer than the segment it is on: half
-        // the distance to the nearest other segment, since moving a point
-        // by a distance brings it at most that much closer to anything.
-        // The nearest segment of all is the one it is on, at no distance,
-        // so the runner-up is the one that bounds the reach. A point on a
-        // vertex is on two segments at once and has no reach at all, and
-        // one within a micron of a vertex has none worth a lane. A road
-        // with nothing else near has more reach than any lane needs.
-        let distances = distances_nearest_first(&road, on_road.x, on_road.y);
-        let reach = distances.get(1).copied().unwrap_or(f64::INFINITY) / 2.0;
-        let reach = reach.min(50.0);
-        prop_assume!(reach > 1e-6);
+        // The segment the point is on is the nearest to it, at no
+        // distance, and the room beside it is what bounds the lane. A
+        // point within a micron of a vertex has room too small for any
+        // lane and too small for rounding to respect, so it is skipped.
+        let (own_segment, _) = nearest_segment(&road, on_road.x, on_road.y);
+        let room = room_for_a_lane(&road, on_road.x, on_road.y, own_segment);
+        prop_assume!(room > 1e-6);
 
-        let lateral = share_of_reach * reach;
+        let lateral = share_of_room * room;
         let point = road.point_at_offset(s, lateral);
-        let (back_s, back_lateral) = road.frenet(point.x, point.y);
+        let (back_s, back_offset) = road.frenet(point.x, point.y);
         prop_assert!((back_s - s).abs() < TOLERANCE, "s {s} came back {back_s}");
         prop_assert!(
-            (back_lateral - lateral).abs() < TOLERANCE,
-            "lateral {lateral} came back {back_lateral}"
+            (back_offset - lateral).abs() < TOLERANCE,
+            "lateral {lateral} came back {back_offset}"
         );
     }
 
@@ -380,31 +389,32 @@ proptest! {
         (x, y) in anywhere(),
     ) {
         let (s, offset) = road.frenet(x, y);
-        let nearest = distances_nearest_first(&road, x, y)[0];
-        match stretch(&road, s) {
-            Stretch::OnTheRoad => {
-                prop_assert!(
-                    (offset.abs() - nearest).abs() < TOLERANCE,
-                    "({x}, {y}) read {offset} off a road {nearest} away"
-                );
-            }
-            end => {
-                // Past an end the road carries on as the line its last
-                // segment holds, and the offset measures across that line.
-                // The line passes through the road, so it can only be
-                // nearer than the road is.
-                let points = road.points();
-                let (from, to) = match end {
-                    Stretch::BeforeTheStart => (points[0], points[1]),
-                    _ => (points[points.len() - 2], points[points.len() - 1]),
-                };
-                let to_line = distance_to_line(from, to, x, y);
-                prop_assert!(
-                    (offset.abs() - to_line).abs() < TOLERANCE,
-                    "({x}, {y}) read {offset} off a line {to_line} away"
-                );
-                prop_assert!(offset.abs() <= nearest + TOLERANCE);
-            }
+        let (_, dist_to_road) = nearest_segment(&road, x, y);
+
+        // Past an end the road carries on as the line its end segment
+        // holds, and the offset measures across that line rather than to
+        // the road.
+        let points = road.points();
+        let end_line = match stretch(&road, s) {
+            Stretch::OnTheRoad => None,
+            Stretch::BeforeTheStart => Some((points[0], points[1])),
+            Stretch::PastTheEnd => Some((points[points.len() - 2], points[points.len() - 1])),
+        };
+        if let Some((from, to)) = end_line {
+            // Before the start or past the end. The line passes through
+            // the road, so it can only be nearer than the road is.
+            let dist_to_line = distance_to_line(from, to, x, y);
+            prop_assert!(
+                (offset.abs() - dist_to_line).abs() < TOLERANCE,
+                "({x}, {y}) read {offset} off a line {dist_to_line} away"
+            );
+            prop_assert!(offset.abs() <= dist_to_road + TOLERANCE);
+        } else {
+            // On the road, which a closed road is everywhere.
+            prop_assert!(
+                (offset.abs() - dist_to_road).abs() < TOLERANCE,
+                "({x}, {y}) read {offset} off a road {dist_to_road} away"
+            );
         }
     }
 
@@ -510,9 +520,10 @@ proptest! {
     ) {
         // A point set down past one end of the road, in what would be its
         // lane had the road gone on: so far along the line the end
-        // segment holds, and so far to the left of it. The arc length has
-        // to carry on counting along that line and the offset has to
-        // hold, or every car past the end would pile onto one arc length.
+        // segment holds, and so far to either side of it, a negative
+        // offset lying to the right. The arc length has to carry on
+        // counting along that line and the offset has to hold, or every
+        // car past the end would pile onto one arc length.
         let points = road.points();
         let (from, end) = if past_the_end {
             (points[points.len() - 2], points[points.len() - 1])
@@ -520,32 +531,31 @@ proptest! {
             (points[1], points[0])
         };
 
-        // Only where that end is the nearest road, with room to spare. A
-        // road bending back toward its own extension puts another segment
-        // nearer, and a point there is in that segment's lane instead,
-        // which is the right answer and not this one. The room is half
-        // the distance from the end to the nearest other segment, since
-        // going that far from the end brings the point at most that much
-        // closer to anything, and the two shares together stay inside it.
-        // An end always has some: the segment before it leaves at thirty
-        // degrees or more, and every other segment keeps the clearance.
-        // A road with nothing else near has more than any lane needs.
-        let mut distances = distance_to_each_segment(&road, end.0, end.1);
-        distances.remove(if past_the_end { distances.len() - 1 } else { 0 });
-        let nearest_other = distances.into_iter().fold(f64::INFINITY, f64::min);
-        let room = (nearest_other / 2.0).min(100.0);
+        // The point stays within the room beside the end, so the end
+        // segment is still the nearest road there. Further out, a road
+        // bending back toward its own extension could put another segment
+        // nearer, and a point there belongs to that segment's lane. The
+        // distance out and the distance aside add up to at most the room.
+        let own_segment = if past_the_end { road.num_segments() - 1 } else { 0 };
+        let room = room_for_a_lane(&road, end.0, end.1, own_segment);
         let beyond = share_beyond * room;
-        let lateral = share_lateral * (room - beyond);
+        let expected_offset = share_lateral * (room - beyond);
 
         // Out along the end segment's own direction, then to its left.
         let length = ((end.0 - from.0).powi(2) + (end.1 - from.1).powi(2)).sqrt();
         let (ux, uy) = ((end.0 - from.0) / length, (end.1 - from.1) / length);
         let (x, y) = if past_the_end {
-            (end.0 + beyond * ux - lateral * uy, end.1 + beyond * uy + lateral * ux)
+            (
+                end.0 + beyond * ux - expected_offset * uy,
+                end.1 + beyond * uy + expected_offset * ux,
+            )
         } else {
             // The road runs the other way here, so its left is this
             // direction's right.
-            (end.0 + beyond * ux + lateral * uy, end.1 + beyond * uy - lateral * ux)
+            (
+                end.0 + beyond * ux + expected_offset * uy,
+                end.1 + beyond * uy - expected_offset * ux,
+            )
         };
         let expected_s = if past_the_end {
             road.total_length() + beyond
@@ -554,7 +564,13 @@ proptest! {
         };
 
         let (s, offset) = road.frenet(x, y);
-        prop_assert!((s - expected_s).abs() < TOLERANCE, "({x}, {y}) read {s}, not {expected_s}");
-        prop_assert!((offset - lateral).abs() < TOLERANCE, "({x}, {y}) read {offset}, not {lateral}");
+        prop_assert!(
+            (s - expected_s).abs() < TOLERANCE,
+            "({x}, {y}) read {s}, not {expected_s}"
+        );
+        prop_assert!(
+            (offset - expected_offset).abs() < TOLERANCE,
+            "({x}, {y}) read {offset}, not {expected_offset}"
+        );
     }
 }
