@@ -329,10 +329,10 @@ proptest! {
     // and are redrawn, roughly one redraw for every two cases, which the
     // default allowance of 65,536 redraws covers at that count but not
     // on a stress run of a few hundred thousand cases. A million redraws
-    // suits a run of two million. A failure's seed lands in
-    // `proptest-regressions` beside this file, to be committed so the
-    // case is rerun from then on; the default location is relative to a
-    // crate root, which an integration test does not have.
+    // suits a run of two million. A failure's seed lands beside this
+    // file as `frenet_properties.proptest-regressions`, to be committed
+    // so the case is rerun from then on; the default location is
+    // relative to a crate root, which an integration test does not have.
     #![proptest_config(ProptestConfig {
         max_local_rejects: 1_000_000,
         failure_persistence: Some(Box::new(FileFailurePersistence::WithSource(
