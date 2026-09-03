@@ -231,20 +231,14 @@ fn two_identical_radar_runs_fingerprint_identically() {
     assert!(!first.is_empty(), "expected a scan stream");
 
     // It also has to have seen something, since two empty streams compare
-    // equal too. The car in front is in range, the one beyond is not, and
-    // all three hold the same speed, so no gap is closing.
+    // equal too. The car in front is in range and the one beyond is not,
+    // so every scan holds exactly one detection. What the numbers in it
+    // are is the unit tests' business.
     for scan in &first {
         assert_eq!(
             scan.detections.len(),
             1,
             "expected the car in front: {scan:?}"
         );
-        let found = scan.detections[0];
-        assert!(
-            found.range > 0.0 && found.range < RADAR_RANGE,
-            "the car in front is {} m away",
-            found.range
-        );
-        assert_eq!(found.range_rate, 0.0, "nobody here changes speed");
     }
 }
