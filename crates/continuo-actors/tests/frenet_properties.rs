@@ -28,15 +28,10 @@ const TOLERANCE: f64 = 1e-9;
 /// `frenet` beyond the geometry and stands as the oracle for its offset.
 fn distance_to_each_segment(road: &Waypoints, x: f64, y: f64) -> Vec<f64> {
     let points = road.points();
-    let segments = if road.is_closed() {
-        points.len()
-    } else {
-        points.len() - 1
-    };
 
     // Return one distance per segment, each to the nearest point of that
     // segment rather than of its line.
-    (0..segments)
+    (0..road.num_segments())
         .map(|i| {
             let (ax, ay) = points[i];
             let (bx, by) = points[(i + 1) % points.len()];

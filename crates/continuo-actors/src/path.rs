@@ -66,15 +66,9 @@ impl Waypoints {
     /// and an external caller like the FMU controller can check before
     /// building rather than be panicked.
     pub fn check_for_too_short_segments(points: &[(f64, f64)], is_closed: bool) -> Option<usize> {
-        let segments = if is_closed {
-            points.len()
-        } else {
-            points.len() - 1
-        };
-
         // Return the waypoint that's too close to its previous neighbor, since
         // that would be the one to take out.
-        (0..segments)
+        (0..Self::count_segments(points.len(), is_closed))
             .find(|&i| {
                 let a = points[i];
                 let b = points[(i + 1) % points.len()];
@@ -97,13 +91,7 @@ impl Waypoints {
             );
         }
 
-        // A closed path has one segment per point (the last closes the
-        // loop); an open one has a segment between each adjacent pair.
-        let num_segments = if is_closed {
-            points.len()
-        } else {
-            points.len() - 1
-        };
+        let num_segments = Self::count_segments(points.len(), is_closed);
         let mut cumulative = Vec::with_capacity(num_segments + 1);
         let mut total = 0.0;
         cumulative.push(0.0);
@@ -125,12 +113,22 @@ impl Waypoints {
         }
     }
 
-    /// How many segments the arc-length table covers.
-    fn num_segments(&self) -> usize {
-        // Return the segment count. The table holds each segment's end
-        // plus the leading zero, so it is one longer than the count.
-        // Whether the path closes is already baked into it by `build`.
-        self.cumulative.len() - 1
+    /// How many segments the path has: one per point on a closed road,
+    /// where the last closes it, and one fewer on an open road.
+    pub fn num_segments(&self) -> usize {
+        Self::count_segments(self.points.len(), self.is_closed)
+    }
+
+    /// The same count for points that are not a path yet, which is what
+    /// the builder and the refusal check use.
+    fn count_segments(num_points: usize, is_closed: bool) -> usize {
+        // Return one segment per point when the last closes back to the
+        // first, and one fewer when the road stops.
+        if is_closed {
+            num_points
+        } else {
+            num_points - 1
+        }
     }
 
     /// An axis-aligned ellipse approximated by `samples` points.
@@ -480,6 +478,16 @@ mod tests {
     /// the road a point is on has to answer both.
     fn square_clockwise() -> Waypoints {
         Waypoints::build_closed(vec![(0.0, 0.0), (0.0, 10.0), (10.0, 10.0), (10.0, 0.0)])
+    }
+
+    #[test]
+    fn a_closed_road_has_a_segment_per_point_and_an_open_road_one_fewer() {
+        assert_eq!(square().num_segments(), 4);
+        assert_eq!(left_corner().num_segments(), 2);
+        assert_eq!(
+            Waypoints::build_straight((0.0, 0.0), (100.0, 0.0)).num_segments(),
+            1
+        );
     }
 
     #[test]
