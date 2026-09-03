@@ -749,13 +749,13 @@ under "Wire format", rather than churning the fingerprint once apiece.
 - **A road built from curves rather than corners.** `Waypoints` is a polyline,
   so its heading steps at every vertex and its curvature is unbounded there.
   Three things follow. An arc length recovered by projection steps at a vertex,
-  which causes discontinuities in a radar's range calculated from it. And a
-  lane walked out at a fixed offset along that arc length traces no continuous
-  curve at all: each of its points is the road's displaced along the heading's
-  normal, so where the heading steps the displacement swings and the point
-  jumps with it, doubling back inside a bend and gapping outside it. **Both
-  want only a heading that does not step**, which adding curvature instead of
-  raw polylines gives.
+  which causes discontinuities in a radar's range calculated from it;
+  `RadarSensor` quantifies this. And a lane walked out at a fixed offset along
+  that arc length traces no continuous curve at all: each of its points is the
+  road's displaced along the heading's normal, so where the heading steps the
+  displacement swings and the point jumps with it, doubling back inside a bend
+  and gapping outside it. **Both want only a heading that does not step**,
+  which adding curvature instead of raw polylines gives.
 
   The third wants more, and a heading that does not step is one derivative
   short of it. Curvature is how fast the heading turns, so a road of straights
@@ -790,6 +790,18 @@ under "Wire format", rather than churning the fingerprint once apiece.
   instant, so shifting one silently reorders components that had nothing to
   do with the departure. It needs a free list plus a generation counter on
   each slot, so a reused index cannot be mistaken for its predecessor.
+
+- **A spatial index, so a sensor asks what is near it.** `RadarSensor`
+  projects every pose in the world onto the road and filters, which is
+  work proportional to the population for every sensor at every scan. A
+  quadtree, or a per-lane sort by arc length, would answer against what
+  is local instead, and the collision monitor's pair scan wants the same
+  structure. It would also bound a scan properly: `MAX_DETECTIONS` is a
+  defensive cap that sorts by range to choose what to drop, where
+  locality would have decided already. Deferred because no world here
+  reaches the cap, and because it belongs with the consolidated scene
+  view above, the other consumer that wants the world rather than every
+  message in it.
 
 - **A subscriber cannot ask for only the latest message per key.** The
   visibility rule queues every message until the subscriber next runs, so a

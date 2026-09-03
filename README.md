@@ -98,7 +98,7 @@ instant, and repeats.
 | [`continuo-core`](crates/continuo-core/) | `SimTime`/`SimDuration`, ids and paths, key expressions, `Vec3`/`Quat`/Euler (canonical Z-Y-X conversions), wire messages, the `Component` trait, owned hash/random/seed derivation |
 | [`continuo-transport`](crates/continuo-transport/) | `Transport` trait, deterministic `InProcTransport`, `MonitorTransport` for out-of-band message recording |
 | [`continuo-conductor`](crates/continuo-conductor/) | Registry (component tree as data), event schedule, the conductor loop, tick fingerprints, and the event log: `record`, `verify`, `playback` |
-| [`continuo-actors`](crates/continuo-actors/) | Sample components: waypoint path, path-follow controller, unicycle physics, pose logger, traffic spawner. Also the control laws they steer and follow by, IDM and pure pursuit, which the exported FMU compiles in rather than reimplements |
+| [`continuo-actors`](crates/continuo-actors/) | Sample components: waypoint path, path-follow controller, unicycle physics, forward-looking radar, pose logger, traffic spawner. Also the control laws they steer and follow by, IDM and pure pursuit, which the exported FMU compiles in rather than reimplements |
 | [`continuo-viz-bridge`](crates/continuo-viz-bridge/) | Relays a run's published messages and membership changes to a live viewer, as a transport monitor rather than a component |
 | [`continuo-fmi`](crates/continuo-fmi/) | Runs an imported FMI 3.0 Co-Simulation FMU as a component, wired to the world by a mapping rather than by code |
 | [`continuo-fmu-controller-idm`](crates/continuo-fmu-controller-idm/) | The car controller as an exported FMU: the FMI interface declaration, delegating every answer to the laws in `continuo-actors` |

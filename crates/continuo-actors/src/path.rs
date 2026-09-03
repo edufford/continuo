@@ -287,7 +287,7 @@ impl Waypoints {
     /// the segment that lost. The offset holds across the same
     /// crossing, both segments being equally near just there. Nothing
     /// smooths this away, since it is what nearest means on a polyline,
-    /// and a range read as the difference of two arc lengths inherits it.
+    /// and `RadarSensor` records what it costs a range.
     ///
     /// **Everywhere else, a point beyond a segment's end is measured to
     /// the vertex the road turns at**, which is the nearest road there
