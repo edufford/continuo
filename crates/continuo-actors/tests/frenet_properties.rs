@@ -329,10 +329,18 @@ proptest! {
     // and are redrawn, roughly one redraw for every two cases, which the
     // default allowance of 65,536 redraws covers at that count but not
     // on a stress run of a few hundred thousand cases. A million redraws
-    // suits a run of two million. A failure's seed lands beside this
-    // file as `frenet_properties.proptest-regressions`, to be committed
-    // so the case is rerun from then on; the default location is
-    // relative to a crate root, which an integration test does not have.
+    // suits a run of two million.
+    //
+    // A failure's seed lands beside this file as
+    // `frenet_properties.proptest-regressions`, and every run replays it
+    // before drawing fresh cases. It is committed, as proptest asks, and
+    // the fix lands with the shrunk case written out as a unit test in
+    // `path.rs`, since a seed draws the same case only while proptest
+    // and the generators here stay as they are and nothing says when
+    // that stops. The file is deleted whenever proptest moves in the
+    // lock or a generator changes, and the unit tests keep every case it
+    // held. The default location is relative to a crate root, which an
+    // integration test does not have.
     #![proptest_config(ProptestConfig {
         max_local_rejects: 1_000_000,
         failure_persistence: Some(Box::new(FileFailurePersistence::WithSource(

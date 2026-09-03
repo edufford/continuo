@@ -31,7 +31,9 @@ fmi-export = "0.3"
 libm = "0.2"
 # Property-based testing: a strategy generates the cases and a failure
 # shrinks to the smallest one it can find. Test-only, so nothing it draws
-# reaches a fingerprint.
+# reaches a fingerprint. Pinned through Cargo.lock like libm, since a
+# persisted regression seed replays its case only under the generator
+# that drew it.
 proptest = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["arbitrary_precision", "raw_value"] }

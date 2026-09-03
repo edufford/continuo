@@ -106,6 +106,16 @@ jobs:
           "$fmpy_python" -m pip install fmpy
           echo "FMPY_PYTHON=$fmpy_python" >> "$GITHUB_ENV"
 
+      # Cargo.lock pins every dependency, and some of them are pinned for a
+      # reason: libm because a different version is a different fingerprint,
+      # proptest because a persisted regression seed replays its case only
+      # under the generator that drew it. A build that found the lock stale
+      # would update it quietly and use whatever it resolved. Fetching with
+      # `--locked` refuses to touch the lock and fails the job when it would
+      # have to, so every cargo step after this builds the committed lock.
+      - name: "Install: dependency crates (locked)"
+        run: cargo fetch --locked
+
       # Lints run before anything is built for real, cheapest first, so an
       # unformatted file is reported in seconds rather than after a compile.
       # Steps only run when every earlier one succeeded.
