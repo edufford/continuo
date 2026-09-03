@@ -208,10 +208,11 @@ impl RadarSensor {
 
 /// The actor name in a pose key.
 ///
-/// The subscription delivers only `.../actor/{name}/pose`, so the name
-/// is the second segment from the end.
-fn actor_of(key: &str) -> &str {
-    key.rsplit('/')
+/// The name is the segment after `actor`, wherever that sits in the key.
+fn actor_of(pose_key: &str) -> &str {
+    pose_key
+        .split('/')
+        .skip_while(|segment| *segment != "actor")
         .nth(1)
         .expect("a pose key names the actor it belongs to")
 }
