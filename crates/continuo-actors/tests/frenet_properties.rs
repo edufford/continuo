@@ -346,8 +346,8 @@ proptest! {
         road in any_road(),
         fraction in 0.0..1.0f64,
     ) {
-        // The total itself is where a loop wraps back to zero, so the
-        // fraction stops short of it.
+        // The total itself is where a closed road wraps back to zero, so
+        // the fraction stops short of it.
         let s = fraction * road.total_length();
         prop_assume!(s < road.total_length());
 
@@ -500,14 +500,18 @@ proptest! {
     }
 
     #[test]
-    fn a_loops_arc_length_stays_within_one_lap(
+    fn a_closed_roads_arc_length_stays_within_one_lap(
         road in closed_road(),
         (x, y) in anywhere(),
     ) {
-        // The total itself is on the path, as `point_at` treats it: a
-        // point outside the seam's corner is measured to that corner from
-        // whichever of its two segments rounds nearer, and the last one
-        // answers with the total where the first answers with zero.
+        // The arc length can come back as the total itself rather than
+        // as zero. Outside the corner where the road closes, a point is
+        // measured to that corner, which ends the last segment and
+        // starts the first. Both are the same distance away in exact
+        // arithmetic, so rounding decides which answers, and the last
+        // segment answers with the total where the first answers with
+        // zero. `point_at` treats the total as on the road, so the range
+        // is closed at both ends.
         let (s, _) = road.frenet(x, y);
         let total = road.total_length();
         prop_assert!((0.0..=total).contains(&s), "({x}, {y}) read {s} on a lap of {total}");
