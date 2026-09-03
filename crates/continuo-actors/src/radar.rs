@@ -493,6 +493,9 @@ mod tests {
         // Closer than a car length means the cars overlap. The range goes
         // negative rather than flooring at zero, so a follower is not
         // told the road is clear.
+        //
+        // TODO(M6): the collision monitor is what reports an overlap.
+        // Until it lands, this negative range is the only sign of one.
         let scan = scan_of(
             road(),
             &[
