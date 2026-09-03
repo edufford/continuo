@@ -380,7 +380,7 @@ mod tests {
 
     #[test]
     fn a_car_in_another_lane_is_not_detected() {
-        let over = scan_of(
+        let above_lane_tol = scan_of(
             road(),
             &[
                 ("ego", create_car_with_state(0.0, 0.0, 20.0)),
@@ -388,24 +388,24 @@ mod tests {
             ],
         );
         assert!(
-            over.detections.is_empty(),
+            above_lane_tol.detections.is_empty(),
             "a lane over: {:?}",
-            over.detections
+            above_lane_tol.detections
         );
 
         // The same car half a lane over is within the tolerance.
-        let inside = scan_of(
+        let under_lane_tol = scan_of(
             road(),
             &[
                 ("ego", create_car_with_state(0.0, 0.0, 20.0)),
                 ("other", create_car_with_state(40.0, LANE_TOLERANCE, 20.0)),
             ],
         );
-        assert_eq!(sorted_ranges(&inside), vec![40.0 - CAR_LENGTH]);
+        assert_eq!(sorted_ranges(&under_lane_tol), vec![40.0 - CAR_LENGTH]);
 
         // The band is centered on this car, not the road, so a radar in
         // an outside lane watches that lane.
-        let outside = scan_of(
+        let multi_lane = scan_of(
             road(),
             &[
                 ("ego", create_car_with_state(0.0, LANE_WIDTH, 20.0)),
@@ -413,7 +413,7 @@ mod tests {
                 ("same", create_car_with_state(40.0, LANE_WIDTH, 20.0)),
             ],
         );
-        assert_eq!(sorted_ranges(&outside), vec![40.0 - CAR_LENGTH]);
+        assert_eq!(sorted_ranges(&multi_lane), vec![40.0 - CAR_LENGTH]);
     }
 
     #[test]
