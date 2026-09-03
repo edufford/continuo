@@ -163,8 +163,8 @@ impl RadarSensor {
     /// How far ahead of `own_s` the arc length `other_s` is.
     ///
     /// On a loop the difference wraps, so a car just behind reads as
-    /// most of a lap ahead and `max_range` rules it out. On an open road
-    /// a car behind comes back negative.
+    /// most of a lap ahead. On an open road a car behind comes back
+    /// negative.
     fn arc_ahead(&self, own_s: f64, other_s: f64) -> f64 {
         let difference = other_s - own_s;
 
