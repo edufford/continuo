@@ -1479,3 +1479,39 @@ it got there, including the roads not taken.
     has a length to divide by. A `TODO` records that the panic wants to
     be a `Result` once roads arrive as imported data rather than Rust
     literals.
+
+- **2026-09-03**: **Property tests pin what `frenet` promises on any road,
+  and two of its promises are narrower than the unit tests made them
+  look.** The roads are generated: an open road is a random walk turning by
+  up to 150 degrees at a vertex, a closed one a star-shaped polygon, and
+  both keep segments that do not meet three lane widths apart, since closer
+  than that they would share lane space.
+
+  - **The offset steps where a nearer segment takes over from the line an
+    open road holds past its end.** The 2026-08-29 entry has the offset go
+    on measuring across that line, but the nearest segment is chosen by
+    distance to the road, so at the boundary the value switches from a line
+    distance to a road distance, and the offset jump in this condition is
+    expected.
+
+  - **The signed offset is continuous beside the road, not everywhere.**
+    The sign is which side of the nearest segment a point is on, taken
+    along that segment's direction, and a road that comes back around in
+    another direction runs in opposite senses along different parts of its
+    outline. A point far off one side of the outline is then right of one
+    part and left of another, and where the nearer part changes the sign
+    flips with the distance still in the hundreds of meters, since the
+    offset passes through zero only on the road itself. Within half the
+    clearance, any two segments a point is nearest to meet at a vertex and
+    agree on its side. Roads that never turned back hid this until a review
+    asked why they could not.
+
+  - **A proptest seed file is committed, the fix lands as a unit test, and
+    the file is deleted when proptest moves in the lock or a generator
+    changes.** A seed replays its case only while both stay as they are,
+    and nothing says when that stops. Rejected: an exact version pin, since
+    the lock is this repository's pin and covers half the drift at most;
+    ignoring the file or turning persistence off, which lose the replay
+    that makes a rerun fail the same way until the fix. CI now fetches the
+    dependency crates with the lock held before its first build, so a
+    stale lock fails the job at the cause.
