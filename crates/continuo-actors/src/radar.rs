@@ -254,12 +254,12 @@ mod tests {
     /// The scan period, matching the controller's.
     const PERIOD: SimDuration = SimDuration::from_millis(100);
 
-    /// Half a lane, so a car one lane over is out and a car wandering
-    /// inside its own is still in.
-    const LANE_TOLERANCE: f64 = 1.75;
-
     /// One lane over.
     const LANE_WIDTH: f64 = 3.5;
+
+    /// Half a lane, so a car one lane over is out and a car wandering
+    /// inside its own is still in.
+    const LANE_TOLERANCE: f64 = LANE_WIDTH / 2.0;
 
     /// Far enough that range currently rules nothing out, except in the
     /// test about range.
