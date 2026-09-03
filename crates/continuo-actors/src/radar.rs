@@ -141,11 +141,11 @@ impl RadarSensor {
             if (other_lateral - own_lateral).abs() > self.lane_tolerance {
                 continue;
             }
-            let along = self.arc_ahead(own_s, other_s);
-            if along <= 0.0 {
+            let distance_ahead = self.arc_ahead(own_s, other_s);
+            if distance_ahead <= 0.0 {
                 continue;
             }
-            let range = along - CAR_LENGTH;
+            let range = distance_ahead - CAR_LENGTH;
             if range > self.max_range {
                 continue;
             }
@@ -166,13 +166,13 @@ impl RadarSensor {
     /// most of a lap ahead and `max_range` rules it out. On an open road
     /// a car behind comes back negative.
     fn arc_ahead(&self, own_s: f64, other_s: f64) -> f64 {
-        let along = other_s - own_s;
+        let difference = other_s - own_s;
 
         // Return the difference, wrapped onto a loop.
         if self.road.is_closed() {
-            along.rem_euclid(self.road.total_length())
+            difference.rem_euclid(self.road.total_length())
         } else {
-            along
+            difference
         }
     }
 
