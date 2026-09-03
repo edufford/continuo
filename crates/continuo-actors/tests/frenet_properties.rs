@@ -158,9 +158,9 @@ fn distance_to_line(from: (f64, f64), to: (f64, f64), x: f64, y: f64) -> f64 {
     ((dx * (y - from.1) - dy * (x - from.0)) / (dx * dx + dy * dy).sqrt()).abs()
 }
 
-/// Which stretch of an open road's arc length `s` falls on. The offset is
-/// continuous within each stretch and can step between two of them,
-/// where the line a road holds past its end gives way to a nearer bend.
+/// Which stretch an open road's arc length falls on: the road itself,
+/// or the line its end segment holds before the start or past the end.
+/// A closed road has no ends and is all one stretch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Stretch {
     BeforeTheStart,
@@ -169,14 +169,16 @@ enum Stretch {
 }
 
 fn stretch(road: &Waypoints, s: f64) -> Stretch {
-    // Return the stretch. A loop has no ends, so all of it is one.
-    if road.is_closed() || (0.0..=road.total_length()).contains(&s) {
+    let stretch = if road.is_closed() || (0.0..=road.total_length()).contains(&s) {
         Stretch::OnTheRoad
     } else if s < 0.0 {
         Stretch::BeforeTheStart
     } else {
         Stretch::PastTheEnd
-    }
+    };
+
+    // Return which stretch the arc length falls on.
+    stretch
 }
 
 /// A rotation and a shift, taking a road drawn against the axes anywhere

@@ -277,7 +277,11 @@ impl Waypoints {
     /// line the road was holding. A car that has run out of road is then
     /// still in its lane and still a known distance ahead of the one
     /// behind it, where stopping `s` at the end would pile every car
-    /// beyond it onto one arc length and hide them from each other.
+    /// beyond it onto one arc length and hide them from each other. Any
+    /// segment nearer than that line still wins, so where the road bends
+    /// back toward its own extension the offset steps as a car crosses
+    /// from one to the other, from the distance to the line to the
+    /// distance to the road.
     ///
     /// **Inside a bend the arc length steps.** Both segments reach a
     /// point there and the nearer one changes at the bisector, so `s`
