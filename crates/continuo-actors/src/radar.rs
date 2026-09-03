@@ -346,15 +346,23 @@ mod tests {
 
     #[test]
     fn a_scan_reports_every_car_ahead_in_lane_exactly_once() {
+        // Where each car sits along the road, in meters.
+        const BEHIND: f64 = 30.0;
+        const EGO: f64 = 50.0;
+        const NEAR: f64 = 70.0;
+        const WIDE: f64 = 90.0;
+        const MID: f64 = 110.0;
+        const FAR: f64 = 160.0;
+        const SPEED: f64 = 20.0;
         let scan = scan_of(
             road(),
             &[
-                ("behind", create_car_with_state(30.0, 0.0, 20.0)),
-                ("ego", create_car_with_state(50.0, 0.0, 20.0)),
-                ("far", create_car_with_state(160.0, 0.0, 20.0)),
-                ("mid", create_car_with_state(110.0, 0.0, 20.0)),
-                ("near", create_car_with_state(70.0, 0.0, 20.0)),
-                ("wide", create_car_with_state(90.0, LANE_WIDTH, 20.0)),
+                ("behind", create_car_with_state(BEHIND, 0.0, SPEED)),
+                ("ego", create_car_with_state(EGO, 0.0, SPEED)),
+                ("far", create_car_with_state(FAR, 0.0, SPEED)),
+                ("mid", create_car_with_state(MID, 0.0, SPEED)),
+                ("near", create_car_with_state(NEAR, 0.0, SPEED)),
+                ("wide", create_car_with_state(WIDE, LANE_WIDTH, SPEED)),
             ],
         );
 
@@ -362,7 +370,11 @@ mod tests {
         // slot order is not part of the contract.
         assert_eq!(
             sorted_ranges(&scan),
-            vec![20.0 - CAR_LENGTH, 60.0 - CAR_LENGTH, 110.0 - CAR_LENGTH]
+            vec![
+                NEAR - EGO - CAR_LENGTH,
+                MID - EGO - CAR_LENGTH,
+                FAR - EGO - CAR_LENGTH
+            ]
         );
     }
 
