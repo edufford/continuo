@@ -1566,6 +1566,18 @@ it got there, including the roads not taken.
     package and an FMU that will not instantiate, so the setup and run
     functions return a `ScenarioError` wrapping those beside
     `ConductorError`.
+  - **The examples drop an FMU's trace of its own calls from the log.**
+    `fmi-export` reports every FMI call under a `trace` category, one line
+    per car per step, about 1,700 a run, and `fmi` logs them at `INFO` with
+    the category as the target. Turning logging off at instantiation would
+    silence the FMU's errors too, since they travel the same way, so the
+    examples' subscriber drops a message only when its target is exactly
+    `trace` and its module path is the `fmu` that `fmi` gives everything an
+    FMU logs. `Targets` was the obvious tool and is wrong here: it matches a
+    target as a prefix and knows nothing of module paths, so it would
+    silence any target beginning with the word, from any crate. The three
+    lifecycle lines a car logs share their category with the errors and
+    stay.
   - **Joining costs 70 ms a car on Windows, measured and deferred.** `fmi`
     0.8 loads a fresh copy of the DLL for each instance. The demo's
     release run went from 0.07 s to 1.27 s, 1.0 s of it the fourteen

@@ -27,10 +27,7 @@ use continuo_transport::InProcTransport;
 use continuo_viz_bridge::{VizBridge, ZenohSink};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
-        .with_target(false)
-        .init();
+    continuo_examples::init_logging();
 
     let seconds: i64 = std::env::args()
         .nth(1)
