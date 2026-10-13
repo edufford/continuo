@@ -50,7 +50,7 @@ impl Component for Saboteur {
 }
 
 /// Runs two seconds of the demo, with or without the saboteur in the world.
-fn run_demo(sabotaged: bool) -> Result<(), continuo_conductor::ConductorError> {
+fn run_demo(sabotaged: bool) -> Result<(), traffic_world::ScenarioError> {
     let traffic_request_handler = TrafficRequestHandler::default();
     let mut conductor = Conductor::new(
         traffic_world::config(),

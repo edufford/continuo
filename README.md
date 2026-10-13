@@ -132,7 +132,17 @@ Requires a recent stable Rust toolchain (edition 2024, rust ≥ 1.85) and
 libclang, the workspace's only native-code prerequisite. See
 [Installing libclang](#installing-libclang) below.
 
+The demo's traffic drives on a controller packaged as an FMU, so the tests
+and the demo need that package built first, and built again after a control
+law changes. `cargo xtask verify` does it every time.
+
 ```sh
+# Once, for the packaging subcommand
+cargo install cargo-fmi
+
+# Package the controller FMU into target/fmu
+cargo xtask package-fmus
+
 # Build everything
 cargo build --workspace
 
@@ -195,7 +205,7 @@ cargo xtask package-fmus
 ```
 
 The demo logs every live car's pose once per sim-second and finishes in a
-fraction of a wall-second. Traffic appears as it is spawned, so the roll
+few wall-seconds. Traffic appears as it is spawned, so the roll
 changes as the run goes on:
 
 ```
@@ -203,16 +213,19 @@ INFO initial pose sim_time=0.0 key="continuo/demo/actor/ego/pose" x=0.00 y=0.00 
 INFO initial pose sim_time=0.5 key="continuo/demo/actor/traffic1/pose" x=80.36 y=-3.50 yaw_deg=0.0
 ...
 INFO pose sim_time=4.0 key="continuo/demo/actor/ego/pose" x=120.00 y=0.00 yaw_deg=0.0
-INFO pose sim_time=4.0 key="continuo/demo/actor/traffic1/pose" x=145.38 y=-3.50 yaw_deg=0.0
-INFO pose sim_time=4.0 key="continuo/demo/actor/traffic2/pose" x=190.87 y=-3.50 yaw_deg=0.0
+INFO pose sim_time=4.0 key="continuo/demo/actor/traffic1/pose" x=143.47 y=-3.50 yaw_deg=0.0
+INFO pose sim_time=4.0 key="continuo/demo/actor/traffic2/pose" x=189.79 y=-3.50 yaw_deg=0.0
 ...
 done: world 'demo' reached sim time 30.0 in 3031 ticks (free-run)
-actual time: 0.404 s (74x real-time), world hash eccd08f9a316bbbc
+actual time: 2.295 s (13x real-time), world hash 580e8d37b14c6abd
 ```
 
-The ego holds the centre lane at 30 m/s; traffic runs 16-22 m/s in the lanes
-either side, so the ego spends the run overtaking. Nothing here models a
-collision, which is why traffic never shares the ego's lane. A car is
+The ego holds the centre lane at 30 m/s; traffic spawns at 16-22 m/s in the
+lanes either side, so the ego spends the run overtaking. Each traffic car
+drives on the controller FMU, following the car ahead in its lane with IDM
+and steering with pure pursuit, so a faster car closes on a slower one and
+settles behind it rather than driving through it. Nothing here yet watches
+for a collision, which is why traffic never shares the ego's lane. A car is
 retired once it falls 60 m behind, and a replacement spawns ahead. Over
 30 sim-seconds fourteen different cars pass through a world that holds six
 at a time, eight of them retired along the way.

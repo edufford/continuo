@@ -1515,3 +1515,66 @@ it got there, including the roads not taken.
     that makes a rerun fail the same way until the fix. CI now fetches the
     dependency crates with the lock held before its first build, so a
     stale lock fails the job at the cause.
+
+- **2026-10-12**: **Traffic drives on the controller FMU, and the world
+  hash moved for it.** Every car the spawner asks for is now `[radar,
+  controller, physics]`, the controller being the packaged FMU, so it
+  follows the car ahead in its lane and wants its spawn speed back on a
+  free road. The ego and `traffic_scale`'s cars stay `[controller,
+  physics]` at constant speed: the ego until it shares a lane with
+  traffic, and the scaling run because it measures the conductor, and an
+  FMU per car is an experiment of its own.
+  - **What joined the fingerprint**: `eccd08f9a316bbbc` to
+    `580e8d37b14c6abd`, for every traffic car's scans and acceleration
+    commands and the poses they changed. Every traffic car slowed
+    somewhat, since IDM brakes for a lead well before it is close: with a
+    faster one 65 m ahead, a car at its desired speed brakes at 13 percent
+    of its maximum acceleration. The slowest fell from 16.2 to 13.3 m/s.
+    The ego's poses did not move, and neither did the turnover: fourteen
+    cars, eight retired.
+  - **A free road is not exactly zero.** `FREE_ROAD` is a long finite
+    range, so the interaction term is tiny rather than absent, and a car
+    at its desired speed is commanded about -3e-16. Nothing depends on
+    exact zero, but a test written against it failed, which is how this
+    was found.
+  - **The FMU registers as `controller`**, so a following car's paths read
+    like a native car's, and the leave order is radar, controller,
+    physics.
+  - **One spawn state feeds both halves of a car.** At the instant a car
+    joins, its controller steps before its physics has published, so the
+    mapping gives the FMU's pose and speed inputs the state the physics is
+    built from as their starting values. Without them it would steer from
+    the origin and accelerate from a standstill it is not in.
+  - **The mapping's keys are concrete.** A native component wildcards the
+    world, because its constructor does not know it; a scenario does, so
+    the FMU subscribes and publishes exactly.
+  - **Two tests guard following and one guards the meeting point.** No
+    two same-lane cars overlap at any instant of the run, and some traffic
+    car changes speed by more than 1 m/s. Pointing the radar binding at a
+    key nobody publishes fails both, with two origins 0.56 m apart. A unit
+    test steps one FMU controller and decodes what it published as the
+    plant's own `AccelCmd` and `SteerCmd`, which is the place a rename on
+    either side would otherwise surface only as a car holding its speed.
+  - **`cargo xtask verify` packages the FMUs before testing.** It had left
+    packaging to `verify-fmus` so the editing loop stayed Rust-only, which
+    held while nothing in the demo loaded an FMU. Now the tests and the
+    demo cannot start without a package, and an edited law would leave the
+    demo driving the copy packaged before it, passing locally and failing
+    in CI. Packaging costs 0.7 s when nothing changed. Validation and the
+    feature-gated comparison stay in `verify-fmus`.
+  - **Building the scenario can now fail in two new ways**, a missing
+    package and an FMU that will not instantiate, so the setup and run
+    functions return a `ScenarioError` wrapping those beside
+    `ConductorError`.
+  - **Joining costs 70 ms a car on Windows, measured and deferred.** `fmi`
+    0.8 loads a fresh copy of the DLL for each instance. The demo's
+    release run went from 0.07 s to 1.27 s, 1.0 s of it the fourteen
+    joins, and PLAN.md's deferred list carries the shared archive that
+    would fix it.
+  - **The spawner can place a car right beside one already there**, left
+    for the milestone's ego-lane change. Its frontier is where it last
+    spawned, but cars drive on after spawning, so two of the run's eight
+    mid-run spawns landed 1.73 m and 0.99 m bumper to bumper from a car in
+    the same lane. IDM brakes and nothing overlaps, but nothing prevents a
+    spawn landing inside a car; measuring from the furthest car the
+    spawner can see in that lane would.
