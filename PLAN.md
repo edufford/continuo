@@ -849,6 +849,24 @@ under "Wire format", rather than churning the fingerprint once apiece.
   which `traffic_scale` is the instrument for measuring. Nothing at demo
   scale needs it.
 
+- **An FMU archive opened once and shared by every instance built from
+  it.** `fmi` 0.8 extracts the archive and loads its library for each
+  `FmuComponent`, so every following car loads a fresh copy of the
+  controller's DLL. On Windows that measured about 70 ms per car joining,
+  against 3 ms for the extraction: the demo's fourteen traffic joins cost
+  1.0 s of a 1.27 s release run, where the same run with native traffic took
+  0.07 s. Other platforms were not measured, and a scan of each newly
+  written DLL is the likely reason Windows pays it.
+  - An opened archive held behind an `Arc` would load the library once per
+    run, since loading a path already loaded costs next to nothing. An FMU
+    declaring `canBeInstantiatedOnlyOncePerProcess` would still need an
+    archive of its own per instance, so the sharing is the FMU's call.
+  - `TrafficRequestHandler` is where the demo would hold it, since it builds
+    the cars and lives exactly as long as the run; a process-wide static
+    would never clean up its temporary directory.
+  - Deferred because the demo still runs at 24x real time. It bites when a
+    scenario joins cars often, or when `traffic_scale` takes the FMU car.
+
 - **Road-network importer**: which format (OpenDRIVE, Lanelet2, other) lowers
   into the world spec; decide when realistic road scenarios are needed.
 
@@ -883,11 +901,12 @@ under "Wire format", rather than churning the fingerprint once apiece.
 
 - **The viewer's `--check` counts components and calls them joins.** Its
   summary prints `joins / leaves` directly above `actors seen`, and the two
-  count different things: membership is published per component, so a car
-  joining raises two events, one for its controller and one for its physics.
-  A demo run reports 32 joins and 16 leaves against 15 actors, which reads as
-  a discrepancy and is not one: 15 cars at two components each, plus the
-  logger and the spawner at one, and eight cars retiring. Saying "component
+  count different things: membership is published per component, so a
+  traffic car joining raises three events, one each for its radar, its
+  controller and its physics. A demo run reports 46 joins and 24 leaves
+  against 15 actors, which reads as a discrepancy and is not one: fourteen
+  traffic cars at three components each and the ego at two, plus the logger
+  and the spawner at one, and eight cars retiring. Saying "component
   joins / leaves" would settle it. The CI smoke asserts those exact labels, so
   the two move together.
 

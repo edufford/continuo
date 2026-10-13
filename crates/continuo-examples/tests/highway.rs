@@ -7,6 +7,9 @@
 //! come from inside the sim, which is the part that has to stay
 //! deterministic.
 
+use std::collections::BTreeMap;
+
+use continuo_actors::{CAR_LENGTH, CarState};
 use continuo_conductor::record::LogEvent;
 use continuo_conductor::{Conductor, Divergence, EventLog, Recorder, Verifier};
 use continuo_core::SimTime;
@@ -91,9 +94,106 @@ fn traffic_arrives_and_retires_while_the_run_is_under_way() {
     );
 }
 
+/// Every car's published state, by the instant it was published and then
+/// by actor, from a recorded log.
+///
+/// Every physics steps on the same 10 ms grid, since every car joins on a
+/// spawner instant, so grouping by instant lines up one state per car.
+fn car_states(log: &EventLog) -> BTreeMap<SimTime, BTreeMap<String, CarState>> {
+    let mut states: BTreeMap<SimTime, BTreeMap<String, CarState>> = BTreeMap::new();
+    for event in &log.events {
+        let LogEvent::Msg(message) = event else {
+            continue;
+        };
+        let Some(actor) = message
+            .key
+            .strip_prefix("continuo/demo/actor/")
+            .and_then(|rest| rest.strip_suffix("/pose"))
+        else {
+            continue;
+        };
+        let state: CarState =
+            serde_json::from_str(message.payload.get()).expect("a pose payload decodes");
+        states
+            .entry(message.sim_time)
+            .or_default()
+            .insert(actor.to_string(), state);
+    }
+
+    // Return the states, earliest instant first.
+    states
+}
+
+#[test]
+fn no_two_same_lane_cars_ever_overlap() {
+    // The demo's road runs along x, so x is the distance along it and y the
+    // offset across it. Two cars share a lane when they are nearer to each
+    // other's lane center than to any other lane's.
+    let log = record_highway(traffic_world::SIM_SECONDS);
+    let mut pairs_compared = 0;
+    for (instant, cars) in car_states(&log) {
+        let cars: Vec<(&String, &CarState)> = cars.iter().collect();
+        for (index, (name, state)) in cars.iter().enumerate() {
+            for (other_name, other) in &cars[index + 1..] {
+                if (state.position.y - other.position.y).abs() >= 1.75 {
+                    continue;
+                }
+                pairs_compared += 1;
+                let gap = (state.position.x - other.position.x).abs();
+                assert!(
+                    gap >= CAR_LENGTH,
+                    "{name} and {other_name} overlap at {instant}: their origins are \
+                     {gap} m apart along the road, and a car is {CAR_LENGTH} m long"
+                );
+            }
+        }
+    }
+
+    // Without this the test would pass on a run whose lanes never held two
+    // cars at once, which proves nothing about following.
+    assert!(
+        pairs_compared > 1000,
+        "only {pairs_compared} same-lane pairs were compared"
+    );
+}
+
+#[test]
+fn following_actually_engages_somewhere() {
+    // A traffic car on a free road wants the speed it spawned at and
+    // drifts from it by rounding alone, so a car whose speed moved by more
+    // than a meter per second was slowed by one ahead. Nobody slowing at all would mean the radar never
+    // reached the controller, and every car would be driving a free road
+    // forever while overlapping whatever it caught.
+    let log = record_highway(traffic_world::SIM_SECONDS);
+    let mut speed_ranges: BTreeMap<String, (f64, f64)> = BTreeMap::new();
+    for cars in car_states(&log).into_values() {
+        for (name, state) in cars {
+            if name.starts_with("traffic") {
+                let range = speed_ranges
+                    .entry(name)
+                    .or_insert((state.speed, state.speed));
+                range.0 = range.0.min(state.speed);
+                range.1 = range.1.max(state.speed);
+            }
+        }
+    }
+
+    let widest = speed_ranges
+        .iter()
+        .map(|(name, (low, high))| (name, high - low))
+        .max_by(|a, b| a.1.total_cmp(&b.1))
+        .expect("traffic drove");
+    assert!(
+        widest.1 > 1.0,
+        "no traffic car changed speed by more than 1 m/s; the most was {} at {:.3} m/s",
+        widest.0,
+        widest.1
+    );
+}
+
 #[test]
 fn a_car_leaves_as_a_whole_actor() {
-    // Both halves of a composite go together, adjacent in the log, because
+    // Every part of a composite goes together, adjacent in the log, because
     // the driver removes the actor rather than its parts.
     let log = record_highway(traffic_world::SIM_SECONDS);
     let left = left(&log);
@@ -104,10 +204,11 @@ fn a_car_leaves_as_a_whole_actor() {
     assert_eq!(
         pair,
         vec![
+            &format!("{actor}/radar").as_str(),
             &format!("{actor}/controller").as_str(),
             &format!("{actor}/physics").as_str()
         ],
-        "one leave per leaf, controller before physics, in declaration order"
+        "one leave per leaf, radar then controller then physics, in declaration order"
     );
 }
 
@@ -136,12 +237,16 @@ fn the_dynamic_world_reproduces_exactly() {
 /// `cargo test` runs on every CI agent.
 ///
 /// There is something to catch. The hash reaches `sin`, `cos`, `asin`, and
-/// `atan2` through the unicycle integration and the quaternion conversions,
-/// and IEEE 754 requires correct rounding for `sqrt` but for none of those.
+/// `atan2` through the unicycle integration, the quaternion conversions and
+/// the steering law, and IEEE 754 requires correct rounding for `sqrt` but
+/// for none of those.
 ///
 /// It moves when the scenario, the seed, or the hashing moves, each a
-/// deliberate act. Update it and README.md's sample output together.
-const DEMO_WORLD_HASH: u64 = 0xeccd_08f9_a316_bbbc;
+/// deliberate act. Update it and README.md's sample output together. It
+/// also moves when the packaged controller FMU is older than the laws it
+/// was built from, since traffic drives on that copy rather than on this
+/// build's, and `cargo xtask package-fmus` is the fix for that one.
+const DEMO_WORLD_HASH: u64 = 0x580e_8d37_b14c_6abd;
 
 #[test]
 fn the_demo_world_hashes_to_the_same_value_on_every_platform() {

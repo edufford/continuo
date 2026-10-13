@@ -19,10 +19,7 @@ use continuo_examples::traffic_world::{self, TrafficRequestHandler};
 use continuo_transport::InProcTransport;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
-        .with_target(false)
-        .init();
+    continuo_examples::init_logging();
 
     let seconds: i64 = std::env::args()
         .nth(1)

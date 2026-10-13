@@ -13,10 +13,7 @@ use continuo_examples::traffic_world::{self, TrafficRequestHandler};
 use continuo_transport::{InProcTransport, MonitorTransport};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
-        .with_target(false)
-        .init();
+    continuo_examples::init_logging();
 
     let file = std::env::args()
         .nth(1)

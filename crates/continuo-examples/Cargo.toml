@@ -20,10 +20,13 @@ continuo-core = { workspace = true }
 continuo-transport = { workspace = true }
 continuo-conductor = { workspace = true }
 continuo-actors = { workspace = true }
+continuo-fmi = { workspace = true }
+# For finding the packaged `.fmu` and the array length it was built with,
+# not for the FMU itself, which a car loads from the archive at run time.
+continuo-fmu-controller-idm = { workspace = true }
 continuo-viz-bridge = { workspace = true, optional = true }
-
-[dev-dependencies]
-tracing = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
 tracing-subscriber = { workspace = true }
 
 [[example]]
