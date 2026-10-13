@@ -177,18 +177,17 @@ anything that runs several lives in [`xtask`](xtask/), reached as
 how many tests ran.
 
 ```sh
-# What to run before a commit: format, lint, docs, tests and the demo, in
-# that order, cheapest first, stopping at the first failure. The viewer's
-# ruff and pytest run when the viewer is installed and say they were skipped
-# when it is not. A quick check rather than a thorough one, since CI is the
-# authority on whether a commit is good.
+# What to run before a commit: format, lint, docs, packaging, tests and the
+# demo, in that order, cheapest first, stopping at the first failure. The
+# viewer's ruff and pytest run when the viewer is installed and say they were
+# skipped when it is not. A quick check rather than a thorough one, since CI
+# is the authority on whether a commit is good.
 cargo xtask verify
 
-# What a change reaching an FMU crate needs on top: package every FMU into
-# target/fmu, validate each with fmpy, and run the tests that check the
-# packaged copy against the laws it was built from. An .fmu links those laws
-# statically, so it carries a snapshot of them. Needs
-# `cargo install cargo-fmi` once, and fmpy for the validation.
+# What a change reaching an FMU crate needs on top: validate every packaged
+# FMU with fmpy, and run the tests that check the packaged copy against the
+# laws it was built from. An .fmu links those laws statically, so it carries
+# a snapshot of them. Needs fmpy for the validation.
 cargo xtask verify-fmus
 
 # The packaging on its own, which is what CI calls before its own tests.

@@ -11,11 +11,14 @@
 //! before a push, so what matters most about it is that it is fast enough to
 //! sit in an editing loop.
 //!
-//! That is why it packages no FMUs and asks for no features, which
-//! `cargo xtask verify-fmus` is for. Packaging costs a release build of the
-//! FMU crate whenever a law changed, 13 seconds against 0.7 when nothing did,
-//! and the tests it feeds say nothing without it, so the two belong with a
-//! change that reaches a law rather than in an editing loop.
+//! It does package the FMUs, because the demo's traffic drives on one and
+//! neither its tests nor its smoke run can start without it. Packaging
+//! costs a release build of the FMU crate whenever a law changed, 13
+//! seconds against 0.7 when nothing did, and leaving it out would cost
+//! more: an edited law would leave the demo driving the copy packaged
+//! before it, passing here and failing in CI. Validating the packages and
+//! the tests comparing them with the laws stay in `cargo xtask verify-fmus`,
+//! which asks for the feature those tests sit behind.
 
 use crate::task::{Progress, answers, run_command, workspace_root};
 
@@ -129,6 +132,15 @@ const VERIFY_COMMANDS: &[VerifyCommand] = &[
         dir: Dir::Python,
         env: &[],
         skip_unless: Some(RUFF_IS_INSTALLED),
+        runs_tests: false,
+    },
+    // Before the tests, since the demo's traffic loads the controller FMU
+    // from the package and fails to build without one.
+    VerifyCommand {
+        argv: &["cargo", "xtask", "package-fmus"],
+        dir: Dir::Root,
+        env: &[],
+        skip_unless: None,
         runs_tests: false,
     },
     VerifyCommand {
