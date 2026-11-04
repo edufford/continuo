@@ -850,22 +850,27 @@ under "Wire format", rather than churning the fingerprint once apiece.
   scale needs it.
 
 - **An FMU archive opened once and shared by every instance built from
-  it.** `fmi` 0.8 extracts the archive and loads its library for each
-  `FmuComponent`, so every following car loads a fresh copy of the
-  controller's DLL. On Windows that measured about 70 ms per car joining,
-  against 3 ms for the extraction: the demo's fourteen traffic joins cost
-  1.0 s of a 1.27 s release run, where the same run with native traffic took
-  0.07 s. Other platforms were not measured, and a scan of each newly
-  written DLL is the likely reason Windows pays it.
-  - An opened archive held behind an `Arc` would load the library once per
-    run, since loading a path already loaded costs next to nothing. An FMU
-    declaring `canBeInstantiatedOnlyOncePerProcess` would still need an
-    archive of its own per instance, so the sharing is the FMU's call.
-  - `TrafficRequestHandler` is where the demo would hold it, since it builds
-    the cars and lives exactly as long as the run; a process-wide static
-    would never clean up its temporary directory.
-  - Deferred because the demo still runs at 24x real time. It bites when a
-    scenario joins cars often, or when `traffic_scale` takes the FMU car.
+  it.** `fmi` 0.8 extracts and loads the archive for each `FmuComponent`.
+  On Windows, loading a freshly extracted DLL takes 75 to 93 ms, against
+  under 1 ms for the FMU's own instantiate and 65 us to instantiate again
+  once loaded, so every following car stalls the run as it joins. Fourteen
+  joins cost 1.08 s of a 1.40 s release demo, and leave `traffic_realtime`
+  1.25 s behind real time. Other platforms were not measured.
+  - `TrafficRequestHandler` would open the archive during setup and share
+    it, so no join loads anything. Instances would then share the DLL's
+    statics; this FMU and `fmi-export` hold no mutable ones, by reading
+    their source, and the pinned world hash would be the test. An FMU
+    declaring `canBeInstantiatedOnlyOncePerProcess` keeps an archive per
+    instance.
+  - For FMUs not known before the run, a worker thread could load each one
+    during the join's lead time, half a second for the spawner's, and the
+    run would wait at `first_due` only for an unfinished load. The
+    instance is still made on the conductor's thread, since `fmi`'s
+    `Instance` is not `Send`. This hides the load only when paced, and
+    milestone 7's joins over the transport take this shape anyway.
+  - Deferred because the world hash is unaffected and a paced run keeps
+    time between joins. Proving a fix wants a churn measurement, since
+    `traffic_scale` joins every car before its timer starts.
 
 - **Road-network importer**: which format (OpenDRIVE, Lanelet2, other) lowers
   into the world spec; decide when realistic road scenarios are needed.

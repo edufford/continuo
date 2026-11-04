@@ -1578,11 +1578,17 @@ it got there, including the roads not taken.
     silence any target beginning with the word, from any crate. The three
     lifecycle lines a car logs share their category with the errors and
     stay.
-  - **Joining costs 70 ms a car on Windows, measured and deferred.** `fmi`
-    0.8 loads a fresh copy of the DLL for each instance. The demo's
-    release run went from 0.07 s to 1.27 s, 1.0 s of it the fourteen
-    joins, and PLAN.md's deferred list carries the shared archive that
-    would fix it.
+  - **Joining costs about 70 ms a car on Windows, measured and
+    deferred.** `fmi` 0.8 loads a fresh copy of the DLL for each instance,
+    as each car joins. The release demo went from 0.071 s to 1.40 s, 1.08 s
+    of it joins, and `traffic_realtime` ended 1.25 s behind real time
+    where `main` kept up. PLAN.md's deferred list carries the fix.
+  - **Stepping slowed fourfold apart from the joins**, to 0.29 s. An FMU
+    step takes 46 us where the ego's native controller takes 1.7 us, a
+    radar step takes 29 us, and the conductor's own work around the steps
+    comes to 140 ms. A radar decodes all 68 poses in its inbox to keep the
+    newest of each car's ten, which is the case PLAN.md's "latest message
+    per key" item was waiting for.
   - **The spawner can place a car right beside one already there**, left
     for the milestone's ego-lane change. Its frontier is where it last
     spawned, but cars drive on after spawning, so two of the run's eight
