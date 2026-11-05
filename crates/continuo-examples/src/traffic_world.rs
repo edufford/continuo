@@ -97,9 +97,9 @@ const RADAR_MAX_RANGE: f64 = 120.0;
 /// when it is nearer that lane's center than any other.
 const RADAR_LANE_TOLERANCE: f64 = LANE_WIDTH / 2.0;
 
-/// How a car decides its speed.
+/// Which components a car is built from, and so how it drives.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Guidance {
+enum CarConfiguration {
     /// Holds the speed it started at whatever is ahead, steering with
     /// the native controller: `[controller, physics]`.
     ConstantSpeed,
@@ -160,8 +160,8 @@ pub fn config_paced(pacing: Pacing) -> ConductorConfig {
     }
 }
 
-/// Registers one car as a composite under `actor_name`, guided as
-/// `guidance` says, starting `start_s` along the road in the lane at
+/// Registers one car as a composite under `actor_name`, built as
+/// `car_config` says, starting `start_s` along the road in the lane at
 /// `lane_offset` and doing `speed`.
 ///
 /// Declared order matters. A following car registers its radar, then its
@@ -180,7 +180,7 @@ pub fn config_paced(pacing: Pacing) -> ConductorConfig {
 fn add_car<T: Transport>(
     conductor: &mut Conductor<T>,
     actor_name: &str,
-    guidance: Guidance,
+    car_config: CarConfiguration,
     start_s: f64,
     lane_offset: f64,
     speed: f64,
@@ -196,8 +196,8 @@ fn add_car<T: Transport>(
         CAR_LIMITS,
         initial,
     ));
-    let components: Vec<Box<dyn Component>> = match guidance {
-        Guidance::ConstantSpeed => vec![
+    let components: Vec<Box<dyn Component>> = match car_config {
+        CarConfiguration::ConstantSpeed => vec![
             Box::new(PathFollowController::new(
                 actor_name,
                 road,
@@ -211,7 +211,7 @@ fn add_car<T: Transport>(
             )),
             physics,
         ],
-        Guidance::IdmFollowing => {
+        CarConfiguration::IdmFollowing => {
             let mapping =
                 controller_mapping(conductor.world_name(), actor_name, lane_offset, initial);
             let controller = FmuComponent::new("controller", packaged_fmu_path()?, mapping)
@@ -371,7 +371,7 @@ fn add_ego<T: Transport>(
     add_car(
         conductor,
         EGO_NAME,
-        Guidance::ConstantSpeed,
+        CarConfiguration::ConstantSpeed,
         start_s,
         lane_offset,
         speed,
@@ -470,7 +470,7 @@ pub fn setup_scale_scenario<T: Transport>(
         add_car(
             conductor,
             &format!("car{index}"),
-            Guidance::ConstantSpeed,
+            CarConfiguration::ConstantSpeed,
             start_s,
             lane_offset,
             speed,
@@ -681,7 +681,7 @@ impl TrafficRequestHandler {
                 Request::Spawn(spawn) => add_car(
                     conductor,
                     &spawn.actor_name,
-                    Guidance::IdmFollowing,
+                    CarConfiguration::IdmFollowing,
                     spawn.start_s,
                     spawn.lane_offset,
                     spawn.speed,
