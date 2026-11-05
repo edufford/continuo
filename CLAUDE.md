@@ -87,11 +87,7 @@ cargo run -p continuo-examples --example traffic
 ```
 
 Packaging comes before the tests because the demo's traffic drives on the
-controller FMU, so neither the tests nor the demo can start without a
-package. It costs a release build of the FMU crate whenever a law changed,
-and well under a second when nothing did. Leaving it out would let an edited
-law pass here on the copy packaged before it and fail in CI. It needs
-`cargo install cargo-fmi` once.
+controller FMU. It needs `cargo install cargo-fmi` once.
 
 It adds the viewer's `ruff check .`, `ruff format --check .` and `pytest`
 when the viewer is installed, and says they were skipped when it is not, so a
@@ -122,17 +118,14 @@ cargo xtask verify-fmus
 ```
 
 It packages every FMU, validates each with fmpy, and runs the tests that
-check the packaged copy against the laws it was built from, asking for the
-feature each FMU crate holds those tests behind. `verify` leaves the
-validation and the comparison out on purpose: the feature rebuilds much of
-the graph, so the pair belongs with a change that reaches a law rather than
-in an editing loop. Validation is skipped, and says so, when fmpy is not
-installed.
+compare the packaged copy with the laws it was built from. `verify` leaves
+the validation and the comparison out, since the feature those tests sit
+behind rebuilds much of the graph. Validation is skipped, and says so, when
+fmpy is not installed.
 
-`continuo-actors` is the one to watch, since a control law there is compiled
-into the FMU as well as linked natively, and only this comparison says the
-two still agree. Validating needs fmpy in the environment the viewer's checks
-run in.
+`continuo-actors` is the one to watch: its control laws are compiled into the
+FMU as well as linked natively, and only this comparison says the two agree.
+Validating needs fmpy in the viewer's Python environment.
 
 ## Turn a mistake into a check
 
