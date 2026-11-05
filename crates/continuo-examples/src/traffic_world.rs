@@ -160,23 +160,13 @@ pub fn config_paced(pacing: Pacing) -> ConductorConfig {
     }
 }
 
-/// Registers one car as a composite under `actor_name`, built as
-/// `car_config` says, starting `start_s` along the road in the lane at
-/// `lane_offset` and doing `speed`.
+/// Registers one car under `actor_name`, built as `car_config` says,
+/// starting `start_s` along the road in the lane at `lane_offset` at
+/// `speed`.
 ///
-/// Declared order matters. A following car registers its radar, then its
-/// controller, then its physics, so at every control instant the scan
-/// reaches the controller and the command reaches the physics within the
-/// same instant. A constant-speed car has no radar and the same order
-/// otherwise.
-///
-/// `speed` goes to the physics, which owns it. A constant-speed car
-/// commands no acceleration, so it holds that speed for the whole run; a
-/// following car wants it back whenever the road ahead is free.
-///
-/// Every part takes [`CAR_LIMITS`], since a normalized command means
-/// whatever the plant says it means and a controller working from a
-/// different set would command the wrong rate.
+/// The components register in the order they run within an instant:
+/// radar, controller, physics. So the scan reaches the controller and the
+/// command reaches the physics in the instant each was made.
 fn add_car<T: Transport>(
     conductor: &mut Conductor<T>,
     actor_name: &str,
