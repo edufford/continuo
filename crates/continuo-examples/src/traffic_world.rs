@@ -189,12 +189,12 @@ fn add_car<T: Transport>(
     // A lane is the lateral offset the controller holds, not geometry of
     // its own, so every component of every car works off the one road.
     let road = shared_road();
-    let initial = CarState::new(road_pose(&road, start_s, lane_offset), speed);
+    let initial_state = CarState::new(road_pose(&road, start_s, lane_offset), speed);
     let physics = Box::new(UnicyclePhysics::new(
         actor_name,
         PHYSICS_PERIOD,
         CAR_LIMITS,
-        initial,
+        initial_state,
     ));
     let components: Vec<Box<dyn Component>> = match car_config {
         CarConfiguration::ConstantSpeed => vec![
@@ -207,13 +207,17 @@ fn add_car<T: Transport>(
                 1.5,                     // heading gain, 1/s
                 CAR_LIMITS.yaw_rate_max, // command turns up to the car's limit
                 CAR_LIMITS,
-                initial.pose(),
+                initial_state.pose(),
             )),
             physics,
         ],
         CarConfiguration::IdmFollowing => {
-            let mapping =
-                controller_mapping(conductor.world_name(), actor_name, lane_offset, initial);
+            let mapping = controller_mapping(
+                conductor.world_name(),
+                actor_name,
+                lane_offset,
+                initial_state,
+            );
             let controller = FmuComponent::new("controller", packaged_fmu_path()?, mapping)
                 .map_err(|source| ScenarioError::Controller {
                     actor_name: actor_name.to_string(),
@@ -264,7 +268,7 @@ fn add_car<T: Transport>(
 ///   field named after the output variable, which is what the plant
 ///   decodes.
 ///
-/// `initial` also gives the pose inputs their starting values. At the
+/// `initial_state` also gives the pose inputs their starting values. At the
 /// instant a car joins, its controller steps before its physics has
 /// published anything, so without them it would steer from the origin and
 /// accelerate from a standstill it is not in. It is the state the physics
@@ -274,7 +278,7 @@ fn controller_mapping(
     world_name: &str,
     actor_name: &str,
     lane_offset: f64,
-    initial: CarState,
+    initial_state: CarState,
 ) -> FmuMapping {
     let road = shared_road();
     let mut road_x = vec![0.0; MAX_WAYPOINTS];
@@ -284,7 +288,7 @@ fn controller_mapping(
         road_y[slot] = y;
     }
     let pursuit = PurePursuitParams::highway_car(lane_offset);
-    let idm = IdmParams::highway_car(initial.speed);
+    let idm = IdmParams::highway_car(initial_state.speed);
 
     let pose = pose_key(world_name, actor_name);
     let radar = radar_key(world_name, actor_name);
@@ -326,13 +330,13 @@ fn controller_mapping(
         ("plant.yaw_rate_max", json!(CAR_LIMITS.yaw_rate_max)),
     ];
     let starting_inputs = [
-        ("position.x", json!(initial.position.x)),
-        ("position.y", json!(initial.position.y)),
-        ("orientation.w", json!(initial.orientation.w)),
-        ("orientation.x", json!(initial.orientation.x)),
-        ("orientation.y", json!(initial.orientation.y)),
-        ("orientation.z", json!(initial.orientation.z)),
-        ("speed", json!(initial.speed)),
+        ("position.x", json!(initial_state.position.x)),
+        ("position.y", json!(initial_state.position.y)),
+        ("orientation.w", json!(initial_state.orientation.w)),
+        ("orientation.x", json!(initial_state.orientation.x)),
+        ("orientation.y", json!(initial_state.orientation.y)),
+        ("orientation.z", json!(initial_state.orientation.z)),
+        ("speed", json!(initial_state.speed)),
     ];
 
     // Return the sheet. It is data rather than code, so a scenario file
