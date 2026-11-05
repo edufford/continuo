@@ -234,36 +234,13 @@ fn add_car<T: Transport>(
     Ok(())
 }
 
-/// The sheet wiring one following car's controller FMU into the world:
-/// which messages feed its inputs, where its commands go, and the numbers
-/// it is built with.
+/// Wires one following car's controller FMU into the world: the car's pose
+/// and radar scan in, its two commands out on the plant's keys, and the
+/// road, tunings and plant limits set once as parameters.
 ///
-/// The keys are concrete, which is why `world_name` is an argument. A
-/// native component cannot do that, since its constructor does not know
-/// the world and so it wildcards the world in its subscriptions; a
-/// scenario does know it.
-///
-/// Four kinds of thing, kept apart below:
-///
-/// - The pose inputs read the car's own pose and name no pointers, since
-///   `position.x` spells `/position/x` on its own.
-/// - The radar inputs read the car's own scan through one pattern each.
-///   The scan carries only the cars detected, so every slot past them
-///   reads as [`FREE_ROAD`].
-/// - The parameters feed no message and are set once: the road, as the
-///   points [`shared_road`] was built from, so the FMU and the radar
-///   measure one geometry; the steering and following tunings; and the
-///   plant's limits, which the FMU divides by.
-/// - The outputs publish on the plant's two command keys, each payload
-///   field named after the output variable, which is what the plant
-///   decodes.
-///
-/// `initial_state` also gives the pose inputs their starting values. At the
-/// instant a car joins, its controller steps before its physics has
-/// published anything, so without them it would steer from the origin and
-/// accelerate from a standstill it is not in. It is the state the physics
-/// is built from, so the two halves of a car cannot be handed different
-/// ones.
+/// Radar slots past the cars detected read as [`FREE_ROAD`]. The pose
+/// inputs start at `initial_state`, since the controller steps once before
+/// the physics has published a pose.
 fn controller_fmu_mapping(
     world_name: &str,
     actor_name: &str,
