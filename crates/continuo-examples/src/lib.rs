@@ -33,6 +33,9 @@ const FMU_TRACE_CATEGORY: &str = "trace";
 /// FMU logged under that category and lets everything else through. The
 /// match is exact on both, since `Targets` would match the target as a
 /// prefix and silence anything whose target began with the same word.
+// TODO(M6): let a `continuo-fmi` mapping name the log categories to switch
+// off, through `fmi3SetDebugLogging`, so an FMU never writes its trace and
+// every host is spared it rather than only the binaries calling this.
 pub fn init_logging() {
     let not_an_fmu_trace = filter_fn(|metadata| {
         metadata.target() != FMU_TRACE_CATEGORY || metadata.module_path() != Some(FMU_MODULE_PATH)
