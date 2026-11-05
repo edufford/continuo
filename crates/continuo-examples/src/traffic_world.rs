@@ -281,11 +281,11 @@ fn controller_fmu_mapping(
     initial_state: CarState,
 ) -> FmuMapping {
     let road = shared_road();
-    let mut road_x = vec![0.0; MAX_WAYPOINTS];
-    let mut road_y = vec![0.0; MAX_WAYPOINTS];
+    let mut road_pts_x = vec![0.0; MAX_WAYPOINTS];
+    let mut road_pts_y = vec![0.0; MAX_WAYPOINTS];
     for (slot, &(x, y)) in road.points().iter().enumerate() {
-        road_x[slot] = x;
-        road_y[slot] = y;
+        road_pts_x[slot] = x;
+        road_pts_y[slot] = y;
     }
     let pursuit = PurePursuitParams::highway_car(lane_offset);
     let idm = IdmParams::highway_car(initial_state.speed);
@@ -312,8 +312,8 @@ fn controller_fmu_mapping(
         OutputBinding::new("steer_cmd", steer_cmd_key(world_name, actor_name)),
     ];
     let parameters = [
-        ("road.pts_x", json!(road_x)),
-        ("road.pts_y", json!(road_y)),
+        ("road.pts_x", json!(road_pts_x)),
+        ("road.pts_y", json!(road_pts_y)),
         ("road.point_count", json!(road.points().len())),
         ("road.closed", json!(road.is_closed())),
         ("pure_pursuit.lateral_tgt", json!(pursuit.lateral_tgt)),

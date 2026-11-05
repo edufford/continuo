@@ -171,11 +171,11 @@ fn controller_fmu_mapping(
     pursuit: PurePursuitParams,
     idm: IdmParams,
 ) -> FmuMapping {
-    let mut road_x = vec![0.0; MAX_WAYPOINTS];
-    let mut road_y = vec![0.0; MAX_WAYPOINTS];
+    let mut road_pts_x = vec![0.0; MAX_WAYPOINTS];
+    let mut road_pts_y = vec![0.0; MAX_WAYPOINTS];
     for (slot, &(x, y)) in road.points().iter().enumerate() {
-        road_x[slot] = x;
-        road_y[slot] = y;
+        road_pts_x[slot] = x;
+        road_pts_y[slot] = y;
     }
 
     let pose_msg_key = key("pose");
@@ -206,8 +206,8 @@ fn controller_fmu_mapping(
             OutputBinding::new("steer_cmd", cmd_msg_key),
         ],
         initial_values: vec![
-            ("road.pts_x".to_string(), json!(road_x)),
-            ("road.pts_y".to_string(), json!(road_y)),
+            ("road.pts_x".to_string(), json!(road_pts_x)),
+            ("road.pts_y".to_string(), json!(road_pts_y)),
             ("road.point_count".to_string(), json!(road.points().len())),
             ("road.closed".to_string(), json!(road.is_closed())),
             (
@@ -657,14 +657,14 @@ fn the_padding_past_the_count_is_never_read() {
     let junk: Vec<f64> = (0..MAX_WAYPOINTS)
         .map(|slot| 500.0 + slot as f64 * 17.0)
         .collect();
-    let mut road_x = junk.clone();
-    let mut road_y: Vec<f64> = junk.iter().map(|value| -value).collect();
+    let mut road_pts_x = junk.clone();
+    let mut road_pts_y: Vec<f64> = junk.iter().map(|value| -value).collect();
     for (slot, &(x, y)) in road.points().iter().enumerate() {
-        road_x[slot] = x;
-        road_y[slot] = y;
+        road_pts_x[slot] = x;
+        road_pts_y[slot] = y;
     }
-    set_parameter(&mut mapping, "road.pts_x", json!(road_x));
-    set_parameter(&mut mapping, "road.pts_y", json!(road_y));
+    set_parameter(&mut mapping, "road.pts_x", json!(road_pts_x));
+    set_parameter(&mut mapping, "road.pts_y", json!(road_pts_y));
 
     let mut fmu = FmuComponent::new("controller", packaged(), mapping).expect("the FMU builds");
     for situation in &situations {
