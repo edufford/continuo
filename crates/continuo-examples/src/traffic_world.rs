@@ -212,7 +212,7 @@ fn add_car<T: Transport>(
             physics,
         ],
         CarConfiguration::IdmFollowing => {
-            let mapping = controller_mapping(
+            let mapping = controller_fmu_mapping(
                 conductor.world_name(),
                 actor_name,
                 lane_offset,
@@ -274,7 +274,7 @@ fn add_car<T: Transport>(
 /// accelerate from a standstill it is not in. It is the state the physics
 /// is built from, so the two halves of a car cannot be handed different
 /// ones.
-fn controller_mapping(
+fn controller_fmu_mapping(
     world_name: &str,
     actor_name: &str,
     lane_offset: f64,

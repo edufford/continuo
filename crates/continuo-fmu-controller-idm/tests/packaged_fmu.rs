@@ -166,7 +166,11 @@ fn car_at(road: &Waypoints, s: f64, lateral: f64, yaw_error: f64) -> Pose {
 /// Pointer describe the same shape and `position.x` spells `/position/x`
 /// on its own. The radar's do, because nothing derives
 /// `/detections/0/range` from a variable named `range`.
-fn controller_mapping(road: &Waypoints, pursuit: PurePursuitParams, idm: IdmParams) -> FmuMapping {
+fn controller_fmu_mapping(
+    road: &Waypoints,
+    pursuit: PurePursuitParams,
+    idm: IdmParams,
+) -> FmuMapping {
     let mut road_x = vec![0.0; MAX_WAYPOINTS];
     let mut road_y = vec![0.0; MAX_WAYPOINTS];
     for (slot, &(x, y)) in road.points().iter().enumerate() {
@@ -347,7 +351,7 @@ fn commands_over(
     idm: IdmParams,
     situations: &[Situation],
 ) -> Vec<(f64, f64)> {
-    let mapping = controller_mapping(road, pursuit, idm);
+    let mapping = controller_fmu_mapping(road, pursuit, idm);
     let mut fmu = FmuComponent::new("controller", packaged(), mapping).expect("the FMU builds");
 
     // Return each situation's commands, having agreed at every one.
@@ -649,7 +653,7 @@ fn the_padding_past_the_count_is_never_read() {
     let road = Waypoints::build_open(vec![(0.0, 0.0), (80.0, 0.0), (140.0, 45.0)]);
     let situations = situations_on(&road);
 
-    let mut mapping = controller_mapping(&road, PURSUIT, IDM);
+    let mut mapping = controller_fmu_mapping(&road, PURSUIT, IDM);
     let junk: Vec<f64> = (0..MAX_WAYPOINTS)
         .map(|slot| 500.0 + slot as f64 * 17.0)
         .collect();
@@ -684,7 +688,7 @@ fn the_padding_past_the_count_is_never_read() {
 /// first moment the parameters mean what the host meant.
 fn refusal(bad: &[(&str, Value)]) -> String {
     let road = Waypoints::build_straight((0.0, 0.0), (400.0, 0.0));
-    let mut mapping = controller_mapping(&road, PURSUIT, IDM);
+    let mut mapping = controller_fmu_mapping(&road, PURSUIT, IDM);
     for (name, value) in bad {
         set_parameter(&mut mapping, name, value.clone());
     }
@@ -713,7 +717,7 @@ fn each_command_decodes_as_the_plant_reads_it() {
     // nothing compiles one against the other, so this reads each command
     // back as the plant does.
     let road = Waypoints::build_straight((0.0, 0.0), (400.0, 0.0));
-    let mut mapping = controller_mapping(&road, PURSUIT, IDM);
+    let mut mapping = controller_fmu_mapping(&road, PURSUIT, IDM);
     mapping.outputs = vec![
         OutputBinding::new("accel_cmd", accel_cmd_key(WORLD, "car")),
         OutputBinding::new("steer_cmd", steer_cmd_key(WORLD, "car")),
@@ -822,7 +826,7 @@ fn a_tuning_parameter_changed_between_steps_changes_the_command() {
     const SPEED: f64 = 20.0;
 
     let road = Waypoints::build_straight((0.0, 0.0), (600.0, 0.0));
-    let mut mapping = controller_mapping(&road, PURSUIT, IDM);
+    let mut mapping = controller_fmu_mapping(&road, PURSUIT, IDM);
     mapping
         .inputs
         .push(InputBinding::new("idm.v0_speed_tgt", key("tuning")));
@@ -895,7 +899,7 @@ fn the_nearest_of_several_detections_is_the_one_followed() {
     let mut fmu = FmuComponent::new(
         "controller",
         packaged(),
-        controller_mapping(&road, PURSUIT, IDM),
+        controller_fmu_mapping(&road, PURSUIT, IDM),
     )
     .expect("the FMU builds");
     let situation = |scan: Vec<Detection>| Situation {
