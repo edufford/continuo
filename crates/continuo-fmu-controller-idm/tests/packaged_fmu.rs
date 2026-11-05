@@ -33,7 +33,9 @@ use continuo_actors::control_laws::{
     FREE_ROAD, IdmParams, PurePursuitParams, accel_fraction, idm_accel, nearest_detection,
     pure_pursuit_yaw_rate, steer_fraction,
 };
-use continuo_actors::{MAX_DETECTIONS, PlantLimits, Waypoints};
+use continuo_actors::{
+    AccelCmd, MAX_DETECTIONS, PlantLimits, SteerCmd, Waypoints, accel_cmd_key, steer_cmd_key,
+};
 use continuo_core::{
     Component, ComponentPath, CoreError, Detection, KeyExpr, Message, Pose, Quat, RandomSplitMix64,
     SimDuration, SimTime, StepCtx,
@@ -129,6 +131,21 @@ impl Situation {
             lead.range,
             -lead.range_rate,
         )
+    }
+
+    /// The pose and the radar scan, as the car's sensors would publish them.
+    fn as_inbox(&self) -> Vec<Message> {
+        vec![
+            message(
+                "pose",
+                json!({
+                    "position": self.pose.position,
+                    "orientation": self.pose.orientation,
+                    "speed": self.speed,
+                }),
+            ),
+            message("radar", json!({ "detections": self.scan })),
+        ]
     }
 }
 
@@ -282,19 +299,7 @@ fn step_once(
     dt: Option<SimDuration>,
     situation: &Situation,
 ) -> (f64, f64) {
-    let inbox = vec![
-        message(
-            "pose",
-            json!({
-                "position": situation.pose.position,
-                "orientation": situation.pose.orientation,
-                "speed": situation.speed,
-            }),
-        ),
-        message("radar", json!({ "detections": situation.scan })),
-    ];
-
-    let mut ctx = StepCtx::new(now, dt, WORLD, 0, inbox);
+    let mut ctx = StepCtx::new(now, dt, WORLD, 0, situation.as_inbox());
     fmu.step(&mut ctx).expect("the FMU steps");
     let outbox = ctx.take_outbox();
     assert_eq!(outbox.len(), 1, "both commands share one key");
@@ -700,6 +705,54 @@ fn refusal(bad: &[(&str, Value)]) -> String {
     // log channel FMI gives a model for saying so, since a status code is
     // the whole of what a call itself can return.
     refused
+}
+
+#[test]
+fn each_command_decodes_as_the_plant_reads_it() {
+    // The FMU names its outputs and the plant names its payload fields, and
+    // nothing compiles one against the other, so this reads each command
+    // back as the plant does.
+    let road = Waypoints::build_straight((0.0, 0.0), (400.0, 0.0));
+    let mut mapping = controller_mapping(&road, PURSUIT, IDM);
+    mapping.outputs = vec![
+        OutputBinding::new("accel_cmd", accel_cmd_key(WORLD, "car")),
+        OutputBinding::new("steer_cmd", steer_cmd_key(WORLD, "car")),
+    ];
+    let mut fmu = FmuComponent::new("controller", packaged(), mapping).expect("the FMU builds");
+    let situation = Situation {
+        pose: car_at(&road, 50.0, 0.0, 0.0),
+        speed: 22.0,
+        scan: scan_of(&[(0, 20.0, -4.0)]),
+    };
+
+    let mut ctx = StepCtx::new(SimTime::ZERO, None, WORLD, 0, situation.as_inbox());
+    fmu.step(&mut ctx).expect("the FMU steps");
+    let outbox = ctx.take_outbox();
+    let published = |key: KeyExpr| {
+        &outbox
+            .iter()
+            .find(|(published_key, _)| *published_key == key)
+            .unwrap_or_else(|| panic!("nothing was published on {key}"))
+            .1
+    };
+    let fmu_accel: AccelCmd = serde_json::from_slice(published(accel_cmd_key(WORLD, "car")))
+        .expect("the plant decodes the acceleration command");
+    let fmu_steer: SteerCmd = serde_json::from_slice(published(steer_cmd_key(WORLD, "car")))
+        .expect("the plant decodes the steering command");
+
+    // An FMU writing each command under the other's name still decodes, so
+    // the values are compared too. That needs two different commands, which
+    // is why the car is off its lane and closing on a lead.
+    let (native_accel_cmd, native_steer_cmd) = native_commands(&road, PURSUIT, IDM, &situation);
+    assert_ne!(
+        native_accel_cmd, native_steer_cmd,
+        "a swap needs two different commands to show"
+    );
+    assert_eq!(
+        (fmu_accel.accel_cmd.to_bits(), fmu_steer.steer_cmd.to_bits()),
+        (native_accel_cmd.to_bits(), native_steer_cmd.to_bits()),
+        "{MAYBE_STALE}"
+    );
 }
 
 #[test]
