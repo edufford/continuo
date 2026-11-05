@@ -37,7 +37,6 @@ use continuo_conductor::{
 };
 use continuo_core::{Component, ComponentId, CoreError, Message, SimDuration, SimTime};
 use continuo_fmi::{FmuComponent, FmuConstructionError, FmuMapping, InputBinding, OutputBinding};
-use continuo_fmu_controller_idm::{MAX_WAYPOINTS, PackageError, packaged_fmu_path};
 use continuo_transport::{MonitorTransport, Transport};
 use serde_json::json;
 
@@ -118,7 +117,7 @@ pub enum ScenarioError {
     /// Nobody packaged the controller FMU, so no following car can be
     /// built. The message names the command that fixes it.
     #[error(transparent)]
-    NotPackaged(#[from] PackageError),
+    NotPackaged(#[from] continuo_fmu_controller_idm::PackageError),
 
     #[error("cannot build the controller FMU for {actor_name}: {source}")]
     Controller {
@@ -178,53 +177,19 @@ fn add_car<T: Transport>(
 ) -> Result<(), ScenarioError> {
     // A lane is the lateral offset the controller holds, not geometry of
     // its own, so every component of every car works off the one road.
-    let road = shared_road();
-    let initial_state = CarState::new(road_pose(&road, start_s, lane_offset), speed);
-    let physics = Box::new(UnicyclePhysics::new(
-        actor_name,
-        PHYSICS_PERIOD,
-        CAR_LIMITS,
-        initial_state,
-    ));
-    let components: Vec<Box<dyn Component>> = match car_config {
+    let initial_state = CarState::new(road_pose(&shared_road(), start_s, lane_offset), speed);
+    let world_name = conductor.world_name();
+
+    let components = match car_config {
         CarConfiguration::ConstantSpeed => vec![
-            Box::new(PathFollowController::new(
-                actor_name,
-                road,
-                lane_offset,
-                CONTROL_PERIOD,
-                6.0,                     // lookahead, m
-                1.5,                     // heading gain, 1/s
-                CAR_LIMITS.yaw_rate_max, // command turns up to the car's limit
-                CAR_LIMITS,
-                initial_state.pose(),
-            )),
-            physics,
+            native_controller_component(actor_name, lane_offset, initial_state),
+            physics_component(actor_name, initial_state),
         ],
-        CarConfiguration::IdmFollowing => {
-            let mapping = controller_fmu_mapping(
-                conductor.world_name(),
-                actor_name,
-                lane_offset,
-                initial_state,
-            );
-            let controller = FmuComponent::new("controller", packaged_fmu_path()?, mapping)
-                .map_err(|source| ScenarioError::Controller {
-                    actor_name: actor_name.to_string(),
-                    source,
-                })?;
-            vec![
-                Box::new(RadarSensor::new(
-                    actor_name,
-                    road,
-                    CONTROL_PERIOD,
-                    RADAR_MAX_RANGE,
-                    RADAR_LANE_TOLERANCE,
-                )),
-                Box::new(controller),
-                physics,
-            ]
-        }
+        CarConfiguration::IdmFollowing => vec![
+            radar_component(actor_name),
+            fmu_controller_component(world_name, actor_name, lane_offset, initial_state)?,
+            physics_component(actor_name, initial_state),
+        ],
     };
     for component in components {
         conductor.add_component(JoinMetadata::at(actor_name, first_due), component)?;
@@ -232,6 +197,71 @@ fn add_car<T: Transport>(
 
     // Return success; the car is registered.
     Ok(())
+}
+
+/// A car's radar, scanning its own lane ahead.
+fn radar_component(actor_name: &str) -> Box<dyn Component> {
+    Box::new(RadarSensor::new(
+        actor_name,
+        shared_road(),
+        CONTROL_PERIOD,
+        RADAR_MAX_RANGE,
+        RADAR_LANE_TOLERANCE,
+    ))
+}
+
+/// A car's native controller, steering along its lane and commanding no
+/// acceleration.
+fn native_controller_component(
+    actor_name: &str,
+    lane_offset: f64,
+    initial_state: CarState,
+) -> Box<dyn Component> {
+    Box::new(PathFollowController::new(
+        actor_name,
+        shared_road(),
+        lane_offset,
+        CONTROL_PERIOD,
+        6.0,                     // lookahead, m
+        1.5,                     // heading gain, 1/s
+        CAR_LIMITS.yaw_rate_max, // command turns up to the car's limit
+        CAR_LIMITS,
+        initial_state.pose(),
+    ))
+}
+
+/// A car's controller FMU, run from the `.fmu` that
+/// `cargo xtask package-fmus` builds and
+/// [`continuo_fmu_controller_idm::packaged_fmu_path`] finds.
+fn fmu_controller_component(
+    world_name: &str,
+    actor_name: &str,
+    lane_offset: f64,
+    initial_state: CarState,
+) -> Result<Box<dyn Component>, ScenarioError> {
+    let mapping = controller_fmu_mapping(world_name, actor_name, lane_offset, initial_state);
+    let controller = FmuComponent::new(
+        "controller",
+        continuo_fmu_controller_idm::packaged_fmu_path()?,
+        mapping,
+    )
+    .map_err(|source| ScenarioError::Controller {
+        actor_name: actor_name.to_string(),
+        source,
+    })?;
+
+    // Return the controller, ready to join.
+    Ok(Box::new(controller))
+}
+
+/// A car's physics, which owns its state and starts from `initial_state`.
+fn physics_component(actor_name: &str, initial_state: CarState) -> Box<dyn Component> {
+    Box::new(UnicyclePhysics::new(
+        actor_name,
+        PHYSICS_PERIOD,
+        CAR_LIMITS,
+        initial_state,
+    ))
 }
 
 /// Wires one following car's controller FMU into the world: the car's pose
@@ -248,8 +278,8 @@ fn controller_fmu_mapping(
     initial_state: CarState,
 ) -> FmuMapping {
     let road = shared_road();
-    let mut road_pts_x = vec![0.0; MAX_WAYPOINTS];
-    let mut road_pts_y = vec![0.0; MAX_WAYPOINTS];
+    let mut road_pts_x = vec![0.0; continuo_fmu_controller_idm::MAX_WAYPOINTS];
+    let mut road_pts_y = vec![0.0; continuo_fmu_controller_idm::MAX_WAYPOINTS];
     for (slot, &(x, y)) in road.points().iter().enumerate() {
         road_pts_x[slot] = x;
         road_pts_y[slot] = y;
