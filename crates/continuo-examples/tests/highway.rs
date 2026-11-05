@@ -173,10 +173,9 @@ fn the_dynamic_world_reproduces_exactly() {
 /// for none of those.
 ///
 /// It moves when the scenario, the seed, or the hashing moves, each a
-/// deliberate act. Update it and README.md's sample output together. It
-/// also moves when the packaged controller FMU is older than the laws it
-/// was built from, since traffic drives on that copy rather than on this
-/// build's, and `cargo xtask package-fmus` is the fix for that one.
+/// deliberate act. Update it and README.md's sample output together. A
+/// stale controller FMU moves it too, which `cargo xtask package-fmus`
+/// fixes.
 const DEMO_WORLD_HASH: u64 = 0x580e_8d37_b14c_6abd;
 
 #[test]
