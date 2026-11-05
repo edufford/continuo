@@ -11,14 +11,9 @@
 //! before a push, so what matters most about it is that it is fast enough to
 //! sit in an editing loop.
 //!
-//! It does package the FMUs, because the demo's traffic drives on one and
-//! neither its tests nor its smoke run can start without it. Packaging
-//! costs a release build of the FMU crate whenever a law changed, 13
-//! seconds against 0.7 when nothing did, and leaving it out would cost
-//! more: an edited law would leave the demo driving the copy packaged
-//! before it, passing here and failing in CI. Validating the packages and
-//! the tests comparing them with the laws stay in `cargo xtask verify-fmus`,
-//! which asks for the feature those tests sit behind.
+//! It packages the FMUs before the tests, since the demo's traffic drives
+//! on one. Validating them and comparing them with the laws stay in
+//! `cargo xtask verify-fmus`.
 
 use crate::task::{Progress, answers, run_command, workspace_root};
 
