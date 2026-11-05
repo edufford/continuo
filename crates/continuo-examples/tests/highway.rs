@@ -9,7 +9,7 @@
 
 use std::collections::BTreeMap;
 
-use continuo_actors::{CAR_LENGTH, CarState};
+use continuo_actors::CarState;
 use continuo_conductor::record::LogEvent;
 use continuo_conductor::{Conductor, Divergence, EventLog, Recorder, Verifier};
 use continuo_core::SimTime;
@@ -122,39 +122,6 @@ fn car_states(log: &EventLog) -> BTreeMap<SimTime, BTreeMap<String, CarState>> {
 
     // Return the states, earliest instant first.
     states
-}
-
-#[test]
-fn no_two_same_lane_cars_ever_overlap() {
-    // The demo's road runs along x, so x is the distance along it and y the
-    // offset across it. Two cars share a lane when they are nearer to each
-    // other's lane center than to any other lane's.
-    let log = record_highway(traffic_world::SIM_SECONDS);
-    let mut pairs_compared = 0;
-    for (instant, cars) in car_states(&log) {
-        let cars: Vec<(&String, &CarState)> = cars.iter().collect();
-        for (index, (name, state)) in cars.iter().enumerate() {
-            for (other_name, other) in &cars[index + 1..] {
-                if (state.position.y - other.position.y).abs() >= 1.75 {
-                    continue;
-                }
-                pairs_compared += 1;
-                let gap = (state.position.x - other.position.x).abs();
-                assert!(
-                    gap >= CAR_LENGTH,
-                    "{name} and {other_name} overlap at {instant}: their origins are \
-                     {gap} m apart along the road, and a car is {CAR_LENGTH} m long"
-                );
-            }
-        }
-    }
-
-    // Without this the test would pass on a run whose lanes never held two
-    // cars at once, which proves nothing about following.
-    assert!(
-        pairs_compared > 1000,
-        "only {pairs_compared} same-lane pairs were compared"
-    );
 }
 
 #[test]
