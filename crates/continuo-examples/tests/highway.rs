@@ -7,9 +7,7 @@
 //! come from inside the sim, which is the part that has to stay
 //! deterministic.
 
-use std::collections::BTreeMap;
-
-use continuo_actors::CarState;
+use continuo_actors::AccelCmd;
 use continuo_conductor::record::LogEvent;
 use continuo_conductor::{Conductor, Divergence, EventLog, Recorder, Verifier};
 use continuo_core::SimTime;
@@ -94,67 +92,33 @@ fn traffic_arrives_and_retires_while_the_run_is_under_way() {
     );
 }
 
-/// Every car's published state, by the instant it was published and then
-/// by actor, from a recorded log.
-///
-/// Every physics steps on the same 10 ms grid, since every car joins on a
-/// spawner instant, so grouping by instant lines up one state per car.
-fn car_states(log: &EventLog) -> BTreeMap<SimTime, BTreeMap<String, CarState>> {
-    let mut states: BTreeMap<SimTime, BTreeMap<String, CarState>> = BTreeMap::new();
-    for event in &log.events {
-        let LogEvent::Msg(message) = event else {
-            continue;
-        };
-        let Some(actor) = message
-            .key
-            .strip_prefix("continuo/demo/actor/")
-            .and_then(|rest| rest.strip_suffix("/pose"))
-        else {
-            continue;
-        };
-        let state: CarState =
-            serde_json::from_str(message.payload.get()).expect("a pose payload decodes");
-        states
-            .entry(message.sim_time)
-            .or_default()
-            .insert(actor.to_string(), state);
-    }
-
-    // Return the states, earliest instant first.
-    states
-}
-
 #[test]
 fn following_actually_engages_somewhere() {
-    // A traffic car on a free road wants the speed it spawned at and
-    // drifts from it by rounding alone, so a car whose speed moved by more
-    // than a meter per second was slowed by one ahead. Nobody slowing at all would mean the radar never
-    // reached the controller, and every car would be driving a free road
-    // forever while overlapping whatever it caught.
+    // A traffic car on a free road holds the speed it spawned at and
+    // commands next to nothing, so a firm braking command means it slowed
+    // for a car ahead. Braking is a negative acceleration command, as a
+    // fraction of the car's braking limit. None at all would mean the
+    // radar never reached the controller.
     let log = record_highway(traffic_world::SIM_SECONDS);
-    let mut speed_ranges: BTreeMap<String, (f64, f64)> = BTreeMap::new();
-    for cars in car_states(&log).into_values() {
-        for (name, state) in cars {
-            if name.starts_with("traffic") {
-                let range = speed_ranges
-                    .entry(name)
-                    .or_insert((state.speed, state.speed));
-                range.0 = range.0.min(state.speed);
-                range.1 = range.1.max(state.speed);
-            }
-        }
-    }
-
-    let widest = speed_ranges
+    let hardest_braking = log
+        .events
         .iter()
-        .map(|(name, (low, high))| (name, high - low))
-        .max_by(|a, b| a.1.total_cmp(&b.1))
-        .expect("traffic drove");
+        .filter_map(|event| match event {
+            LogEvent::Msg(message)
+                if message.key.starts_with("continuo/demo/actor/traffic")
+                    && message.key.ends_with("/accel_cmd") =>
+            {
+                let command: AccelCmd = serde_json::from_str(message.payload.get())
+                    .expect("an acceleration command decodes");
+                Some(command.accel_cmd)
+            }
+            _ => None,
+        })
+        .fold(0.0, f64::min);
+
     assert!(
-        widest.1 > 1.0,
-        "no traffic car changed speed by more than 1 m/s; the most was {} at {:.3} m/s",
-        widest.0,
-        widest.1
+        hardest_braking < -0.1,
+        "no traffic car braked harder than a tenth of its limit: {hardest_braking}"
     );
 }
 
