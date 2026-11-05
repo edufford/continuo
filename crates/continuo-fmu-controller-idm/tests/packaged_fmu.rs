@@ -178,32 +178,32 @@ fn controller_fmu_mapping(
         road_y[slot] = y;
     }
 
-    let pose = key("pose");
-    let radar = key("radar");
-    let cmd = key("cmd");
+    let pose_msg_key = key("pose");
+    let radar_msg_key = key("radar");
+    let cmd_msg_key = key("cmd");
 
     // Return the sheet, which is data rather than code: adding this FMU to
     // a world writes one of these instead of compiling anything.
     FmuMapping {
         period: SimDuration::from_millis(PERIOD_MS),
         inputs: vec![
-            InputBinding::new("position.x", pose.clone()),
-            InputBinding::new("position.y", pose.clone()),
-            InputBinding::new("orientation.w", pose.clone()),
-            InputBinding::new("orientation.x", pose.clone()),
-            InputBinding::new("orientation.y", pose.clone()),
-            InputBinding::new("orientation.z", pose.clone()),
-            InputBinding::new("speed", pose),
-            InputBinding::new("range", radar.clone())
+            InputBinding::new("position.x", pose_msg_key.clone()),
+            InputBinding::new("position.y", pose_msg_key.clone()),
+            InputBinding::new("orientation.w", pose_msg_key.clone()),
+            InputBinding::new("orientation.x", pose_msg_key.clone()),
+            InputBinding::new("orientation.y", pose_msg_key.clone()),
+            InputBinding::new("orientation.z", pose_msg_key.clone()),
+            InputBinding::new("speed", pose_msg_key),
+            InputBinding::new("range", radar_msg_key.clone())
                 .with_pointer("/detections/*/range")
                 .when_missing(json!(FREE_ROAD.range)),
-            InputBinding::new("range_rate", radar)
+            InputBinding::new("range_rate", radar_msg_key)
                 .with_pointer("/detections/*/range_rate")
                 .when_missing(json!(FREE_ROAD.range_rate)),
         ],
         outputs: vec![
-            OutputBinding::new("accel_cmd", cmd.clone()),
-            OutputBinding::new("steer_cmd", cmd),
+            OutputBinding::new("accel_cmd", cmd_msg_key.clone()),
+            OutputBinding::new("steer_cmd", cmd_msg_key),
         ],
         initial_values: vec![
             ("road.pts_x".to_string(), json!(road_x)),

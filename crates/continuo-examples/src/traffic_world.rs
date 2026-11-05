@@ -290,20 +290,20 @@ fn controller_fmu_mapping(
     let pursuit = PurePursuitParams::highway_car(lane_offset);
     let idm = IdmParams::highway_car(initial_state.speed);
 
-    let pose = pose_key(world_name, actor_name);
-    let radar = radar_key(world_name, actor_name);
+    let pose_msg_key = pose_key(world_name, actor_name);
+    let radar_msg_key = radar_key(world_name, actor_name);
     let inputs = vec![
-        InputBinding::new("position.x", pose.clone()),
-        InputBinding::new("position.y", pose.clone()),
-        InputBinding::new("orientation.w", pose.clone()),
-        InputBinding::new("orientation.x", pose.clone()),
-        InputBinding::new("orientation.y", pose.clone()),
-        InputBinding::new("orientation.z", pose.clone()),
-        InputBinding::new("speed", pose),
-        InputBinding::new("range", radar.clone())
+        InputBinding::new("position.x", pose_msg_key.clone()),
+        InputBinding::new("position.y", pose_msg_key.clone()),
+        InputBinding::new("orientation.w", pose_msg_key.clone()),
+        InputBinding::new("orientation.x", pose_msg_key.clone()),
+        InputBinding::new("orientation.y", pose_msg_key.clone()),
+        InputBinding::new("orientation.z", pose_msg_key.clone()),
+        InputBinding::new("speed", pose_msg_key),
+        InputBinding::new("range", radar_msg_key.clone())
             .with_pointer("/detections/*/range")
             .when_missing(json!(FREE_ROAD.range)),
-        InputBinding::new("range_rate", radar)
+        InputBinding::new("range_rate", radar_msg_key)
             .with_pointer("/detections/*/range_rate")
             .when_missing(json!(FREE_ROAD.range_rate)),
     ];
