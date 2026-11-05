@@ -185,22 +185,37 @@ fn controller_mapping(road: &Waypoints, pursuit: PurePursuitParams, idm: IdmPara
             OutputBinding::new("steer_cmd", cmd),
         ],
         initial_values: vec![
-            ("road_x".to_string(), json!(road_x)),
-            ("road_y".to_string(), json!(road_y)),
-            ("road_point_count".to_string(), json!(road.points().len())),
-            ("road_closed".to_string(), json!(road.is_closed())),
-            ("lateral_tgt".to_string(), json!(pursuit.lateral_tgt)),
-            ("lookahead".to_string(), json!(pursuit.lookahead)),
-            ("gain_yaw_rate".to_string(), json!(pursuit.gain_yaw_rate)),
-            ("max_yaw_rate".to_string(), json!(pursuit.max_yaw_rate)),
-            ("v0_speed_tgt".to_string(), json!(idm.v0_speed_tgt)),
-            ("t_headway".to_string(), json!(idm.t_headway)),
-            ("s0_gap_min".to_string(), json!(idm.s0_gap_min)),
-            ("a_accel_max".to_string(), json!(idm.a_accel_max)),
-            ("b_decel_comfort".to_string(), json!(idm.b_decel_comfort)),
-            ("plant_accel_max".to_string(), json!(LIMITS.accel_max)),
-            ("plant_decel_max".to_string(), json!(LIMITS.decel_max)),
-            ("plant_yaw_rate_max".to_string(), json!(LIMITS.yaw_rate_max)),
+            ("road.pts_x".to_string(), json!(road_x)),
+            ("road.pts_y".to_string(), json!(road_y)),
+            ("road.point_count".to_string(), json!(road.points().len())),
+            ("road.closed".to_string(), json!(road.is_closed())),
+            (
+                "pure_pursuit.lateral_tgt".to_string(),
+                json!(pursuit.lateral_tgt),
+            ),
+            (
+                "pure_pursuit.lookahead".to_string(),
+                json!(pursuit.lookahead),
+            ),
+            (
+                "pure_pursuit.gain_yaw_rate".to_string(),
+                json!(pursuit.gain_yaw_rate),
+            ),
+            (
+                "pure_pursuit.max_yaw_rate".to_string(),
+                json!(pursuit.max_yaw_rate),
+            ),
+            ("idm.v0_speed_tgt".to_string(), json!(idm.v0_speed_tgt)),
+            ("idm.t_headway".to_string(), json!(idm.t_headway)),
+            ("idm.s0_gap_min".to_string(), json!(idm.s0_gap_min)),
+            ("idm.a_accel_max".to_string(), json!(idm.a_accel_max)),
+            (
+                "idm.b_decel_comfort".to_string(),
+                json!(idm.b_decel_comfort),
+            ),
+            ("plant.accel_max".to_string(), json!(LIMITS.accel_max)),
+            ("plant.decel_max".to_string(), json!(LIMITS.decel_max)),
+            ("plant.yaw_rate_max".to_string(), json!(LIMITS.yaw_rate_max)),
         ],
     }
 }
@@ -639,8 +654,8 @@ fn the_padding_past_the_count_is_never_read() {
         road_x[slot] = x;
         road_y[slot] = y;
     }
-    set_parameter(&mut mapping, "road_x", json!(road_x));
-    set_parameter(&mut mapping, "road_y", json!(road_y));
+    set_parameter(&mut mapping, "road.pts_x", json!(road_x));
+    set_parameter(&mut mapping, "road.pts_y", json!(road_y));
 
     let mut fmu = FmuComponent::new("controller", packaged(), mapping).expect("the FMU builds");
     for situation in &situations {
@@ -694,7 +709,7 @@ fn a_road_the_fmu_cannot_build_halts_the_world_rather_than_panicking() {
     // count is checked first and the same information travels as a
     // refusal, which the standard can carry.
     for count in [0, 1, MAX_WAYPOINTS + 1] {
-        let reason = refusal(&[("road_point_count", json!(count))]);
+        let reason = refusal(&[("road.point_count", json!(count))]);
         assert!(
             reason.contains("exit_initialization_mode"),
             "{count} points: {reason}"
@@ -703,16 +718,16 @@ fn a_road_the_fmu_cannot_build_halts_the_world_rather_than_panicking() {
 
     // Two points close into nothing, so a loop needs three, and a road set
     // closed without enough points for one is refused the same way.
-    let reason = refusal(&[("road_closed", json!(true)), ("road_point_count", json!(2))]);
+    let reason = refusal(&[("road.closed", json!(true)), ("road.point_count", json!(2))]);
     assert!(reason.contains("exit_initialization_mode"), "{reason}");
 
     // What a host gets by setting the count and forgetting the points: the
     // arrays start at zero, so every point of the road is the origin.
     // Nothing in `Waypoints` objects, and a car given it holds still.
     let reason = refusal(&[
-        ("road_x", json!(vec![0.0; MAX_WAYPOINTS])),
-        ("road_y", json!(vec![0.0; MAX_WAYPOINTS])),
-        ("road_point_count", json!(4)),
+        ("road.pts_x", json!(vec![0.0; MAX_WAYPOINTS])),
+        ("road.pts_y", json!(vec![0.0; MAX_WAYPOINTS])),
+        ("road.point_count", json!(4)),
     ]);
     assert!(reason.contains("exit_initialization_mode"), "{reason}");
 }
@@ -725,14 +740,14 @@ fn a_parameter_used_for_division_halts_the_world_unless_it_is_positive() {
     // the normalizing as an infinity, and either spreads into every
     // command the car goes on to make.
     for name in [
-        "v0_speed_tgt",
-        "a_accel_max",
-        "b_decel_comfort",
-        "lookahead",
-        "max_yaw_rate",
-        "plant_accel_max",
-        "plant_decel_max",
-        "plant_yaw_rate_max",
+        "idm.v0_speed_tgt",
+        "idm.a_accel_max",
+        "idm.b_decel_comfort",
+        "pure_pursuit.lookahead",
+        "pure_pursuit.max_yaw_rate",
+        "plant.accel_max",
+        "plant.decel_max",
+        "plant.yaw_rate_max",
     ] {
         for given in [json!(0.0), json!(-1.0)] {
             let reason = refusal(&[(name, given.clone())]);
@@ -757,7 +772,7 @@ fn a_tuning_parameter_changed_between_steps_changes_the_command() {
     let mut mapping = controller_mapping(&road, PURSUIT, IDM);
     mapping
         .inputs
-        .push(InputBinding::new("v0_speed_tgt", key("tuning")));
+        .push(InputBinding::new("idm.v0_speed_tgt", key("tuning")));
     let mut fmu = FmuComponent::new("controller", packaged(), mapping).expect("the FMU builds");
 
     let situation = Situation {
@@ -776,7 +791,7 @@ fn a_tuning_parameter_changed_between_steps_changes_the_command() {
                     "speed": situation.speed,
                 }),
             ),
-            message("tuning", json!({ "v0_speed_tgt": v0_speed_tgt })),
+            message("tuning", json!({ "idm": { "v0_speed_tgt": v0_speed_tgt } })),
         ];
         // These steps really do follow one another, so only the first has no
         // interval behind it, which is what a conductor would say too.
