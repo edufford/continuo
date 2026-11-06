@@ -33,7 +33,9 @@ use continuo_actors::control_laws::{
     FREE_ROAD, IdmParams, PurePursuitParams, accel_fraction, idm_accel, nearest_detection,
     pure_pursuit_yaw_rate, steer_fraction,
 };
-use continuo_actors::{MAX_DETECTIONS, PlantLimits, Waypoints};
+use continuo_actors::{
+    AccelCmd, MAX_DETECTIONS, PlantLimits, SteerCmd, Waypoints, accel_cmd_key, steer_cmd_key,
+};
 use continuo_core::{
     Component, ComponentPath, CoreError, Detection, KeyExpr, Message, Pose, Quat, RandomSplitMix64,
     SimDuration, SimTime, StepCtx,
@@ -130,6 +132,21 @@ impl Situation {
             -lead.range_rate,
         )
     }
+
+    /// The pose and the radar scan, as the car's sensors would publish them.
+    fn as_inbox(&self) -> Vec<Message> {
+        vec![
+            message(
+                "pose",
+                json!({
+                    "position": self.pose.position,
+                    "orientation": self.pose.orientation,
+                    "speed": self.speed,
+                }),
+            ),
+            message("radar", json!({ "detections": self.scan })),
+        ]
+    }
 }
 
 /// A car at `s` along the road, `lateral` meters left of the centerline,
@@ -149,58 +166,77 @@ fn car_at(road: &Waypoints, s: f64, lateral: f64, yaw_error: f64) -> Pose {
 /// Pointer describe the same shape and `position.x` spells `/position/x`
 /// on its own. The radar's do, because nothing derives
 /// `/detections/0/range` from a variable named `range`.
-fn controller_mapping(road: &Waypoints, pursuit: PurePursuitParams, idm: IdmParams) -> FmuMapping {
-    let mut road_x = vec![0.0; MAX_WAYPOINTS];
-    let mut road_y = vec![0.0; MAX_WAYPOINTS];
+fn controller_fmu_mapping(
+    road: &Waypoints,
+    pursuit: PurePursuitParams,
+    idm: IdmParams,
+) -> FmuMapping {
+    let mut road_pts_x = vec![0.0; MAX_WAYPOINTS];
+    let mut road_pts_y = vec![0.0; MAX_WAYPOINTS];
     for (slot, &(x, y)) in road.points().iter().enumerate() {
-        road_x[slot] = x;
-        road_y[slot] = y;
+        road_pts_x[slot] = x;
+        road_pts_y[slot] = y;
     }
 
-    let pose = key("pose");
-    let radar = key("radar");
-    let cmd = key("cmd");
+    let pose_msg_key = key("pose");
+    let radar_msg_key = key("radar");
+    let cmd_msg_key = key("cmd");
 
     // Return the sheet, which is data rather than code: adding this FMU to
     // a world writes one of these instead of compiling anything.
     FmuMapping {
         period: SimDuration::from_millis(PERIOD_MS),
         inputs: vec![
-            InputBinding::new("position.x", pose.clone()),
-            InputBinding::new("position.y", pose.clone()),
-            InputBinding::new("orientation.w", pose.clone()),
-            InputBinding::new("orientation.x", pose.clone()),
-            InputBinding::new("orientation.y", pose.clone()),
-            InputBinding::new("orientation.z", pose.clone()),
-            InputBinding::new("speed", pose),
-            InputBinding::new("range", radar.clone())
+            InputBinding::new("position.x", pose_msg_key.clone()),
+            InputBinding::new("position.y", pose_msg_key.clone()),
+            InputBinding::new("orientation.w", pose_msg_key.clone()),
+            InputBinding::new("orientation.x", pose_msg_key.clone()),
+            InputBinding::new("orientation.y", pose_msg_key.clone()),
+            InputBinding::new("orientation.z", pose_msg_key.clone()),
+            InputBinding::new("speed", pose_msg_key),
+            InputBinding::new("range", radar_msg_key.clone())
                 .with_pointer("/detections/*/range")
                 .when_missing(json!(FREE_ROAD.range)),
-            InputBinding::new("range_rate", radar)
+            InputBinding::new("range_rate", radar_msg_key)
                 .with_pointer("/detections/*/range_rate")
                 .when_missing(json!(FREE_ROAD.range_rate)),
         ],
         outputs: vec![
-            OutputBinding::new("accel_cmd", cmd.clone()),
-            OutputBinding::new("steer_cmd", cmd),
+            OutputBinding::new("accel_cmd", cmd_msg_key.clone()),
+            OutputBinding::new("steer_cmd", cmd_msg_key),
         ],
         initial_values: vec![
-            ("road_x".to_string(), json!(road_x)),
-            ("road_y".to_string(), json!(road_y)),
-            ("road_point_count".to_string(), json!(road.points().len())),
-            ("road_closed".to_string(), json!(road.is_closed())),
-            ("lateral_tgt".to_string(), json!(pursuit.lateral_tgt)),
-            ("lookahead".to_string(), json!(pursuit.lookahead)),
-            ("gain_yaw_rate".to_string(), json!(pursuit.gain_yaw_rate)),
-            ("max_yaw_rate".to_string(), json!(pursuit.max_yaw_rate)),
-            ("v0_speed_tgt".to_string(), json!(idm.v0_speed_tgt)),
-            ("t_headway".to_string(), json!(idm.t_headway)),
-            ("s0_gap_min".to_string(), json!(idm.s0_gap_min)),
-            ("a_accel_max".to_string(), json!(idm.a_accel_max)),
-            ("b_decel_comfort".to_string(), json!(idm.b_decel_comfort)),
-            ("plant_accel_max".to_string(), json!(LIMITS.accel_max)),
-            ("plant_decel_max".to_string(), json!(LIMITS.decel_max)),
-            ("plant_yaw_rate_max".to_string(), json!(LIMITS.yaw_rate_max)),
+            ("road.pts_x".to_string(), json!(road_pts_x)),
+            ("road.pts_y".to_string(), json!(road_pts_y)),
+            ("road.point_count".to_string(), json!(road.points().len())),
+            ("road.closed".to_string(), json!(road.is_closed())),
+            (
+                "pure_pursuit.lateral_tgt".to_string(),
+                json!(pursuit.lateral_tgt),
+            ),
+            (
+                "pure_pursuit.lookahead".to_string(),
+                json!(pursuit.lookahead),
+            ),
+            (
+                "pure_pursuit.gain_yaw_rate".to_string(),
+                json!(pursuit.gain_yaw_rate),
+            ),
+            (
+                "pure_pursuit.max_yaw_rate".to_string(),
+                json!(pursuit.max_yaw_rate),
+            ),
+            ("idm.v0_speed_tgt".to_string(), json!(idm.v0_speed_tgt)),
+            ("idm.t_headway".to_string(), json!(idm.t_headway)),
+            ("idm.s0_gap_min".to_string(), json!(idm.s0_gap_min)),
+            ("idm.a_accel_max".to_string(), json!(idm.a_accel_max)),
+            (
+                "idm.b_decel_comfort".to_string(),
+                json!(idm.b_decel_comfort),
+            ),
+            ("plant.accel_max".to_string(), json!(LIMITS.accel_max)),
+            ("plant.decel_max".to_string(), json!(LIMITS.decel_max)),
+            ("plant.yaw_rate_max".to_string(), json!(LIMITS.yaw_rate_max)),
         ],
     }
 }
@@ -267,19 +303,7 @@ fn step_once(
     dt: Option<SimDuration>,
     situation: &Situation,
 ) -> (f64, f64) {
-    let inbox = vec![
-        message(
-            "pose",
-            json!({
-                "position": situation.pose.position,
-                "orientation": situation.pose.orientation,
-                "speed": situation.speed,
-            }),
-        ),
-        message("radar", json!({ "detections": situation.scan })),
-    ];
-
-    let mut ctx = StepCtx::new(now, dt, WORLD, 0, inbox);
+    let mut ctx = StepCtx::new(now, dt, WORLD, 0, situation.as_inbox());
     fmu.step(&mut ctx).expect("the FMU steps");
     let outbox = ctx.take_outbox();
     assert_eq!(outbox.len(), 1, "both commands share one key");
@@ -327,7 +351,7 @@ fn commands_over(
     idm: IdmParams,
     situations: &[Situation],
 ) -> Vec<(f64, f64)> {
-    let mapping = controller_mapping(road, pursuit, idm);
+    let mapping = controller_fmu_mapping(road, pursuit, idm);
     let mut fmu = FmuComponent::new("controller", packaged(), mapping).expect("the FMU builds");
 
     // Return each situation's commands, having agreed at every one.
@@ -629,18 +653,18 @@ fn the_padding_past_the_count_is_never_read() {
     let road = Waypoints::build_open(vec![(0.0, 0.0), (80.0, 0.0), (140.0, 45.0)]);
     let situations = situations_on(&road);
 
-    let mut mapping = controller_mapping(&road, PURSUIT, IDM);
+    let mut mapping = controller_fmu_mapping(&road, PURSUIT, IDM);
     let junk: Vec<f64> = (0..MAX_WAYPOINTS)
         .map(|slot| 500.0 + slot as f64 * 17.0)
         .collect();
-    let mut road_x = junk.clone();
-    let mut road_y: Vec<f64> = junk.iter().map(|value| -value).collect();
+    let mut road_pts_x = junk.clone();
+    let mut road_pts_y: Vec<f64> = junk.iter().map(|value| -value).collect();
     for (slot, &(x, y)) in road.points().iter().enumerate() {
-        road_x[slot] = x;
-        road_y[slot] = y;
+        road_pts_x[slot] = x;
+        road_pts_y[slot] = y;
     }
-    set_parameter(&mut mapping, "road_x", json!(road_x));
-    set_parameter(&mut mapping, "road_y", json!(road_y));
+    set_parameter(&mut mapping, "road.pts_x", json!(road_pts_x));
+    set_parameter(&mut mapping, "road.pts_y", json!(road_pts_y));
 
     let mut fmu = FmuComponent::new("controller", packaged(), mapping).expect("the FMU builds");
     for situation in &situations {
@@ -664,7 +688,7 @@ fn the_padding_past_the_count_is_never_read() {
 /// first moment the parameters mean what the host meant.
 fn refusal(bad: &[(&str, Value)]) -> String {
     let road = Waypoints::build_straight((0.0, 0.0), (400.0, 0.0));
-    let mut mapping = controller_mapping(&road, PURSUIT, IDM);
+    let mut mapping = controller_fmu_mapping(&road, PURSUIT, IDM);
     for (name, value) in bad {
         set_parameter(&mut mapping, name, value.clone());
     }
@@ -688,13 +712,61 @@ fn refusal(bad: &[(&str, Value)]) -> String {
 }
 
 #[test]
+fn each_command_decodes_as_the_plant_reads_it() {
+    // The FMU names its outputs and the plant names its payload fields, and
+    // nothing compiles one against the other, so this reads each command
+    // back as the plant does.
+    let road = Waypoints::build_straight((0.0, 0.0), (400.0, 0.0));
+    let mut mapping = controller_fmu_mapping(&road, PURSUIT, IDM);
+    mapping.outputs = vec![
+        OutputBinding::new("accel_cmd", accel_cmd_key(WORLD, "car")),
+        OutputBinding::new("steer_cmd", steer_cmd_key(WORLD, "car")),
+    ];
+    let mut fmu = FmuComponent::new("controller", packaged(), mapping).expect("the FMU builds");
+    let situation = Situation {
+        pose: car_at(&road, 50.0, 0.0, 0.0),
+        speed: 22.0,
+        scan: scan_of(&[(0, 20.0, -4.0)]),
+    };
+
+    let mut ctx = StepCtx::new(SimTime::ZERO, None, WORLD, 0, situation.as_inbox());
+    fmu.step(&mut ctx).expect("the FMU steps");
+    let outbox = ctx.take_outbox();
+    let published = |key: KeyExpr| {
+        &outbox
+            .iter()
+            .find(|(published_key, _)| *published_key == key)
+            .unwrap_or_else(|| panic!("nothing was published on {key}"))
+            .1
+    };
+    let fmu_accel: AccelCmd = serde_json::from_slice(published(accel_cmd_key(WORLD, "car")))
+        .expect("the plant decodes the acceleration command");
+    let fmu_steer: SteerCmd = serde_json::from_slice(published(steer_cmd_key(WORLD, "car")))
+        .expect("the plant decodes the steering command");
+
+    // An FMU writing each command under the other's name still decodes, so
+    // the values are compared too. That needs two different commands, which
+    // is why the car is off its lane and closing on a lead.
+    let (native_accel_cmd, native_steer_cmd) = native_commands(&road, PURSUIT, IDM, &situation);
+    assert_ne!(
+        native_accel_cmd, native_steer_cmd,
+        "a swap needs two different commands to show"
+    );
+    assert_eq!(
+        (fmu_accel.accel_cmd.to_bits(), fmu_steer.steer_cmd.to_bits()),
+        (native_accel_cmd.to_bits(), native_steer_cmd.to_bits()),
+        "{MAYBE_STALE}"
+    );
+}
+
+#[test]
 fn a_road_the_fmu_cannot_build_halts_the_world_rather_than_panicking() {
     // `Waypoints` asserts its own minimum, and a panic unwinding out
     // through the C interface would take the host process with it. So the
     // count is checked first and the same information travels as a
     // refusal, which the standard can carry.
     for count in [0, 1, MAX_WAYPOINTS + 1] {
-        let reason = refusal(&[("road_point_count", json!(count))]);
+        let reason = refusal(&[("road.point_count", json!(count))]);
         assert!(
             reason.contains("exit_initialization_mode"),
             "{count} points: {reason}"
@@ -703,16 +775,16 @@ fn a_road_the_fmu_cannot_build_halts_the_world_rather_than_panicking() {
 
     // Two points close into nothing, so a loop needs three, and a road set
     // closed without enough points for one is refused the same way.
-    let reason = refusal(&[("road_closed", json!(true)), ("road_point_count", json!(2))]);
+    let reason = refusal(&[("road.closed", json!(true)), ("road.point_count", json!(2))]);
     assert!(reason.contains("exit_initialization_mode"), "{reason}");
 
     // What a host gets by setting the count and forgetting the points: the
     // arrays start at zero, so every point of the road is the origin.
     // Nothing in `Waypoints` objects, and a car given it holds still.
     let reason = refusal(&[
-        ("road_x", json!(vec![0.0; MAX_WAYPOINTS])),
-        ("road_y", json!(vec![0.0; MAX_WAYPOINTS])),
-        ("road_point_count", json!(4)),
+        ("road.pts_x", json!(vec![0.0; MAX_WAYPOINTS])),
+        ("road.pts_y", json!(vec![0.0; MAX_WAYPOINTS])),
+        ("road.point_count", json!(4)),
     ]);
     assert!(reason.contains("exit_initialization_mode"), "{reason}");
 }
@@ -725,14 +797,14 @@ fn a_parameter_used_for_division_halts_the_world_unless_it_is_positive() {
     // the normalizing as an infinity, and either spreads into every
     // command the car goes on to make.
     for name in [
-        "v0_speed_tgt",
-        "a_accel_max",
-        "b_decel_comfort",
-        "lookahead",
-        "max_yaw_rate",
-        "plant_accel_max",
-        "plant_decel_max",
-        "plant_yaw_rate_max",
+        "idm.v0_speed_tgt",
+        "idm.a_accel_max",
+        "idm.b_decel_comfort",
+        "pure_pursuit.lookahead",
+        "pure_pursuit.max_yaw_rate",
+        "plant.accel_max",
+        "plant.decel_max",
+        "plant.yaw_rate_max",
     ] {
         for given in [json!(0.0), json!(-1.0)] {
             let reason = refusal(&[(name, given.clone())]);
@@ -754,10 +826,10 @@ fn a_tuning_parameter_changed_between_steps_changes_the_command() {
     const SPEED: f64 = 20.0;
 
     let road = Waypoints::build_straight((0.0, 0.0), (600.0, 0.0));
-    let mut mapping = controller_mapping(&road, PURSUIT, IDM);
+    let mut mapping = controller_fmu_mapping(&road, PURSUIT, IDM);
     mapping
         .inputs
-        .push(InputBinding::new("v0_speed_tgt", key("tuning")));
+        .push(InputBinding::new("idm.v0_speed_tgt", key("tuning")));
     let mut fmu = FmuComponent::new("controller", packaged(), mapping).expect("the FMU builds");
 
     let situation = Situation {
@@ -776,7 +848,7 @@ fn a_tuning_parameter_changed_between_steps_changes_the_command() {
                     "speed": situation.speed,
                 }),
             ),
-            message("tuning", json!({ "v0_speed_tgt": v0_speed_tgt })),
+            message("tuning", json!({ "idm": { "v0_speed_tgt": v0_speed_tgt } })),
         ];
         // These steps really do follow one another, so only the first has no
         // interval behind it, which is what a conductor would say too.
@@ -827,7 +899,7 @@ fn the_nearest_of_several_detections_is_the_one_followed() {
     let mut fmu = FmuComponent::new(
         "controller",
         packaged(),
-        controller_mapping(&road, PURSUIT, IDM),
+        controller_fmu_mapping(&road, PURSUIT, IDM),
     )
     .expect("the FMU builds");
     let situation = |scan: Vec<Detection>| Situation {

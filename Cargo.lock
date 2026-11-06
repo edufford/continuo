@@ -475,9 +475,12 @@ dependencies = [
  "continuo-actors",
  "continuo-conductor",
  "continuo-core",
+ "continuo-fmi",
+ "continuo-fmu-controller-idm",
  "continuo-transport",
  "continuo-viz-bridge",
- "tracing",
+ "serde_json",
+ "thiserror 2.0.18",
  "tracing-subscriber",
 ]
 

@@ -7,6 +7,7 @@
 //! come from inside the sim, which is the part that has to stay
 //! deterministic.
 
+use continuo_actors::AccelCmd;
 use continuo_conductor::record::LogEvent;
 use continuo_conductor::{Conductor, Divergence, EventLog, Recorder, Verifier};
 use continuo_core::SimTime;
@@ -92,8 +93,38 @@ fn traffic_arrives_and_retires_while_the_run_is_under_way() {
 }
 
 #[test]
+fn following_actually_engages_somewhere() {
+    // A traffic car on a free road holds the speed it spawned at and
+    // commands next to nothing, so a firm braking command means it slowed
+    // for a car ahead. Braking is a negative acceleration command, as a
+    // fraction of the car's braking limit. None at all would mean the
+    // radar never reached the controller.
+    let log = record_highway(traffic_world::SIM_SECONDS);
+    let hardest_braking = log
+        .events
+        .iter()
+        .filter_map(|event| match event {
+            LogEvent::Msg(message)
+                if message.key.starts_with("continuo/demo/actor/traffic")
+                    && message.key.ends_with("/accel_cmd") =>
+            {
+                let command: AccelCmd = serde_json::from_str(message.payload.get())
+                    .expect("an acceleration command decodes");
+                Some(command.accel_cmd)
+            }
+            _ => None,
+        })
+        .fold(0.0, f64::min);
+
+    assert!(
+        hardest_braking < -0.1,
+        "no traffic car braked harder than a tenth of its limit: {hardest_braking}"
+    );
+}
+
+#[test]
 fn a_car_leaves_as_a_whole_actor() {
-    // Both halves of a composite go together, adjacent in the log, because
+    // Every part of a composite goes together, adjacent in the log, because
     // the driver removes the actor rather than its parts.
     let log = record_highway(traffic_world::SIM_SECONDS);
     let left = left(&log);
@@ -104,10 +135,11 @@ fn a_car_leaves_as_a_whole_actor() {
     assert_eq!(
         pair,
         vec![
+            &format!("{actor}/radar").as_str(),
             &format!("{actor}/controller").as_str(),
             &format!("{actor}/physics").as_str()
         ],
-        "one leave per leaf, controller before physics, in declaration order"
+        "one leave per leaf, radar then controller then physics, in declaration order"
     );
 }
 
@@ -136,12 +168,15 @@ fn the_dynamic_world_reproduces_exactly() {
 /// `cargo test` runs on every CI agent.
 ///
 /// There is something to catch. The hash reaches `sin`, `cos`, `asin`, and
-/// `atan2` through the unicycle integration and the quaternion conversions,
-/// and IEEE 754 requires correct rounding for `sqrt` but for none of those.
+/// `atan2` through the unicycle integration, the quaternion conversions and
+/// the steering law, and IEEE 754 requires correct rounding for `sqrt` but
+/// for none of those.
 ///
 /// It moves when the scenario, the seed, or the hashing moves, each a
-/// deliberate act. Update it and README.md's sample output together.
-const DEMO_WORLD_HASH: u64 = 0xeccd_08f9_a316_bbbc;
+/// deliberate act. Update it and README.md's sample output together. A
+/// stale controller FMU moves it too, which `cargo xtask package-fmus`
+/// fixes.
+const DEMO_WORLD_HASH: u64 = 0x580e_8d37_b14c_6abd;
 
 #[test]
 fn the_demo_world_hashes_to_the_same_value_on_every_platform() {

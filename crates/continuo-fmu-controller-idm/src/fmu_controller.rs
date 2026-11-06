@@ -23,7 +23,7 @@ use crate::error::BadInput;
 ///
 /// It lives here because it is a fact about this interface rather than
 /// about roads: `fmi-export` 0.3.0 cannot size an array by a parameter,
-/// so the array is fixed and `road_point_count` says how much of it is
+/// so the array is fixed and `road.point_count` says how much of it is
 /// real. Padding the tail by repeating the last point instead would hand
 /// [`Waypoints::frenet`] a segment of no length, so the
 /// padding has to be ignored rather than read.
@@ -113,63 +113,63 @@ pub struct FmuController {
     // its `Waypoints` once and keeps it, so a road changed after
     // initialization would be accepted and then ignored. Declaring it
     // fixed is what tells a host that before it tries.
-    /// The road's points, meters east, the first road_point_count real.
-    #[variable(causality = Parameter, variability = Fixed, start = Self::default().road_x)]
+    /// The road's points, meters east, the first road.point_count real.
+    #[variable(causality = Parameter, variability = Fixed, name = "road.pts_x", start = Self::default().road_x)]
     road_x: [f64; MAX_WAYPOINTS],
-    /// The road's points, meters north, the first road_point_count real.
-    #[variable(causality = Parameter, variability = Fixed, start = Self::default().road_y)]
+    /// The road's points, meters north, the first road.point_count real.
+    #[variable(causality = Parameter, variability = Fixed, name = "road.pts_y", start = Self::default().road_y)]
     road_y: [f64; MAX_WAYPOINTS],
     /// How many of those points are the road, the rest being padding.
-    #[variable(causality = Parameter, variability = Fixed, start = Self::default().road_point_count)]
+    #[variable(causality = Parameter, variability = Fixed, name = "road.point_count", start = Self::default().road_point_count)]
     road_point_count: u32,
     /// Whether the road wraps at its end rather than stopping there.
     ///
     /// True when the last point joins back to the first. Two roads with
     /// the same points and different answers here are different roads.
-    #[variable(causality = Parameter, variability = Fixed, start = Self::default().road_closed)]
+    #[variable(causality = Parameter, variability = Fixed, name = "road.closed", start = Self::default().road_closed)]
     road_closed: bool,
 
     // Tunable, so a host may change any of these between steps: a car
     // wanting a different speed, or a different lane, says so here. That
     // is why a step reads them rather than keeping a copy taken at
     // initialization, and why the check on them runs there too.
-    /// Pure pursuit: meters left of the centerline to hold, making a lane.
-    #[variable(causality = Parameter, variability = Tunable, start = Self::default().lateral_tgt)]
+    /// Meters left of the centerline to hold, making a lane.
+    #[variable(causality = Parameter, variability = Tunable, name = "pure_pursuit.lateral_tgt", start = Self::default().lateral_tgt)]
     lateral_tgt: f64,
-    /// Pure pursuit: how far along the road to aim, in meters.
-    #[variable(causality = Parameter, variability = Tunable, start = Self::default().lookahead)]
+    /// How far along the road to aim, in meters.
+    #[variable(causality = Parameter, variability = Tunable, name = "pure_pursuit.lookahead", start = Self::default().lookahead)]
     lookahead: f64,
-    /// Pure pursuit: yaw rate per radian of heading error, in 1/s.
-    #[variable(causality = Parameter, variability = Tunable, start = Self::default().gain_yaw_rate)]
+    /// Yaw rate per radian of heading error, in 1/s.
+    #[variable(causality = Parameter, variability = Tunable, name = "pure_pursuit.gain_yaw_rate", start = Self::default().gain_yaw_rate)]
     gain_yaw_rate: f64,
-    /// Pure pursuit: the most yaw rate to command either way, rad/s.
-    #[variable(causality = Parameter, variability = Tunable, start = Self::default().max_yaw_rate)]
+    /// The most yaw rate to command either way, rad/s.
+    #[variable(causality = Parameter, variability = Tunable, name = "pure_pursuit.max_yaw_rate", start = Self::default().max_yaw_rate)]
     max_yaw_rate: f64,
 
-    /// IDM: speed held on an open road, m/s.
-    #[variable(causality = Parameter, variability = Tunable, start = Self::default().v0_speed_tgt)]
+    /// Speed held on an open road, m/s.
+    #[variable(causality = Parameter, variability = Tunable, name = "idm.v0_speed_tgt", start = Self::default().v0_speed_tgt)]
     v0_speed_tgt: f64,
-    /// IDM: seconds of gap wanted at whatever speed is held.
-    #[variable(causality = Parameter, variability = Tunable, start = Self::default().t_headway)]
+    /// Seconds of gap wanted at whatever speed is held.
+    #[variable(causality = Parameter, variability = Tunable, name = "idm.t_headway", start = Self::default().t_headway)]
     t_headway: f64,
-    /// IDM: meters of gap wanted at a standstill.
-    #[variable(causality = Parameter, variability = Tunable, start = Self::default().s0_gap_min)]
+    /// Meters of gap wanted at a standstill.
+    #[variable(causality = Parameter, variability = Tunable, name = "idm.s0_gap_min", start = Self::default().s0_gap_min)]
     s0_gap_min: f64,
-    /// IDM: the most acceleration commanded, m/s^2.
-    #[variable(causality = Parameter, variability = Tunable, start = Self::default().a_accel_max)]
+    /// The most acceleration commanded, m/s^2.
+    #[variable(causality = Parameter, variability = Tunable, name = "idm.a_accel_max", start = Self::default().a_accel_max)]
     a_accel_max: f64,
-    /// IDM: comfortable braking, m/s^2 and positive, the hardest asked for.
-    #[variable(causality = Parameter, variability = Tunable, start = Self::default().b_decel_comfort)]
+    /// Comfortable braking, m/s^2 and positive, the hardest asked for.
+    #[variable(causality = Parameter, variability = Tunable, name = "idm.b_decel_comfort", start = Self::default().b_decel_comfort)]
     b_decel_comfort: f64,
 
     /// The car's acceleration at a full command of +1.0, in m/s^2.
-    #[variable(causality = Parameter, variability = Fixed, start = Self::default().plant_accel_max)]
+    #[variable(causality = Parameter, variability = Fixed, name = "plant.accel_max", start = Self::default().plant_accel_max)]
     plant_accel_max: f64,
     /// The car's deceleration at a full command of -1.0, in m/s^2 and positive.
-    #[variable(causality = Parameter, variability = Fixed, start = Self::default().plant_decel_max)]
+    #[variable(causality = Parameter, variability = Fixed, name = "plant.decel_max", start = Self::default().plant_decel_max)]
     plant_decel_max: f64,
     /// The car's yaw rate at a full command of +1.0, rad/s counter-clockwise.
-    #[variable(causality = Parameter, variability = Fixed, start = Self::default().plant_yaw_rate_max)]
+    #[variable(causality = Parameter, variability = Fixed, name = "plant.yaw_rate_max", start = Self::default().plant_yaw_rate_max)]
     plant_yaw_rate_max: f64,
 
     /// The normalized acceleration command, -1.0 to +1.0, no unit.
@@ -302,9 +302,9 @@ impl FmuController {
     fn pursuit_params(&self) -> Result<PurePursuitParams, BadInput> {
         Ok(PurePursuitParams {
             lateral_tgt: self.lateral_tgt,
-            lookahead: require_positive("lookahead", self.lookahead)?,
+            lookahead: require_positive("pure_pursuit.lookahead", self.lookahead)?,
             gain_yaw_rate: self.gain_yaw_rate,
-            max_yaw_rate: require_positive("max_yaw_rate", self.max_yaw_rate)?,
+            max_yaw_rate: require_positive("pure_pursuit.max_yaw_rate", self.max_yaw_rate)?,
         })
     }
 
@@ -314,11 +314,11 @@ impl FmuController {
         // Return the set, once the three the equation divides by are
         // numbers it can divide by.
         Ok(IdmParams {
-            v0_speed_tgt: require_positive("v0_speed_tgt", self.v0_speed_tgt)?,
+            v0_speed_tgt: require_positive("idm.v0_speed_tgt", self.v0_speed_tgt)?,
             t_headway: self.t_headway,
             s0_gap_min: self.s0_gap_min,
-            a_accel_max: require_positive("a_accel_max", self.a_accel_max)?,
-            b_decel_comfort: require_positive("b_decel_comfort", self.b_decel_comfort)?,
+            a_accel_max: require_positive("idm.a_accel_max", self.a_accel_max)?,
+            b_decel_comfort: require_positive("idm.b_decel_comfort", self.b_decel_comfort)?,
         })
     }
 
@@ -342,7 +342,7 @@ impl FmuController {
         let yaw_rate = pure_pursuit_yaw_rate(road, pose, pursuit_params);
         let steer_cmd = steer_fraction(
             yaw_rate,
-            require_positive("plant_yaw_rate_max", self.plant_yaw_rate_max)?,
+            require_positive("plant.yaw_rate_max", self.plant_yaw_rate_max)?,
         );
 
         // The two arrays back into the detections they were taken from,
@@ -359,8 +359,8 @@ impl FmuController {
 
         let accel_cmd = accel_fraction(
             accel,
-            require_positive("plant_accel_max", self.plant_accel_max)?,
-            require_positive("plant_decel_max", self.plant_decel_max)?,
+            require_positive("plant.accel_max", self.plant_accel_max)?,
+            require_positive("plant.decel_max", self.plant_decel_max)?,
         );
 
         // Return what to command: normalized acceleration and steering.
@@ -579,36 +579,36 @@ mod tests {
         for bad_val in [0.0, -1.0, f64::NAN, f64::INFINITY] {
             let mut target_speed = controller_given(&road);
             target_speed.v0_speed_tgt = bad_val;
-            check_refusal(&target_speed, &road, "v0_speed_tgt", bad_val);
+            check_refusal(&target_speed, &road, "idm.v0_speed_tgt", bad_val);
 
             let mut acceleration = controller_given(&road);
             acceleration.a_accel_max = bad_val;
-            check_refusal(&acceleration, &road, "a_accel_max", bad_val);
+            check_refusal(&acceleration, &road, "idm.a_accel_max", bad_val);
 
             let mut braking = controller_given(&road);
             braking.b_decel_comfort = bad_val;
-            check_refusal(&braking, &road, "b_decel_comfort", bad_val);
+            check_refusal(&braking, &road, "idm.b_decel_comfort", bad_val);
 
             let mut aim_point = controller_given(&road);
             aim_point.lookahead = bad_val;
-            check_refusal(&aim_point, &road, "lookahead", bad_val);
+            check_refusal(&aim_point, &road, "pure_pursuit.lookahead", bad_val);
 
             // The three the normalizing divides by
             let mut turn = controller_given(&road);
             turn.max_yaw_rate = bad_val;
-            check_refusal(&turn, &road, "max_yaw_rate", bad_val);
+            check_refusal(&turn, &road, "pure_pursuit.max_yaw_rate", bad_val);
 
             let mut plant_accel = controller_given(&road);
             plant_accel.plant_accel_max = bad_val;
-            check_refusal(&plant_accel, &road, "plant_accel_max", bad_val);
+            check_refusal(&plant_accel, &road, "plant.accel_max", bad_val);
 
             let mut plant_braking = controller_given(&road);
             plant_braking.plant_decel_max = bad_val;
-            check_refusal(&plant_braking, &road, "plant_decel_max", bad_val);
+            check_refusal(&plant_braking, &road, "plant.decel_max", bad_val);
 
             let mut plant_turn = controller_given(&road);
             plant_turn.plant_yaw_rate_max = bad_val;
-            check_refusal(&plant_turn, &road, "plant_yaw_rate_max", bad_val);
+            check_refusal(&plant_turn, &road, "plant.yaw_rate_max", bad_val);
         }
     }
 

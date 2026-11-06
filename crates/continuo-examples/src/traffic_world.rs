@@ -24,10 +24,11 @@
 
 use std::sync::{Arc, Mutex, OnceLock};
 
+use continuo_actors::control_laws::{FREE_ROAD, IdmParams, PurePursuitParams};
 use continuo_actors::{
-    CarState, DespawnTrafficRequest, PathFollowController, PlantLimits, PoseLogger,
-    SpawnTrafficRequest, TrafficSpawner, UnicyclePhysics, Waypoints, road_pose, straight_road,
-    traffic_despawn_key, traffic_spawn_key,
+    CarState, DespawnTrafficRequest, PathFollowController, PlantLimits, PoseLogger, RadarSensor,
+    SpawnTrafficRequest, TrafficSpawner, UnicyclePhysics, Waypoints, accel_cmd_key, pose_key,
+    radar_key, road_pose, steer_cmd_key, straight_road, traffic_despawn_key, traffic_spawn_key,
 };
 use continuo_conductor::record::LogEvent;
 use continuo_conductor::{
@@ -35,7 +36,9 @@ use continuo_conductor::{
     Verifier, WORLD_LEVEL,
 };
 use continuo_core::{Component, ComponentId, CoreError, Message, SimDuration, SimTime};
+use continuo_fmi::{FmuComponent, FmuConstructionError, FmuMapping, InputBinding, OutputBinding};
 use continuo_transport::{MonitorTransport, Transport};
+use serde_json::json;
 
 /// One seed for the whole demo family: record, verify, and resim must all
 /// agree on it.
@@ -79,6 +82,49 @@ const SPAWN_GAP: (f64, f64) = (20.0, 50.0);
 /// What a full command is worth on every car in this world.
 const CAR_LIMITS: PlantLimits = PlantLimits::highway_car();
 
+/// How often a car decides what to do: its radar scans and its controller
+/// commands at this period, and its physics integrates ten times between.
+const CONTROL_PERIOD: SimDuration = SimDuration::from_millis(100);
+const PHYSICS_PERIOD: SimDuration = SimDuration::from_millis(10);
+
+/// How far ahead a car's radar sees, in meters.
+const RADAR_MAX_RANGE: f64 = 120.0;
+
+/// Half a lane either side, so a car counts as sharing the radar's lane
+/// when it is nearer that lane's center than any other.
+const RADAR_LANE_TOLERANCE: f64 = LANE_WIDTH / 2.0;
+
+/// Which components a car is built from, and so how it drives.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CarConfiguration {
+    /// Holds the speed it started at whatever is ahead, steering with
+    /// the native controller: `[controller, physics]`.
+    ConstantSpeed,
+    /// Follows the car ahead in its lane on the controller FMU, and wants
+    /// the speed it started at whenever the road ahead is free:
+    /// `[radar, controller, physics]`.
+    IdmFollowing,
+}
+
+/// Why a traffic scenario could not be built or run.
+#[derive(Debug, thiserror::Error)]
+pub enum ScenarioError {
+    #[error(transparent)]
+    Conductor(#[from] ConductorError),
+
+    /// Nobody packaged the controller FMU, so no following car can be
+    /// built. The message names the command that fixes it.
+    #[error(transparent)]
+    NotPackaged(#[from] continuo_fmu_controller_idm::PackageError),
+
+    #[error("cannot build the controller FMU for {actor_name}: {source}")]
+    Controller {
+        actor_name: String,
+        #[source]
+        source: FmuConstructionError,
+    },
+}
+
 /// A handle on the one road every car in this world drives, built once and
 /// handed out, not rebuilt per call, which is what keeps a run that spawns
 /// twenty cars from carrying twenty copies of the same geometry.
@@ -111,55 +157,193 @@ pub fn config_paced(pacing: Pacing) -> ConductorConfig {
     }
 }
 
-/// Registers one car as the composite `{actor_name} = [controller,
-/// physics]`. Declared order matters: the controller is registered before
-/// the physics, so its command reaches the physics same-instant when both
-/// are due.
+/// Registers one car under `actor_name`, built as `car_config` says,
+/// starting `start_s` along the road in the lane at `lane_offset` at
+/// `speed`.
 ///
-/// `speed` goes to the physics rather than the controller, because the
-/// physics owns it. Nothing here commands an acceleration, so what the car
-/// starts at is what it holds for the whole run.
-///
-/// Controller and physics both take [`CAR_LIMITS`], since a normalized
-/// command means whatever the plant says it means and a controller
-/// working from a different set would command the wrong rate.
+/// The components register in the order they run within an instant:
+/// radar, controller, physics. So the scan reaches the controller and the
+/// command reaches the physics in the instant each was made.
 fn add_car<T: Transport>(
     conductor: &mut Conductor<T>,
     actor_name: &str,
+    car_config: CarConfiguration,
     start_s: f64,
     lane_offset: f64,
     speed: f64,
     first_due: SimTime,
-) -> Result<(), ConductorError> {
-    // A lane is the lateral offset the controller holds, not geometry of
-    // its own, so both components of every car work off the one road.
-    let road = shared_road();
-    let initial_pose = road_pose(&road, start_s, lane_offset);
-    let components: [Box<dyn Component>; 2] = [
-        Box::new(PathFollowController::new(
-            actor_name,
-            road.clone(),
-            lane_offset,
-            SimDuration::from_millis(100),
-            6.0,                     // lookahead, m
-            1.5,                     // heading gain, 1/s
-            CAR_LIMITS.yaw_rate_max, // command turns up to the car's limit
-            CAR_LIMITS,
-            initial_pose,
-        )),
-        Box::new(UnicyclePhysics::new(
-            actor_name,
-            SimDuration::from_millis(10),
-            CAR_LIMITS,
-            CarState::new(initial_pose, speed),
-        )),
-    ];
+) -> Result<(), ScenarioError> {
+    let initial_state = CarState::new(road_pose(&shared_road(), start_s, lane_offset), speed);
+    let world_name = conductor.world_name();
+
+    let components = match car_config {
+        CarConfiguration::ConstantSpeed => vec![
+            native_controller_component(actor_name, lane_offset, initial_state),
+            physics_component(actor_name, initial_state),
+        ],
+        CarConfiguration::IdmFollowing => vec![
+            radar_component(actor_name),
+            fmu_controller_component(world_name, actor_name, lane_offset, initial_state)?,
+            physics_component(actor_name, initial_state),
+        ],
+    };
     for component in components {
         conductor.add_component(JoinMetadata::at(actor_name, first_due), component)?;
     }
 
     // Return success; the car is registered.
     Ok(())
+}
+
+/// A car's radar, scanning its own lane ahead.
+fn radar_component(actor_name: &str) -> Box<dyn Component> {
+    Box::new(RadarSensor::new(
+        actor_name,
+        shared_road(),
+        CONTROL_PERIOD,
+        RADAR_MAX_RANGE,
+        RADAR_LANE_TOLERANCE,
+    ))
+}
+
+/// A car's native controller, steering along its lane and commanding no
+/// acceleration.
+fn native_controller_component(
+    actor_name: &str,
+    lane_offset: f64,
+    initial_state: CarState,
+) -> Box<dyn Component> {
+    Box::new(PathFollowController::new(
+        actor_name,
+        shared_road(),
+        lane_offset,
+        CONTROL_PERIOD,
+        6.0,                     // lookahead, m
+        1.5,                     // heading gain, 1/s
+        CAR_LIMITS.yaw_rate_max, // command turns up to the car's limit
+        CAR_LIMITS,
+        initial_state.pose(),
+    ))
+}
+
+/// A car's controller FMU, run from the `.fmu` that
+/// `cargo xtask package-fmus` builds and
+/// [`continuo_fmu_controller_idm::packaged_fmu_path`] finds.
+fn fmu_controller_component(
+    world_name: &str,
+    actor_name: &str,
+    lane_offset: f64,
+    initial_state: CarState,
+) -> Result<Box<dyn Component>, ScenarioError> {
+    let mapping = controller_fmu_mapping(world_name, actor_name, lane_offset, initial_state);
+    let controller = FmuComponent::new(
+        "controller",
+        continuo_fmu_controller_idm::packaged_fmu_path()?,
+        mapping,
+    )
+    .map_err(|source| ScenarioError::Controller {
+        actor_name: actor_name.to_string(),
+        source,
+    })?;
+
+    // Return the controller, ready to join.
+    Ok(Box::new(controller))
+}
+
+/// A car's physics, which owns its state and starts from `initial_state`.
+fn physics_component(actor_name: &str, initial_state: CarState) -> Box<dyn Component> {
+    Box::new(UnicyclePhysics::new(
+        actor_name,
+        PHYSICS_PERIOD,
+        CAR_LIMITS,
+        initial_state,
+    ))
+}
+
+/// Wires one following car's controller FMU into the world: the car's pose
+/// and radar scan in, its two commands out on the plant's keys, and the
+/// road, tunings and plant limits set once as parameters.
+///
+/// Radar slots past the cars detected read as [`FREE_ROAD`]. The pose
+/// inputs start at `initial_state`, since the controller steps once before
+/// the physics has published a pose.
+fn controller_fmu_mapping(
+    world_name: &str,
+    actor_name: &str,
+    lane_offset: f64,
+    initial_state: CarState,
+) -> FmuMapping {
+    let road = shared_road();
+    let mut road_pts_x = vec![0.0; continuo_fmu_controller_idm::MAX_WAYPOINTS];
+    let mut road_pts_y = vec![0.0; continuo_fmu_controller_idm::MAX_WAYPOINTS];
+    for (slot, &(x, y)) in road.points().iter().enumerate() {
+        road_pts_x[slot] = x;
+        road_pts_y[slot] = y;
+    }
+    let pursuit = PurePursuitParams::highway_car(lane_offset);
+    let idm = IdmParams::highway_car(initial_state.speed);
+
+    let pose_msg_key = pose_key(world_name, actor_name);
+    let radar_msg_key = radar_key(world_name, actor_name);
+    let inputs = vec![
+        InputBinding::new("position.x", pose_msg_key.clone()),
+        InputBinding::new("position.y", pose_msg_key.clone()),
+        InputBinding::new("orientation.w", pose_msg_key.clone()),
+        InputBinding::new("orientation.x", pose_msg_key.clone()),
+        InputBinding::new("orientation.y", pose_msg_key.clone()),
+        InputBinding::new("orientation.z", pose_msg_key.clone()),
+        InputBinding::new("speed", pose_msg_key),
+        InputBinding::new("range", radar_msg_key.clone())
+            .with_pointer("/detections/*/range")
+            .when_missing(json!(FREE_ROAD.range)),
+        InputBinding::new("range_rate", radar_msg_key)
+            .with_pointer("/detections/*/range_rate")
+            .when_missing(json!(FREE_ROAD.range_rate)),
+    ];
+    let outputs = vec![
+        OutputBinding::new("accel_cmd", accel_cmd_key(world_name, actor_name)),
+        OutputBinding::new("steer_cmd", steer_cmd_key(world_name, actor_name)),
+    ];
+    let parameters = [
+        ("road.pts_x", json!(road_pts_x)),
+        ("road.pts_y", json!(road_pts_y)),
+        ("road.point_count", json!(road.points().len())),
+        ("road.closed", json!(road.is_closed())),
+        ("pure_pursuit.lateral_tgt", json!(pursuit.lateral_tgt)),
+        ("pure_pursuit.lookahead", json!(pursuit.lookahead)),
+        ("pure_pursuit.gain_yaw_rate", json!(pursuit.gain_yaw_rate)),
+        ("pure_pursuit.max_yaw_rate", json!(pursuit.max_yaw_rate)),
+        ("idm.v0_speed_tgt", json!(idm.v0_speed_tgt)),
+        ("idm.t_headway", json!(idm.t_headway)),
+        ("idm.s0_gap_min", json!(idm.s0_gap_min)),
+        ("idm.a_accel_max", json!(idm.a_accel_max)),
+        ("idm.b_decel_comfort", json!(idm.b_decel_comfort)),
+        ("plant.accel_max", json!(CAR_LIMITS.accel_max)),
+        ("plant.decel_max", json!(CAR_LIMITS.decel_max)),
+        ("plant.yaw_rate_max", json!(CAR_LIMITS.yaw_rate_max)),
+    ];
+    let starting_inputs = [
+        ("position.x", json!(initial_state.position.x)),
+        ("position.y", json!(initial_state.position.y)),
+        ("orientation.w", json!(initial_state.orientation.w)),
+        ("orientation.x", json!(initial_state.orientation.x)),
+        ("orientation.y", json!(initial_state.orientation.y)),
+        ("orientation.z", json!(initial_state.orientation.z)),
+        ("speed", json!(initial_state.speed)),
+    ];
+
+    // Return the sheet. It is data rather than code, so a scenario file
+    // could carry it once scenarios come from files.
+    FmuMapping {
+        period: CONTROL_PERIOD,
+        inputs,
+        outputs,
+        initial_values: parameters
+            .into_iter()
+            .chain(starting_inputs)
+            .map(|(name, value)| (name.to_string(), value))
+            .collect(),
+    }
 }
 
 /// Registers the ego with the initial conditions given: starting `start_s`
@@ -179,11 +363,12 @@ fn add_ego<T: Transport>(
     start_s: f64,
     lane_offset: f64,
     speed: f64,
-) -> Result<(), ConductorError> {
+) -> Result<(), ScenarioError> {
     // Return once the ego is registered.
     add_car(
         conductor,
         EGO_NAME,
+        CarConfiguration::ConstantSpeed,
         start_s,
         lane_offset,
         speed,
@@ -227,7 +412,7 @@ fn add_spawner<T: Transport>(conductor: &mut Conductor<T>) -> Result<(), Conduct
 /// spawner, and cars played back from a log rather than chosen.
 pub fn setup_live_traffic_scenario<T: Transport>(
     conductor: &mut Conductor<T>,
-) -> Result<(), ConductorError> {
+) -> Result<(), ScenarioError> {
     add_ego(conductor, EGO_START, EGO_LANE, EGO_SPEED)?;
     add_spawner(conductor)?;
     add_logger(conductor)?;
@@ -272,7 +457,7 @@ pub fn setup_scale_scenario<T: Transport>(
     conductor: &mut Conductor<T>,
     cars: usize,
     lanes: usize,
-) -> Result<(), ConductorError> {
+) -> Result<(), ScenarioError> {
     assert!(lanes > 0, "a world needs at least one lane");
 
     for index in 0..cars {
@@ -282,6 +467,7 @@ pub fn setup_scale_scenario<T: Transport>(
         add_car(
             conductor,
             &format!("car{index}"),
+            CarConfiguration::ConstantSpeed,
             start_s,
             lane_offset,
             speed,
@@ -310,7 +496,7 @@ pub fn setup_playback_traffic_scenario<T: Transport>(
     conductor: &mut Conductor<T>,
     recorded: &EventLog,
     ego_speed: f64,
-) -> Result<usize, ConductorError> {
+) -> Result<usize, ScenarioError> {
     add_ego(conductor, EGO_START, EGO_LANE, ego_speed)?;
 
     // Every playback double is registered now, even though most of their
@@ -468,7 +654,7 @@ impl TrafficRequestHandler {
     /// calling this would run a different world from the recorded one, so
     /// the only way to drive this scenario is
     /// [`run_live_traffic_scenario`], which cannot forget.
-    fn apply<T: Transport>(&self, conductor: &mut Conductor<T>) -> Result<(), ConductorError> {
+    fn apply<T: Transport>(&self, conductor: &mut Conductor<T>) -> Result<(), ScenarioError> {
         // Before anything is applied, since a request that could not be read
         // means the collected ones are an incomplete account of what the sim
         // asked for.
@@ -478,7 +664,7 @@ impl TrafficRequestHandler {
             .expect("request mutex is never poisoned")
             .take()
         {
-            return Err(ConductorError::Core(error));
+            return Err(ConductorError::Core(error).into());
         }
 
         let collected = std::mem::take(
@@ -492,6 +678,7 @@ impl TrafficRequestHandler {
                 Request::Spawn(spawn) => add_car(
                     conductor,
                     &spawn.actor_name,
+                    CarConfiguration::IdmFollowing,
                     spawn.start_s,
                     spawn.lane_offset,
                     spawn.speed,
@@ -504,7 +691,7 @@ impl TrafficRequestHandler {
                 Request::Despawn(despawn) => {
                     match conductor.remove_component_now(&despawn.actor_name) {
                         Ok(()) | Err(ConductorError::UnknownPath(_)) => {}
-                        Err(other) => return Err(other),
+                        Err(other) => return Err(other.into()),
                     }
                 }
             }
@@ -542,7 +729,7 @@ pub fn run_live_traffic_scenario<T: Transport>(
     traffic_request_handler: &TrafficRequestHandler,
     end: SimTime,
     verifier: Option<&Verifier>,
-) -> Result<(), ConductorError> {
+) -> Result<(), ScenarioError> {
     // Once diverged, every later event is compared against a log the run
     // has already left behind, so the first difference is the only one
     // worth reporting.

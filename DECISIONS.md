@@ -1515,3 +1515,38 @@ it got there, including the roads not taken.
     that makes a rerun fail the same way until the fix. CI now fetches the
     dependency crates with the lock held before its first build, so a
     stale lock fails the job at the cause.
+
+- **2026-10-12**: **Traffic drives on the controller FMU, and the world
+  hash moved for it.** Every car the spawner asks for is now `[radar,
+  controller, physics]`, the controller being the packaged FMU, so it
+  follows the car ahead in its lane and wants its spawn speed back on a
+  free road. The ego and `traffic_scale`'s cars stay at constant speed on
+  the native controller: the ego until it shares a lane with traffic, and
+  the scaling run because it measures the conductor.
+  - **What joined the fingerprint**: `eccd08f9a316bbbc` to
+    `580e8d37b14c6abd`, for every traffic car's scans and acceleration
+    commands and the poses they changed. The ego's poses and the turnover
+    did not move.
+  - **One spawn state feeds both halves of a car.** The controller steps
+    before the physics has published, so the FMU's pose inputs start at
+    the state the physics is built from.
+  - **The FMU's parameters are grouped by dotted name**: `road.*`,
+    `pure_pursuit.*`, `idm.*` and `plant.*`, FMI's structured naming.
+  - **`cargo xtask verify` packages the FMUs before testing**, since the
+    tests and the demo cannot start without a package, and an edited law
+    would otherwise pass locally on a stale copy. Validation and the
+    comparison with the laws stay in `verify-fmus`.
+  - **The examples drop an FMU's per-call `trace` logging.** Turning
+    logging off would silence the FMU's errors too, so the filter matches
+    the `trace` target and the `fmu` module path `fmi` gives an FMU's log.
+  - **Joining costs about 70 ms a car on Windows, measured and
+    deferred.** `fmi` 0.8 loads a fresh copy of the DLL for each instance.
+    PLAN.md's deferred list carries the fix.
+  - **An FMU step takes 46 us, against the native controller's 1.7 us.**
+    That is the cost of running the controller behind the FMI boundary,
+    and it is left as it is: stepping the demo takes 0.29 s, well under
+    the 1.08 s its joins cost.
+  - **The spawner can place a car right beside one already there**, with
+    the fix deferred to the milestone's ego-lane change PR. Its frontier
+    is where it last spawned, but cars drive on after spawning. The fix is
+    to measure from the furthest car the spawner can see in that lane.

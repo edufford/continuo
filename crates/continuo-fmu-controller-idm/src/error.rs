@@ -20,7 +20,7 @@ use crate::package_fmu::{FMU_DIRECTORY, FMU_FILE_NAME};
 /// a log line rather than anything structured.
 #[derive(Debug, Clone, Copy, PartialEq, thiserror::Error)]
 pub(crate) enum BadInput {
-    #[error("road_point_count is {given}, and {kind} roads need {least} to {MAX_WAYPOINTS}")]
+    #[error("road.point_count is {given}, and {kind} roads need {least} to {MAX_WAYPOINTS}")]
     PointCount {
         given: usize,
         least: usize,

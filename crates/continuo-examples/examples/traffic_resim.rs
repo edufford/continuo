@@ -29,10 +29,7 @@ use continuo_transport::InProcTransport;
 const WHAT_IF_EGO_SPEED: f64 = 36.0;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
-        .with_target(false)
-        .init();
+    continuo_examples::init_logging();
 
     let file = std::env::args()
         .nth(1)

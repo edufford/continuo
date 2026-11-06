@@ -1,11 +1,12 @@
-//! The checks a change reaching an FMU crate needs, which `verify` leaves out.
+//! The checks a change reaching an FMU crate needs on top of `verify`.
 //!
-//! A `.fmu` carries its own compiled copy of everything it links, so the
-//! tests against it read whatever was packaged last, and a law edited
-//! without packaging again leaves the two disagreeing while
-//! `cargo test --workspace` stays green. Packaging costs a release build of
-//! the FMU crate, which is why it does not belong in a check meant to sit in
-//! an editing loop and does belong here.
+//! A `.fmu` carries its own compiled copy of everything it links. `verify`
+//! packages them, since the demo drives on one, but nothing there asks
+//! whether an archive is a valid FMU or whether its copy of the laws
+//! answers as the laws do here. This does both: it validates each package
+//! with fmpy, then runs the tests that compare a package with its laws.
+//! Those sit behind a feature, and asking for it rebuilds much of the
+//! graph, which is the cost that keeps them out of an editing loop.
 //!
 //! The tests ask for the one feature they sit behind rather than for all of
 //! them, because this task is about the FMUs. Asking for all of
