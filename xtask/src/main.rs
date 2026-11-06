@@ -44,31 +44,30 @@ fn main() -> ExitCode {
 /// `rustup run` or a `+toolchain` argument is the one used throughout
 /// rather than being swapped halfway.
 ///
-/// It runs without the variables `cargo run` set for this binary, which
-/// describe `xtask` rather than anything the task builds, so a task builds
-/// exactly as the same command typed directly. A build script tracking one,
-/// as `ring`'s tracks `CARGO_MANIFEST_DIR` and `CARGO_PKG_NAME`, would
-/// otherwise rerun at every switch between the two and rebuild every crate
-/// above it.
+/// The env variables `cargo run` sets to describe `xtask`, such as
+/// `CARGO_MANIFEST_DIR` and `CARGO_PKG_NAME`, are removed from this
+/// command's environment, so the cargo it starts sees what a cargo command
+/// typed in the shell would. xtask's own environment and the shell's are
+/// left alone, and cargo sets these again for each crate it builds.
+/// `ring`'s build script tracks those two, so passing them on would rebuild
+/// `ring` and `zenoh` above it each time a task and a direct cargo command
+/// take turns.
 pub fn cargo() -> Command {
     let mut command = Command::new(cargo_path());
-    for (name, _) in std::env::vars_os() {
-        if name.to_str().is_some_and(set_by_cargo_run) {
-            command.env_remove(name);
+    for (env_var_name, _) in std::env::vars_os() {
+        if env_var_name.to_str().is_some_and(set_by_cargo_run) {
+            command.env_remove(env_var_name);
         }
     }
     command
 }
 
-/// Whether `cargo run` sets the variable `name` for the binary it runs, to
-/// describe that binary's own package.
-///
-/// `CARGO` is not one of them: it names the cargo to run, which is the
-/// point of [`cargo`].
-fn set_by_cargo_run(name: &str) -> bool {
-    name.starts_with("CARGO_PKG_")
+/// Whether `env_var_name` is an env variable `cargo run` sets to describe
+/// the package it runs.
+fn set_by_cargo_run(env_var_name: &str) -> bool {
+    env_var_name.starts_with("CARGO_PKG_")
         || matches!(
-            name,
+            env_var_name,
             "CARGO_MANIFEST_DIR" | "CARGO_MANIFEST_PATH" | "CARGO_CRATE_NAME" | "CARGO_BIN_NAME"
         )
 }
