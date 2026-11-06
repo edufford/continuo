@@ -43,11 +43,37 @@ fn main() -> ExitCode {
 /// `CARGO` is set for anything cargo runs, so a toolchain chosen by
 /// `rustup run` or a `+toolchain` argument is the one used throughout
 /// rather than being swapped halfway.
+///
+/// It runs without the variables `cargo run` set for this binary, which
+/// describe `xtask` rather than anything the task builds, so a task builds
+/// exactly as the same command typed directly. A build script tracking one,
+/// as `ring`'s tracks `CARGO_MANIFEST_DIR` and `CARGO_PKG_NAME`, would
+/// otherwise rerun at every switch between the two and rebuild every crate
+/// above it.
 pub fn cargo() -> Command {
-    Command::new(cargo_path())
+    let mut command = Command::new(cargo_path());
+    for (name, _) in std::env::vars_os() {
+        if name.to_str().is_some_and(set_by_cargo_run) {
+            command.env_remove(name);
+        }
+    }
+    command
 }
 
-/// The path [`cargo`] runs, for a caller building its own [`Command`].
-pub fn cargo_path() -> String {
+/// Whether `cargo run` sets the variable `name` for the binary it runs, to
+/// describe that binary's own package.
+///
+/// `CARGO` is not one of them: it names the cargo to run, which is the
+/// point of [`cargo`].
+fn set_by_cargo_run(name: &str) -> bool {
+    name.starts_with("CARGO_PKG_")
+        || matches!(
+            name,
+            "CARGO_MANIFEST_DIR" | "CARGO_MANIFEST_PATH" | "CARGO_CRATE_NAME" | "CARGO_BIN_NAME"
+        )
+}
+
+/// The path [`cargo`] runs.
+fn cargo_path() -> String {
     std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string())
 }
