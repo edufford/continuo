@@ -132,10 +132,6 @@ Requires a recent stable Rust toolchain (edition 2024, rust ≥ 1.85) and
 libclang, the workspace's only native-code prerequisite. See
 [Installing libclang](#installing-libclang) below.
 
-The demo's traffic drives on a controller packaged as an FMU, so the tests
-and the demo need that package built first, and built again after a control
-law changes. `cargo xtask verify` does it every time.
-
 ```sh
 # Once, for the packaging subcommand
 cargo install cargo-fmi

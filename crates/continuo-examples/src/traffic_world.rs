@@ -87,9 +87,7 @@ const CAR_LIMITS: PlantLimits = PlantLimits::highway_car();
 const CONTROL_PERIOD: SimDuration = SimDuration::from_millis(100);
 const PHYSICS_PERIOD: SimDuration = SimDuration::from_millis(10);
 
-/// How far ahead a following car's radar sees, in meters. Well past the
-/// gap IDM keeps at highway speed, so a car brakes for a slower one long
-/// before it would have to brake hard.
+/// How far ahead a car's radar sees, in meters.
 const RADAR_MAX_RANGE: f64 = 120.0;
 
 /// Half a lane either side, so a car counts as sharing the radar's lane
@@ -175,8 +173,6 @@ fn add_car<T: Transport>(
     speed: f64,
     first_due: SimTime,
 ) -> Result<(), ScenarioError> {
-    // A lane is the lateral offset the controller holds, not geometry of
-    // its own, so every component of every car works off the one road.
     let initial_state = CarState::new(road_pose(&shared_road(), start_s, lane_offset), speed);
     let world_name = conductor.world_name();
 
