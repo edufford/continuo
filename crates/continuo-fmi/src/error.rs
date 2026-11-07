@@ -165,6 +165,16 @@ pub enum FmuConstructionError {
     NotCoSimulation { model_name: String },
 }
 
+/// A construction error raised while running, such as from a reset, halts
+/// the run with the same message.
+impl From<FmuConstructionError> for CoreError {
+    fn from(error: FmuConstructionError) -> Self {
+        CoreError::ComponentFailure {
+            reason: error.to_string(),
+        }
+    }
+}
+
 /// A failed call into the FMU, named so the halt says which instance and
 /// which call.
 pub(crate) fn step_failure(

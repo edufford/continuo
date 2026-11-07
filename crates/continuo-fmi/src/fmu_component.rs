@@ -288,11 +288,8 @@ impl FmuComponent {
         self.instance
             .reset()
             .map_err(|source| step_failure(&self.id, "", "fmi3Reset", &source))?;
-        self.switch_off_log_categories()
-            .and_then(|()| self.size_by_structural_parameters())
-            .map_err(|error| CoreError::ComponentFailure {
-                reason: error.to_string(),
-            })?;
+        self.switch_off_log_categories()?;
+        self.size_by_structural_parameters()?;
         self.phase = Phase::Uninitialized;
 
         Ok(())
@@ -503,10 +500,7 @@ impl Component for FmuComponent {
                 // The mapping's values first, then the inbox, so a message
                 // arriving at instant zero wins over a start value written
                 // for the case where none does.
-                Self::set_initial_values(&mut self.instance, &self.id, &self.vars_to_initialize)
-                    .map_err(|error| CoreError::ComponentFailure {
-                        reason: error.to_string(),
-                    })?;
+                Self::set_initial_values(&mut self.instance, &self.id, &self.vars_to_initialize)?;
                 self.apply_inbox(ctx.inbox())?;
                 self.instance.exit_initialization_mode().map_err(|source| {
                     step_failure(&self.id, "", "exit_initialization_mode", &source)
