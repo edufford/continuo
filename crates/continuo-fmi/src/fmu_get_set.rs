@@ -14,7 +14,7 @@ use fmi::fmi3::schema::VariableType;
 use serde_json::Value;
 
 use crate::convert;
-use crate::error::{step_failure, unbound_clock};
+use crate::error::{fmi_call_failure, unbound_clock};
 use crate::fmu_variable::{BoundInput, BoundOutput, ResolvedVariable};
 
 /// How much room to give an FMU for one Binary value.
@@ -63,7 +63,7 @@ pub(crate) fn set_values(
             instance
                 .$setter(&references, &converted)
                 .map(|_| ())
-                .map_err(|source| step_failure(id, name, stringify!($setter), &source))
+                .map_err(|source| fmi_call_failure(id, name, stringify!($setter), &source))
         }};
     }
 
@@ -86,7 +86,7 @@ pub(crate) fn set_values(
                 .collect::<Result<Vec<_>, _>>()?;
             instance
                 .set_string(&references, &converted)
-                .map_err(|source| step_failure(id, name, "set_string", &source))
+                .map_err(|source| fmi_call_failure(id, name, "set_string", &source))
         }
         VariableType::FmiBinary => {
             let converted = values
@@ -96,7 +96,7 @@ pub(crate) fn set_values(
             let borrowed: Vec<&[u8]> = converted.iter().map(Vec::as_slice).collect();
             instance
                 .set_binary(&references, &borrowed)
-                .map_err(|source| step_failure(id, name, "set_binary", &source))
+                .map_err(|source| fmi_call_failure(id, name, "set_binary", &source))
         }
         VariableType::FmiClock => Err(unbound_clock(name)),
     }
@@ -121,7 +121,7 @@ pub(crate) fn get_output_var(
             let mut values = vec![$zero; count];
             instance
                 .$getter(&references, &mut values)
-                .map_err(|source| step_failure(id, name, stringify!($getter), &source))?;
+                .map_err(|source| fmi_call_failure(id, name, stringify!($getter), &source))?;
             let converted = values
                 .into_iter()
                 .map(|value| $convert(value, name))
@@ -152,7 +152,7 @@ pub(crate) fn get_output_var(
             let mut values = vec![CString::default(); count];
             instance
                 .get_string(&references, &mut values)
-                .map_err(|source| step_failure(id, name, "get_string", &source))?;
+                .map_err(|source| fmi_call_failure(id, name, "get_string", &source))?;
             let converted = values
                 .iter()
                 .map(|value| convert::from_fmi_string(value, name))
@@ -164,7 +164,7 @@ pub(crate) fn get_output_var(
             let mut slices: Vec<&mut [u8]> = buffers.iter_mut().map(Vec::as_mut_slice).collect();
             let sizes = instance
                 .get_binary(&references, &mut slices)
-                .map_err(|source| step_failure(id, name, "get_binary", &source))?;
+                .map_err(|source| fmi_call_failure(id, name, "get_binary", &source))?;
             // A size of zero is a length rather than a failure: an FMU may
             // hold an empty Binary, which encodes as the empty string and
             // decodes back to no bytes.

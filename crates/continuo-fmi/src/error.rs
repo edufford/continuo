@@ -177,7 +177,7 @@ impl From<FmuConstructionError> for CoreError {
 
 /// A failed call into the FMU, named so the halt says which instance and
 /// which call.
-pub(crate) fn step_failure(
+pub(crate) fn fmi_call_failure(
     id: &ComponentId,
     variable: &str,
     call: &str,

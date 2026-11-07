@@ -13,7 +13,7 @@ use fmi::fmi3::{CoSimulation, Common, Fmi3Model, import::Fmi3Import};
 use fmi::traits::FmiImport;
 use serde_json::Value;
 
-use crate::error::{FmuConstructionError, step_failure};
+use crate::error::{FmuConstructionError, fmi_call_failure};
 use crate::fmu_get_set::{get_output_var, set_input_var, set_values};
 use crate::fmu_mapping::{FmuMapping, insert_at_pointer};
 use crate::fmu_variable::{
@@ -283,7 +283,7 @@ impl FmuComponent {
     pub fn reset(&mut self) -> Result<(), CoreError> {
         self.instance
             .reset()
-            .map_err(|source| step_failure(&self.id, "", "fmi3Reset", &source))?;
+            .map_err(|source| fmi_call_failure(&self.id, "", "fmi3Reset", &source))?;
         self.switch_off_log_categories()?;
         self.size_by_structural_parameters()?;
         self.phase = Phase::Uninitialized;
@@ -490,7 +490,7 @@ impl Component for FmuComponent {
                 self.instance
                     .enter_initialization_mode(None, now.as_secs_f64(), None)
                     .map_err(|source| {
-                        step_failure(&self.id, "", "enter_initialization_mode", &source)
+                        fmi_call_failure(&self.id, "", "enter_initialization_mode", &source)
                     })?;
 
                 // The mapping's values first, then the inbox, so a message
@@ -499,7 +499,7 @@ impl Component for FmuComponent {
                 Self::set_initial_values(&mut self.instance, &self.id, &self.vars_to_initialize)?;
                 self.apply_inbox(ctx.inbox())?;
                 self.instance.exit_initialization_mode().map_err(|source| {
-                    step_failure(&self.id, "", "exit_initialization_mode", &source)
+                    fmi_call_failure(&self.id, "", "exit_initialization_mode", &source)
                 })?;
             }
             Phase::Stepping { last } => {
@@ -523,7 +523,7 @@ impl Component for FmuComponent {
                         &mut early_return,
                         &mut last_successful_time,
                     )
-                    .map_err(|source| step_failure(&self.id, "", "do_step", &source))?;
+                    .map_err(|source| fmi_call_failure(&self.id, "", "do_step", &source))?;
 
                 // An FMU asking to stop is a halt rather than a suggestion.
                 // It happens before any output is read, so a failed step
