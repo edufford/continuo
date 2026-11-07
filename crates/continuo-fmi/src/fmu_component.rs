@@ -175,10 +175,8 @@ impl FmuComponent {
                 id.as_str(),
                 // `visible`: an FMU here has no user to interact with.
                 false,
-                // `logging_on`: every category, since a model's own
-                // diagnostics are the only account of why it refused a call,
-                // and they reach `tracing` through `log`. The mapping's
-                // `log_categories_off` go off straight after.
+                // `logging_on`: on, since the FMU's log says why it refused a
+                // call. The mapping's categories are switched off below.
                 true,
                 // `event_mode_used`: off, so initialization ends in Step Mode
                 // and an FMU handles its own events inside a step. Turning it
@@ -211,9 +209,9 @@ impl FmuComponent {
         component.switch_off_log_categories()?;
         component.size_by_structural_parameters()?;
 
-        // Return a component logging what the mapping wants, sized by its
-        // structural parameters and ready to initialize, which it does on its
-        // first step.
+        // Return a component with its log categories configured, sized by
+        // its structural parameters and ready to initialize, which it does on
+        // its first step.
         Ok(component)
     }
 
@@ -280,10 +278,8 @@ impl FmuComponent {
     /// back at the size its description declares while the bindings still
     /// addressed the size the mapping asked for.
     ///
-    /// The mapping's log categories are switched off again too. FMI has a
-    /// reset FMU be as if newly instantiated, which had every category on,
-    /// and an FMU that kept its settings through the reset is told nothing
-    /// it does not already do.
+    /// It also switches the mapping's log categories off again, since a
+    /// reset FMU logs as if newly instantiated.
     pub fn reset(&mut self) -> Result<(), CoreError> {
         self.instance
             .reset()
@@ -589,10 +585,8 @@ impl Component for FmuComponent {
 /// Checks each log category the mapping names against those the FMU
 /// declares.
 ///
-/// An FMU declaring none is left to refuse a name itself. One built with
-/// `fmi-export` lands there, since it logs under categories its
-/// `modelDescription.xml` never lists, and it does refuse a name it does
-/// not use.
+/// An FMU declaring none, such as one built with `fmi-export`, refuses an
+/// unknown name itself.
 fn check_log_categories(
     description: &Fmi3ModelDescription,
     names: &[String],

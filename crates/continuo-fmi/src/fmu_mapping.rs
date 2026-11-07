@@ -22,22 +22,10 @@ pub struct FmuMapping {
     /// live here, which is what lets one `.fmu` serve every car in a world
     /// with different numbers in each.
     pub initial_values: Vec<(String, Value)>,
-    /// Log categories to switch off once the FMU is instantiated, and `None`
-    /// to leave every category on.
-    ///
-    /// For an FMU whose log is mostly noise to this host, such as one built
-    /// with `fmi-export`, which logs every call it receives under `trace`.
-    /// Switching all logging off would silence the FMU's errors too, which
-    /// travel the same way and are the only account of why it refused a
-    /// call, so this names the categories to drop.
-    ///
-    /// A name the FMU does not know fails construction. An empty list is the
-    /// same as `None`, since FMI reads zero categories as all of them.
-    ///
-    /// ```json5
-    /// // Left out, every category stays on.
-    /// log_categories_off: ["trace"],
-    /// ```
+    /// Log categories to switch off once the FMU is instantiated, such as
+    /// `trace` for one built with `fmi-export`. `None` or an empty list
+    /// leaves every category on, and a name the FMU does not know fails
+    /// construction.
     pub log_categories_off: Option<Vec<String>>,
 }
 

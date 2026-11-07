@@ -15,9 +15,6 @@ pub mod traffic_world;
 use tracing_subscriber::filter::LevelFilter;
 
 /// Sends the examples' log to standard output at `INFO`.
-///
-/// A controller FMU's per-call trace never reaches it, since each car's
-/// mapping switches that category off at the FMU.
 pub fn init_logging() {
     tracing_subscriber::fmt()
         .with_target(false)
