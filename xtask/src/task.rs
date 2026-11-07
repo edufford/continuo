@@ -110,11 +110,11 @@ pub(crate) fn run_command(
 ) -> Result<usize, String> {
     // A first word of `cargo` is the cargo that invoked this, so a toolchain
     // chosen by `+toolchain` holds for everything a task runs.
-    let mut command = Command::new(if argv[0] == "cargo" {
-        crate::cargo_path()
+    let mut command = if argv[0] == "cargo" {
+        crate::cargo()
     } else {
-        argv[0].to_string()
-    });
+        Command::new(argv[0])
+    };
     command
         .args(&argv[1..])
         .current_dir(dir)

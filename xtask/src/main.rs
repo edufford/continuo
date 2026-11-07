@@ -43,11 +43,36 @@ fn main() -> ExitCode {
 /// `CARGO` is set for anything cargo runs, so a toolchain chosen by
 /// `rustup run` or a `+toolchain` argument is the one used throughout
 /// rather than being swapped halfway.
+///
+/// The env variables `cargo run` sets to describe `xtask`, such as
+/// `CARGO_MANIFEST_DIR` and `CARGO_PKG_NAME`, are removed from this
+/// command's environment, so the cargo it starts sees what a cargo command
+/// typed in the shell would. xtask's own environment and the shell's are
+/// left alone, and cargo sets these again for each crate it builds.
+/// `ring`'s build script tracks those two, so passing them on would rebuild
+/// `ring` and `zenoh` above it each time a task and a direct cargo command
+/// take turns.
 pub fn cargo() -> Command {
-    Command::new(cargo_path())
+    let mut command = Command::new(cargo_path());
+    for (env_var_name, _) in std::env::vars_os() {
+        if env_var_name.to_str().is_some_and(set_by_cargo_run) {
+            command.env_remove(env_var_name);
+        }
+    }
+    command
 }
 
-/// The path [`cargo`] runs, for a caller building its own [`Command`].
-pub fn cargo_path() -> String {
+/// Whether `env_var_name` is an env variable `cargo run` sets to describe
+/// the package it runs.
+fn set_by_cargo_run(env_var_name: &str) -> bool {
+    env_var_name.starts_with("CARGO_PKG_")
+        || matches!(
+            env_var_name,
+            "CARGO_MANIFEST_DIR" | "CARGO_MANIFEST_PATH" | "CARGO_CRATE_NAME" | "CARGO_BIN_NAME"
+        )
+}
+
+/// The path [`cargo`] runs.
+fn cargo_path() -> String {
     std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string())
 }
