@@ -586,12 +586,6 @@ impl Component for FmuComponent {
     }
 }
 
-/// Fails unless the mapping's period lands on the FMU's own step size.
-///
-/// An FMU declaring `fixedInternalStepSize` advances internally in steps of
-/// that size whatever it is asked for, so a period that is not a whole number
-/// of them reads values from an instant other than the one the caller means.
-/// Better to say so than to run a world quietly a fraction of a step out.
 /// Checks each log category the mapping names against those the FMU
 /// declares.
 ///
@@ -612,6 +606,8 @@ fn check_log_categories(
     if declared.is_empty() {
         return Ok(());
     }
+
+    // Return the first name the FMU does not declare as the failure.
     match names.iter().find(|name| !declared.contains(name)) {
         Some(category) => Err(FmuConstructionError::UnknownLogCategory {
             category: category.clone(),
@@ -621,6 +617,12 @@ fn check_log_categories(
     }
 }
 
+/// Fails unless the mapping's period lands on the FMU's own step size.
+///
+/// An FMU declaring `fixedInternalStepSize` advances internally in steps of
+/// that size whatever it is asked for, so a period that is not a whole number
+/// of them reads values from an instant other than the one the caller means.
+/// Better to say so than to run a world quietly a fraction of a step out.
 fn check_period(
     period: SimDuration,
     fixed_internal_step_size: f64,
