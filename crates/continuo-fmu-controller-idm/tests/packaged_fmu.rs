@@ -238,6 +238,7 @@ fn controller_fmu_mapping(
             ("plant.decel_max".to_string(), json!(LIMITS.decel_max)),
             ("plant.yaw_rate_max".to_string(), json!(LIMITS.yaw_rate_max)),
         ],
+        log_categories_off: None,
     }
 }
 
