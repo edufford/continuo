@@ -46,9 +46,19 @@ pub struct Collision {
 /// Candidate pairs come from a grid of cells as wide as the furthest two
 /// touching cars can be apart, so a check costs the cars present rather
 /// than every pair of them, and runs only when something has changed since
-/// the last one. A pair compares each car's latest pose whatever instant it
-/// was published at. Cars here publish every 10 ms, which at 30 m/s puts
-/// two poses up to 0.3 m out of step, against a car 4.5 m long.
+/// the last one.
+///
+/// Each check is a snapshot, comparing every car's latest pose. In the demo
+/// every car's physics publishes on one 10 ms grid, so those poses share an
+/// instant; a car on another period would be compared up to one of its
+/// periods out of step. A snapshot also misses two cars passing through
+/// each other between poses, which side-on means crossing two car widths in
+/// one period: about 360 m/s at 10 ms.
+// TODO(M7): poses from a remote host may arrive less often or late, which
+// shrinks both of those margins. Dead reckoning, moving each latest pose to
+// the check's instant along its own speed and heading, would line the poses
+// up but still test a snapshot. A swept test, keeping each car's previous
+// pose and checking the motion between the two, would cover both cases.
 #[derive(Clone)]
 pub struct CollisionMonitor {
     watch: Arc<Mutex<Watch>>,
