@@ -208,14 +208,16 @@ fn a_period_that_is_not_a_multiple_of_the_fixed_internal_step_size_fails() {
 }
 
 #[test]
-fn a_log_category_the_fmu_declares_switches_off_at_construction_and_after_a_reset() {
+fn switching_off_a_declared_log_category_is_accepted_at_construction_and_after_a_reset() {
+    // The FMU accepting the call is what this checks. Feedthrough logs
+    // nothing under `logEvents` in these calls, so there is no message to
+    // see go missing.
     let mut mapping = empty_mapping(100);
     mapping.log_categories_off = Some(vec!["logEvents".to_string()]);
 
     let mut fmu = FmuComponent::new("feedthrough", fixture_path("Feedthrough"), mapping)
-        .expect("a declared category switches off");
-    fmu.reset()
-        .expect("the category switches off again after a reset");
+        .expect("the FMU accepts switching off a category it declares");
+    fmu.reset().expect("the FMU accepts it again after a reset");
 }
 
 #[test]
