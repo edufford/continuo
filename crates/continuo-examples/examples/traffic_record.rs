@@ -9,7 +9,7 @@
 
 use continuo_conductor::{Conductor, Recorder};
 use continuo_core::SimTime;
-use continuo_examples::traffic_world::{self, TrafficRequestHandler};
+use continuo_examples::traffic_world::{self, LiveTrafficHandler};
 use continuo_transport::{InProcTransport, MonitorTransport};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -26,10 +26,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // produced it.
     let config = traffic_world::config();
     let recorder = Recorder::new(&config);
-    let traffic_request_handler = TrafficRequestHandler::default();
+    let live_traffic_handler = LiveTrafficHandler::default();
     let mut conductor = Conductor::new(
         config,
-        traffic_request_handler.wrap_transport(MonitorTransport::new(
+        live_traffic_handler.wrap_transport(MonitorTransport::new(
             InProcTransport::new(),
             recorder.message_callback(),
         )),
@@ -40,11 +40,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // today. It is wired anyway: a recorder that taps only some of what the
     // conductor reports writes a log that quietly omits the rest.
     conductor.add_observation_callback(recorder.observation_callback());
-    traffic_world::setup_live_traffic_scenario(&mut conductor)?;
+    traffic_world::setup_live_traffic_scenario(&mut conductor, &live_traffic_handler)?;
 
     traffic_world::run_live_traffic_scenario(
         &mut conductor,
-        &traffic_request_handler,
+        &live_traffic_handler,
         SimTime::from_secs(traffic_world::SIM_SECONDS),
         None,
     )?;

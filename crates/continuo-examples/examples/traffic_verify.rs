@@ -11,7 +11,7 @@
 
 use continuo_conductor::{Conductor, EventLog, Verifier};
 use continuo_core::SimTime;
-use continuo_examples::traffic_world::{self, TrafficRequestHandler};
+use continuo_examples::traffic_world::{self, LiveTrafficHandler};
 use continuo_transport::{InProcTransport, MonitorTransport};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -28,24 +28,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // being replayed.
     let config = traffic_world::config();
     let verifier = Verifier::new(expected, &config);
-    let traffic_request_handler = TrafficRequestHandler::default();
+    let live_traffic_handler = LiveTrafficHandler::default();
     let mut conductor = Conductor::new(
         config,
-        traffic_request_handler.wrap_transport(MonitorTransport::new(
+        live_traffic_handler.wrap_transport(MonitorTransport::new(
             InProcTransport::new(),
             verifier.message_callback(),
         )),
     )?;
     conductor.add_tick_callback(verifier.tick_callback());
     conductor.add_membership_callback(verifier.membership_callback());
-    traffic_world::setup_live_traffic_scenario(&mut conductor)?;
+    traffic_world::setup_live_traffic_scenario(&mut conductor, &live_traffic_handler)?;
 
     // The same driver every other example uses, which is what makes this a
     // re-run rather than a lookalike; the verifier only adds a reason to
     // stop early.
     traffic_world::run_live_traffic_scenario(
         &mut conductor,
-        &traffic_request_handler,
+        &live_traffic_handler,
         SimTime::from_secs(traffic_world::SIM_SECONDS),
         Some(&verifier),
     )?;

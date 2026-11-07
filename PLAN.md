@@ -856,7 +856,7 @@ under "Wire format", rather than churning the fingerprint once apiece.
   once loaded, so every following car stalls the run as it joins. Fourteen
   joins cost 1.08 s of a 1.40 s release demo, and leave `traffic_realtime`
   1.25 s behind real time. Other platforms were not measured.
-  - `TrafficRequestHandler` would open the archive during setup and share
+  - `LiveTrafficHandler` would open the archive during setup and share
     it, so no join loads anything. Instances would then share the DLL's
     statics; this FMU and `fmi-export` hold no mutable ones, by reading
     their source, and the pinned world hash would be the test. An FMU

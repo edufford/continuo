@@ -25,7 +25,12 @@ continuo-fmu-controller-idm = { workspace = true }
 continuo-viz-bridge = { workspace = true, optional = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+
+# proptest checks the collision grid against checking every pair.
+[dev-dependencies]
+proptest = { workspace = true }
 
 [[example]]
 name = "traffic_viz"
