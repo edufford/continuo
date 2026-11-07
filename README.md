@@ -220,9 +220,11 @@ The ego holds the centre lane at 30 m/s; traffic spawns at 16-22 m/s in the
 lanes either side, so the ego spends the run overtaking. Each traffic car
 drives on the controller FMU, following the car ahead in its lane with IDM
 and steering with pure pursuit, so a faster car closes on a slower one and
-settles behind it rather than driving through it. Nothing here yet watches
-for a collision, which is why traffic never shares the ego's lane. A car is
-retired once it falls 60 m behind, and a replacement spawns ahead. Over
+settles behind it rather than driving through it. A collision monitor
+watches every car's footprint: traffic overlapping is logged, and the ego
+overlapping anything stops the run. The ego still holds its speed whatever
+is ahead, which is why traffic never shares its lane. A car is retired
+once it falls 60 m behind, and a replacement spawns ahead. Over
 30 sim-seconds fourteen different cars pass through a world that holds six
 at a time, eight of them retired along the way.
 
