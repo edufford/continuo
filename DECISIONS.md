@@ -1550,3 +1550,14 @@ it got there, including the roads not taken.
     the fix deferred to the milestone's ego-lane change PR. Its frontier
     is where it last spawned, but cars drive on after spawning. The fix is
     to measure from the furthest car the spawner can see in that lane.
+- **2026-11-06**: **Zenoh builds with the TCP transport only.** Its default
+  features add QUIC, TLS, WebSocket and UDP links, compression and
+  authentication, and nothing here uses them: the bridge opens a session
+  with the default config, which finds the viewer by UDP multicast
+  scouting and then links over TCP. Dropping them takes `rustls`, `ring`,
+  `quinn` and about ninety crates out of the workspace, 401 to 310, and a
+  cold `cargo xtask verify` from 245 s to 209 s.
+  - **Milestone 7 adds back what it uses.** Hosts on a real network may
+    want TLS or QUIC, and each is one feature on the workspace dependency.
+  - **The Python viewer is unaffected.** `eclipse-zenoh` is a wheel built
+    with every transport, and it speaks TCP to the bridge as before.

@@ -49,9 +49,10 @@ fn main() -> ExitCode {
 /// command's environment, so the cargo it starts sees what a cargo command
 /// typed in the shell would. xtask's own environment and the shell's are
 /// left alone, and cargo sets these again for each crate it builds.
-/// `ring`'s build script tracks those two, so passing them on would rebuild
-/// `ring` and `zenoh` above it each time a task and a direct cargo command
-/// take turns.
+/// A build script can track them, and passing them on would then rebuild
+/// that crate and everything above it each time a task and a direct cargo
+/// command take turns. `ring`'s does, and Zenoh brings it in with its TLS
+/// and QUIC transports, so adding either back would also add that rebuild.
 pub fn cargo() -> Command {
     let mut command = Command::new(cargo_path());
     for (env_var_name, _) in std::env::vars_os() {

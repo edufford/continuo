@@ -40,7 +40,12 @@ serde_json = { version = "1", features = ["arbitrary_precision", "raw_value"] }
 thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = "0.3"
-zenoh = "1.9"
+# TCP only. Zenoh's defaults add QUIC, TLS, WebSocket and UDP links,
+# compression and authentication, which bring in `rustls`, `ring` and about
+# ninety more crates. A session with the default config still finds its
+# peers by UDP multicast and then links over TCP, which is all a viewer and
+# a world on one machine use.
+zenoh = { version = "1.9", default-features = false, features = ["transport_tcp"] }
 
 # `fmi-export-derive` pulls in `proc-macro-error2`, which re-exports a private
 # `extern crate proc_macro`. rustc will make that an error, and until then it
