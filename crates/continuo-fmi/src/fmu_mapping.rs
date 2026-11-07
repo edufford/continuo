@@ -22,6 +22,11 @@ pub struct FmuMapping {
     /// live here, which is what lets one `.fmu` serve every car in a world
     /// with different numbers in each.
     pub initial_values: Vec<(String, Value)>,
+    /// Log categories to switch off once the FMU is instantiated, such as
+    /// `trace` for one built with `fmi-export`. `None` or an empty list
+    /// leaves every category on, and a name the FMU does not know fails
+    /// construction.
+    pub log_categories_off: Option<Vec<String>>,
 }
 
 /// One FMU input variable and the message elements that feed it.

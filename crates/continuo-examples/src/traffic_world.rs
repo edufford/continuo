@@ -266,7 +266,8 @@ fn physics_component(actor_name: &str, initial_state: CarState) -> Box<dyn Compo
 ///
 /// Radar slots past the cars detected read as [`FREE_ROAD`]. The pose
 /// inputs start at `initial_state`, since the controller steps once before
-/// the physics has published a pose.
+/// the physics has published a pose. Its `trace` category is switched off,
+/// which would otherwise log every call, one line per car per step.
 fn controller_fmu_mapping(
     world_name: &str,
     actor_name: &str,
@@ -343,6 +344,7 @@ fn controller_fmu_mapping(
             .chain(starting_inputs)
             .map(|(name, value)| (name.to_string(), value))
             .collect(),
+        log_categories_off: Some(vec!["trace".to_string()]),
     }
 }
 

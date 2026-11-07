@@ -8,11 +8,12 @@ use continuo_core::{
     Component, ComponentId, CoreError, KeyExpr, Message, SimDuration, SimTime, StepCtx,
 };
 use fmi::fmi3::instance::InstanceCS;
+use fmi::fmi3::schema::Fmi3ModelDescription;
 use fmi::fmi3::{CoSimulation, Common, Fmi3Model, import::Fmi3Import};
 use fmi::traits::FmiImport;
 use serde_json::Value;
 
-use crate::error::{FmuConstructionError, step_failure};
+use crate::error::{FmuConstructionError, fmi_call_failure};
 use crate::fmu_get_set::{get_output_var, set_input_var, set_values};
 use crate::fmu_mapping::{FmuMapping, insert_at_pointer};
 use crate::fmu_variable::{
@@ -47,6 +48,9 @@ pub struct FmuComponent {
     /// Initialization Mode. Kept for the same reason as the structural vars
     /// above.
     vars_to_initialize: Vec<(ResolvedVariable, Value)>,
+    /// Log categories the mapping switches off, empty for none. Kept for the
+    /// same reason, since a reset switches them off again.
+    log_categories_off: Vec<String>,
     /// Where this instance stands in FMI's own state machine, as far as the
     /// two states an adapter with event mode off ever sees.
     phase: Phase,
@@ -105,7 +109,10 @@ impl FmuComponent {
             inputs,
             outputs,
             initial_values,
+            log_categories_off,
         } = mapping;
+        let log_categories_off = log_categories_off.unwrap_or_default();
+        check_log_categories(description, &log_categories_off)?;
 
         // The sizes come first, before any variable is resolved, because a
         // structural parameter the mapping sets decides how many values the
@@ -168,9 +175,8 @@ impl FmuComponent {
                 id.as_str(),
                 // `visible`: an FMU here has no user to interact with.
                 false,
-                // `logging_on`: a model's own diagnostics are the only
-                // account of why it refused a call, and they reach `tracing`
-                // through `log`.
+                // `logging_on`: on, since the FMU's log says why it refused a
+                // call. The mapping's categories are switched off below.
                 true,
                 // `event_mode_used`: off, so initialization ends in Step Mode
                 // and an FMU handles its own events inside a step. Turning it
@@ -197,12 +203,15 @@ impl FmuComponent {
             period,
             structural_vars,
             vars_to_initialize,
+            log_categories_off,
             phase: Phase::Uninitialized,
         };
+        component.switch_off_log_categories()?;
         component.size_by_structural_parameters()?;
 
-        // Return a component sized by its structural parameters and ready to
-        // initialize, which it does on its first step.
+        // Return a component with its log categories configured, sized by
+        // its structural parameters and ready to initialize, which it does on
+        // its first step.
         Ok(component)
     }
 
@@ -234,6 +243,26 @@ impl FmuComponent {
         Ok(())
     }
 
+    /// Switches off the log categories the mapping names.
+    ///
+    /// An empty list makes no call at all, because FMI reads zero categories
+    /// as every one of them, which would silence the FMU's errors as well.
+    fn switch_off_log_categories(&mut self) -> Result<(), FmuConstructionError> {
+        if self.log_categories_off.is_empty() {
+            return Ok(());
+        }
+        let categories: Vec<&str> = self.log_categories_off.iter().map(String::as_str).collect();
+        self.instance
+            .set_debug_logging(false, &categories)
+            .map_err(|source| FmuConstructionError::LogCategories {
+                instance_name: self.id.to_string(),
+                categories: self.log_categories_off.clone(),
+                reason: format!("{source:?}"),
+            })?;
+
+        Ok(())
+    }
+
     /// Puts the FMU back to how it was instantiated, so the next step
     /// initializes it again.
     ///
@@ -248,14 +277,15 @@ impl FmuComponent {
     /// Initialization Mode opens. Without that a reset StateSpace would come
     /// back at the size its description declares while the bindings still
     /// addressed the size the mapping asked for.
+    ///
+    /// It also switches the mapping's log categories off again, since a
+    /// reset FMU logs as if newly instantiated.
     pub fn reset(&mut self) -> Result<(), CoreError> {
         self.instance
             .reset()
-            .map_err(|source| step_failure(&self.id, "", "fmi3Reset", &source))?;
-        self.size_by_structural_parameters()
-            .map_err(|error| CoreError::ComponentFailure {
-                reason: error.to_string(),
-            })?;
+            .map_err(|source| fmi_call_failure(&self.id, "", "fmi3Reset", &source))?;
+        self.switch_off_log_categories()?;
+        self.size_by_structural_parameters()?;
         self.phase = Phase::Uninitialized;
 
         Ok(())
@@ -460,19 +490,16 @@ impl Component for FmuComponent {
                 self.instance
                     .enter_initialization_mode(None, now.as_secs_f64(), None)
                     .map_err(|source| {
-                        step_failure(&self.id, "", "enter_initialization_mode", &source)
+                        fmi_call_failure(&self.id, "", "enter_initialization_mode", &source)
                     })?;
 
                 // The mapping's values first, then the inbox, so a message
                 // arriving at instant zero wins over a start value written
                 // for the case where none does.
-                Self::set_initial_values(&mut self.instance, &self.id, &self.vars_to_initialize)
-                    .map_err(|error| CoreError::ComponentFailure {
-                        reason: error.to_string(),
-                    })?;
+                Self::set_initial_values(&mut self.instance, &self.id, &self.vars_to_initialize)?;
                 self.apply_inbox(ctx.inbox())?;
                 self.instance.exit_initialization_mode().map_err(|source| {
-                    step_failure(&self.id, "", "exit_initialization_mode", &source)
+                    fmi_call_failure(&self.id, "", "exit_initialization_mode", &source)
                 })?;
             }
             Phase::Stepping { last } => {
@@ -496,7 +523,7 @@ impl Component for FmuComponent {
                         &mut early_return,
                         &mut last_successful_time,
                     )
-                    .map_err(|source| step_failure(&self.id, "", "do_step", &source))?;
+                    .map_err(|source| fmi_call_failure(&self.id, "", "do_step", &source))?;
 
                 // An FMU asking to stop is a halt rather than a suggestion.
                 // It happens before any output is read, so a failed step
@@ -552,6 +579,35 @@ impl Component for FmuComponent {
 
         // Return the next instant this FMU is due.
         Ok(now + self.period)
+    }
+}
+
+/// Checks each log category the mapping names against those the FMU
+/// declares.
+///
+/// An FMU declaring none, such as one built with `fmi-export`, refuses an
+/// unknown name itself.
+fn check_log_categories(
+    description: &Fmi3ModelDescription,
+    names: &[String],
+) -> Result<(), FmuConstructionError> {
+    let declared: Vec<String> = description
+        .log_categories
+        .iter()
+        .flat_map(|categories| &categories.categories)
+        .map(|category| category.name.clone())
+        .collect();
+    if declared.is_empty() {
+        return Ok(());
+    }
+
+    // Return the first name the FMU does not declare as the failure.
+    match names.iter().find(|name| !declared.contains(name)) {
+        Some(category) => Err(FmuConstructionError::UnknownLogCategory {
+            category: category.clone(),
+            declared,
+        }),
+        None => Ok(()),
     }
 }
 

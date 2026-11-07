@@ -21,6 +21,7 @@ fn empty_mapping(period_ms: u64) -> FmuMapping {
         inputs: Vec::new(),
         outputs: Vec::new(),
         initial_values: Vec::new(),
+        log_categories_off: None,
     }
 }
 
@@ -204,6 +205,35 @@ fn a_period_that_is_not_a_multiple_of_the_fixed_internal_step_size_fails() {
     };
     assert!(reason.contains("0.03"), "{reason}");
     assert!(reason.contains("0.1"), "{reason}");
+}
+
+#[test]
+fn switching_off_a_declared_log_category_is_accepted_at_construction_and_after_a_reset() {
+    // The FMU accepting the call is what this checks. Feedthrough logs
+    // nothing under `logEvents` in these calls, so there is no message to
+    // see go missing.
+    let mut mapping = empty_mapping(100);
+    mapping.log_categories_off = Some(vec!["logEvents".to_string()]);
+
+    let mut fmu = FmuComponent::new("feedthrough", fixture_path("Feedthrough"), mapping)
+        .expect("the FMU accepts switching off a category it declares");
+    fmu.reset().expect("the FMU accepts it again after a reset");
+}
+
+#[test]
+fn a_log_category_the_fmu_does_not_declare_fails_at_construction_naming_the_alternatives() {
+    // Switching off a name the FMU never logs under would silence nothing,
+    // and the log the mapping meant to quiet would go on arriving with no
+    // account of why.
+    let mut mapping = empty_mapping(100);
+    mapping.log_categories_off = Some(vec!["noSuchCategory".to_string()]);
+
+    let reason = match FmuComponent::new("feedthrough", fixture_path("Feedthrough"), mapping) {
+        Err(error) => error.to_string(),
+        Ok(_) => panic!("an unknown log category should not build"),
+    };
+    assert!(reason.contains("noSuchCategory"), "{reason}");
+    assert!(reason.contains("logEvents"), "{reason}");
 }
 
 #[test]

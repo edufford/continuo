@@ -138,6 +138,26 @@ pub enum FmuConstructionError {
     #[error("initial value for {variable:?}: {reason}")]
     InitialValue { variable: String, reason: String },
 
+    /// The mapping names a log category the FMU does not declare.
+    ///
+    /// Only reported for an FMU that declares some. One that declares none
+    /// is left to refuse the name itself, as [`Self::LogCategories`].
+    #[error("FMU declares no log category {category:?}; it declares {}", declared.join(", "))]
+    UnknownLogCategory {
+        category: String,
+        declared: Vec<String>,
+    },
+
+    /// The FMU refused to switch off the log categories the mapping names.
+    #[error(
+        "instance {instance_name:?} refused to switch off log categories {categories:?}: {reason}"
+    )]
+    LogCategories {
+        instance_name: String,
+        categories: Vec<String>,
+        reason: String,
+    },
+
     /// The FMU ships no co-simulation interface, so it cannot be stepped by a
     /// conductor at all. Model exchange FMUs need a solver, which is a
     /// different thing to build than an adapter.
@@ -145,9 +165,19 @@ pub enum FmuConstructionError {
     NotCoSimulation { model_name: String },
 }
 
+/// A construction error raised while running, such as from a reset, halts
+/// the run with the same message.
+impl From<FmuConstructionError> for CoreError {
+    fn from(error: FmuConstructionError) -> Self {
+        CoreError::ComponentFailure {
+            reason: error.to_string(),
+        }
+    }
+}
+
 /// A failed call into the FMU, named so the halt says which instance and
 /// which call.
-pub(crate) fn step_failure(
+pub(crate) fn fmi_call_failure(
     id: &ComponentId,
     variable: &str,
     call: &str,

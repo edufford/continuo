@@ -1550,6 +1550,30 @@ it got there, including the roads not taken.
     the fix deferred to the milestone's ego-lane change PR. Its frontier
     is where it last spawned, but cars drive on after spawning. The fix is
     to measure from the furthest car the spawner can see in that lane.
+
+- **2026-11-05**: **An FMU mapping names the log categories to switch
+  off.** `FmuMapping::log_categories_off` is applied through
+  `fmi3SetDebugLogging` once the FMU is instantiated, so the FMU never
+  writes those messages and every host is spared them. The traffic
+  world's mapping switches off `trace`, and the examples' log filter is
+  gone. The world hash does not move.
+  - **Named categories, not a level.** FMI gives a message a status
+    rather than a level, and `fmi` logs status OK at `INFO`, which is
+    where `fmi-export` puts its per-call trace alongside everything else
+    an FMU says. `fmi3SetDebugLogging` takes only names, so a level could
+    not reach the FMU either.
+  - **Optional, with an empty list meaning none.** Left out, every
+    category stays on, which is also how a scenario file will read
+    without the key. FMI reads zero categories as all of them, so an
+    empty list makes no call rather than silencing the FMU's errors.
+  - **An unknown name fails construction.** It is checked against the
+    categories `modelDescription.xml` declares, and where it declares
+    none the FMU's own refusal is the check. `fmi-export` lands there,
+    since it logs under `trace` and `logAll` without declaring either.
+  - **A reset switches them off again.** FMI has a reset FMU be as if
+    newly instantiated. `fmi-export` keeps the setting through a reset
+    anyway, so no test sees this.
+
 - **2026-11-06**: **Zenoh builds with the TCP transport only.** Its default
   features add QUIC, TLS, WebSocket and UDP links, compression and
   authentication, and nothing here uses them: the bridge opens a session
