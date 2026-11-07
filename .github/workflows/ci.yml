@@ -49,7 +49,14 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      # Saved only from main. Each platform's cache is over a gigabyte and
+      # GitHub keeps 10 GB a repository, evicting the least recently used,
+      # so a pull request saving its own would push main's out and leave the
+      # next run to build from nothing. A pull request restores main's
+      # instead, and one that changes Cargo.lock builds cold until it merges.
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # Cargo.lock pins every dependency, and some of them are pinned for a
       # reason: libm because a different version is a different fingerprint,
