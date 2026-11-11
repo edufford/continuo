@@ -1596,15 +1596,17 @@ it got there, including the roads not taken.
   is a scenario bug worth stopping for. The demo hash does not move.
   - **Footprints in world coordinates, not lane bands.** Each car is a
     `CAR_LENGTH` by `CAR_WIDTH` rectangle at its pose, tested with the
-    separating axis test. A test on lane offset and distance along the
-    road would assume one road, and miss cars meeting at a merge, a
-    crossing or mid lane change. The heading comes from the quaternion by
-    multiplies and adds, so no transcendental is evaluated. `CAR_WIDTH`
-    joins `CAR_LENGTH` in `continuo-actors`, mirrored in the viewer.
-  - **A grid from the start, checked against every pair.** Cells are as
-    wide as the furthest two touching cars can be apart, so a check costs
-    the cars present rather than every pair of them. A property test runs
-    random moves and leaves and asserts the grid finds exactly what
+    separating axis test, and touching counts: cars that meet with no gap
+    have collided. A test on lane offset and distance along the road would
+    assume one road, and miss cars meeting at a merge, a crossing or mid
+    lane change. The heading comes from the quaternion by multiplies and
+    adds, so no transcendental is evaluated. `CAR_WIDTH` joins `CAR_LENGTH`
+    in `continuo-actors`, mirrored in the viewer.
+  - **A grid from the start, checked against every pair.** Cells are a meter
+    wider than the furthest two touching cars can be apart, so a pair
+    exactly that far apart cannot round into cells two apart, and a check
+    costs the cars present rather than every pair of them. A property test
+    runs random moves and leaves and asserts the grid finds exactly what
     checking every pair finds; halving the cell fails it at once. Rejected:
     checking every pair, which grows with the square of the population; a
     sweep along the road, which assumes one road; a quadtree or KD tree,

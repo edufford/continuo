@@ -1,12 +1,12 @@
-//! Watching a run for cars that overlap.
+//! Watching a run for cars that collide.
 //!
 //! [`CollisionMonitor`] reads every car's pose off the transport the way a
 //! recorder does, so watching changes nothing about the run: no component
 //! steps for it, and nothing it holds reaches the world hash. Each car is a
 //! [`CAR_LENGTH`] by [`CAR_WIDTH`] rectangle at its pose, and two cars
-//! collide when their rectangles overlap. Nothing here asks which road or
-//! lane a car is on, so the check holds on curves, merges and crossings as
-//! well as on the demo's straight road.
+//! collide when their rectangles touch or overlap. Nothing here asks which
+//! road or lane a car is on, so the check holds on curves, merges and
+//! crossings as well as on the demo's straight road.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
@@ -20,12 +20,20 @@ use crate::traffic_world::ScenarioError;
 /// How far each footprint grows, in meters, for a pair already in contact
 /// to count as still touching.
 ///
-/// A pair starts an episode when the footprints overlap and ends it only
-/// once the grown footprints stop overlapping, so two cars hovering at
-/// contact report once rather than on every tick they cross it.
+/// A pair starts an episode when the footprints touch and ends it only once
+/// the grown footprints are apart, so two cars hovering at contact report
+/// once rather than on every tick they cross it.
 const CONTACT_MARGIN: f64 = 0.5;
 
-/// The ego's footprint overlapping another car's.
+/// How much wider a grid cell is than the furthest apart two touching cars
+/// can be, in meters.
+///
+/// A pair exactly that far apart is in contact, and dividing by a cell
+/// exactly that wide could round it two cells apart. Any margin well above
+/// rounding error rules that out, and a meter is plainly enough.
+const CELL_MARGIN: f64 = 1.0;
+
+/// The ego's footprint touching or overlapping another car's.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 #[error("{ego} collided with {other} at sim time {at}")]
 pub struct Collision {
@@ -43,10 +51,10 @@ pub struct Collision {
 /// the ego stops the run with [`ScenarioError::Collision`], since the
 /// demo's claim is that the ego's controller never lets one happen.
 ///
-/// Candidate pairs come from a grid of cells as wide as the furthest two
-/// touching cars can be apart, so a check costs the cars present rather
-/// than every pair of them, and runs only when something has changed since
-/// the last one.
+/// Candidate pairs come from a grid of cells a little wider than the
+/// furthest two touching cars can be apart, so a check costs the cars
+/// present rather than every pair of them, and runs only when something has
+/// changed since the last one.
 ///
 /// Each check is a snapshot, comparing every car's latest pose. In the demo
 /// every car's physics publishes on one 10 ms grid, so those poses share an
@@ -144,7 +152,7 @@ impl CollisionMonitor {
         self.lock().poses_seen
     }
 
-    /// Looks for pairs that started overlapping since the last check.
+    /// Looks for pairs that came into contact since the last check.
     ///
     /// Crate-private for the reason `LiveTrafficHandler::apply` is: the
     /// only loop that drives the live scenario is the one that calls it.
@@ -172,7 +180,7 @@ impl CollisionMonitor {
                 }
                 .into());
             }
-            tracing::warn!(%first, %second, %at, "traffic cars overlap");
+            tracing::warn!(%first, %second, %at, "traffic cars collide");
         }
 
         // Return success; nothing touched the ego.
@@ -195,7 +203,7 @@ fn actor_of(pose_key: &str) -> &str {
         .expect("a pose key names the actor it belongs to")
 }
 
-/// A car's position and heading, as the overlap test wants them.
+/// A car's position and heading, as the contact test wants them.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Footprint {
     /// The center, in world coordinates.
@@ -213,7 +221,7 @@ impl Footprint {
         // quaternion turns a vector with multiplies and adds alone, so no
         // angle is formed and no transcendental is evaluated. Cars here stay
         // level, so the result has length one up to rounding, and dividing
-        // by it keeps the overlap test's half extents in meters.
+        // by it keeps the contact test's half extents in meters.
         let q = state.orientation;
         let x = 1.0 - 2.0 * (q.y * q.y + q.z * q.z);
         let y = 2.0 * (q.x * q.y + q.w * q.z);
@@ -229,14 +237,14 @@ impl Footprint {
     }
 }
 
-/// Whether two footprints overlap once each grows by `margin` on every
-/// side.
+/// Whether two footprints touch or overlap once each grows by `margin` on
+/// every side.
 ///
 /// The separating axis test: two rectangles are apart exactly when, along
 /// one of their four edge directions, the distance between their centers
-/// exceeds the sum of their half extents along it. Edges that only touch
-/// do not count as an overlap.
-fn overlap(a: &Footprint, b: &Footprint, margin: f64) -> bool {
+/// exceeds the sum of their half extents along it. A distance equal to that
+/// sum is touching, and counts: cars that meet with no gap have collided.
+fn touch(a: &Footprint, b: &Footprint, margin: f64) -> bool {
     let half_length = CAR_LENGTH / 2.0 + margin;
     let half_width = CAR_WIDTH / 2.0 + margin;
     let reach = |footprint: &Footprint, axis: (f64, f64)| {
@@ -248,7 +256,7 @@ fn overlap(a: &Footprint, b: &Footprint, margin: f64) -> bool {
 
     // Return whether no axis separates them.
     axes.iter()
-        .all(|&axis| dot(between, axis).abs() < reach(a, axis) + reach(b, axis))
+        .all(|&axis| dot(between, axis).abs() <= reach(a, axis) + reach(b, axis))
 }
 
 fn dot(a: (f64, f64), b: (f64, f64)) -> f64 {
@@ -266,14 +274,14 @@ type Cell = (i64, i64);
 /// The side of a grid cell, in meters.
 ///
 /// The furthest apart two centers can be while their grown footprints still
-/// touch is one grown footprint's diagonal, so two cars that can touch are
-/// always in the same cell or adjacent ones.
+/// touch is one grown footprint's diagonal. With [`CELL_MARGIN`] on top, two
+/// cars that can touch are always in the same cell or adjacent ones.
 fn cell_size() -> f64 {
     let length = CAR_LENGTH + 2.0 * CONTACT_MARGIN;
     let width = CAR_WIDTH + 2.0 * CONTACT_MARGIN;
 
-    // Return the grown footprint's diagonal.
-    (length * length + width * width).sqrt()
+    // Return the grown footprint's diagonal, with the margin added.
+    (length * length + width * width).sqrt() + CELL_MARGIN
 }
 
 /// The cell a center falls in. IEEE 754 rounds a division correctly and
@@ -364,7 +372,7 @@ impl Watch {
             }
         }
 
-        // Return the candidates, ready for the overlap test.
+        // Return the candidates, ready for the contact test.
         pairs
     }
 
@@ -372,7 +380,7 @@ impl Watch {
     /// the pairs whose episode starts now and when each did.
     ///
     /// A pair already in an episode stays in it while its grown footprints
-    /// overlap. A pair that is not starts one when its footprints do.
+    /// touch. A pair that is not starts one when its footprints do.
     fn update_contacts(&mut self) -> Vec<(String, String, SimTime)> {
         let mut still_in_contact = BTreeSet::new();
         let mut started = Vec::new();
@@ -380,10 +388,10 @@ impl Watch {
             let (first, _) = &self.cars[&pair.0];
             let (second, _) = &self.cars[&pair.1];
             if self.in_contact.contains(&pair) {
-                if overlap(first, second, CONTACT_MARGIN) {
+                if touch(first, second, CONTACT_MARGIN) {
                     still_in_contact.insert(pair);
                 }
-            } else if overlap(first, second, 0.0) {
+            } else if touch(first, second, 0.0) {
                 started.push((
                     pair.0.clone(),
                     pair.1.clone(),
@@ -444,38 +452,38 @@ mod tests {
     }
 
     #[test]
-    fn a_car_closing_on_another_in_its_lane_overlaps_only_within_a_car_length() {
+    fn a_car_closing_on_another_in_its_lane_collides_from_bumper_to_bumper() {
+        // Both cars share their long edges' lines, the case a test on edges
+        // crossing gets wrong. Exactly a car length apart they touch end to
+        // end, with no gap, which counts.
         let lead = footprint(10.0, 0.0, EAST);
-        assert!(overlap(
-            &lead,
-            &footprint(10.0 - CAR_LENGTH + 0.1, 0.0, EAST),
-            0.0
-        ));
-        assert!(!overlap(
-            &lead,
-            &footprint(10.0 - CAR_LENGTH - 0.1, 0.0, EAST),
-            0.0
-        ));
+        let behind = |gap: f64| footprint(10.0 - CAR_LENGTH - gap, 0.0, EAST);
+        assert!(touch(&lead, &behind(-0.1), 0.0));
+        assert!(touch(&lead, &behind(0.0), 0.0));
+        assert!(!touch(&lead, &behind(0.1), 0.0));
     }
 
     #[test]
-    fn cars_side_by_side_in_neighboring_lanes_do_not_overlap() {
+    fn cars_side_by_side_in_neighboring_lanes_do_not_collide() {
         // 3.5 m apart center to center, which is less than one car length,
         // so a test on distance alone would call this a collision.
         let left = footprint(0.0, 3.5, EAST);
         let right = footprint(0.0, 0.0, EAST);
-        assert!(!overlap(&left, &right, 0.0));
-        assert!(overlap(&left, &right, CAR_WIDTH));
+        assert!(!touch(&left, &right, 0.0));
+        assert!(touch(&left, &right, CAR_WIDTH));
     }
 
     #[test]
-    fn rectangles_touching_only_at_a_corner_do_not_overlap() {
+    fn rectangles_touching_only_at_a_corner_collide() {
         // Corner to corner exactly. Halving and doubling the extents are
         // exact, so the touch is exact rather than a rounding either way.
         let a = footprint(0.0, 0.0, EAST);
-        let b = footprint(CAR_LENGTH, CAR_WIDTH, EAST);
-        assert!(!overlap(&a, &b, 0.0));
-        assert!(overlap(&a, &b, 0.01));
+        assert!(touch(&a, &footprint(CAR_LENGTH, CAR_WIDTH, EAST), 0.0));
+        assert!(!touch(
+            &a,
+            &footprint(CAR_LENGTH, CAR_WIDTH + 0.01, EAST),
+            0.0
+        ));
     }
 
     #[test]
@@ -485,8 +493,8 @@ mod tests {
         let east = footprint(0.0, 0.0, EAST);
         let north_touching = footprint(0.0, -(CAR_WIDTH / 2.0 + CAR_LENGTH / 2.0) + 0.1, NORTH);
         let north_clear = footprint(0.0, -(CAR_WIDTH / 2.0 + CAR_LENGTH / 2.0) - 0.1, NORTH);
-        assert!(overlap(&east, &north_touching, 0.0));
-        assert!(!overlap(&east, &north_clear, 0.0));
+        assert!(touch(&east, &north_touching, 0.0));
+        assert!(!touch(&east, &north_clear, 0.0));
     }
 
     #[test]
@@ -496,8 +504,8 @@ mod tests {
         // directions see no gap. Its own left edge direction does, which is
         // why the test takes the edge directions of both cars.
         let east = footprint(0.0, 0.0, EAST);
-        assert!(!overlap(&east, &footprint(4.45, 0.0, (1.0, 1.0)), 0.0));
-        assert!(overlap(&east, &footprint(4.3, 0.0, (1.0, 1.0)), 0.0));
+        assert!(!touch(&east, &footprint(4.45, 0.0, (1.0, 1.0)), 0.0));
+        assert!(touch(&east, &footprint(4.3, 0.0, (1.0, 1.0)), 0.0));
     }
 
     #[test]
@@ -536,7 +544,7 @@ mod tests {
         assert!(watch.update_contacts().is_empty());
     }
 
-    /// Every pair whose grown footprints overlap, found by checking each
+    /// Every pair whose grown footprints touch, found by checking each
     /// pair of cars: the answer the grid must reproduce.
     fn every_pair_in_contact(watch: &Watch) -> BTreeSet<(String, String)> {
         let mut pairs = BTreeSet::new();
@@ -545,7 +553,7 @@ mod tests {
                 .cars
                 .range::<String, _>((std::ops::Bound::Excluded(first), std::ops::Bound::Unbounded))
             {
-                if overlap(a, b, CONTACT_MARGIN) {
+                if touch(a, b, CONTACT_MARGIN) {
                     pairs.insert((first.clone(), second.clone()));
                 }
             }
@@ -555,13 +563,13 @@ mod tests {
         pairs
     }
 
-    /// The pairs among the grid's candidates whose grown footprints overlap.
+    /// The pairs among the grid's candidates whose grown footprints touch.
     fn grid_pairs_in_contact(watch: &Watch) -> BTreeSet<(String, String)> {
         watch
             .pairs_in_reach()
             .into_iter()
             .filter(|(first, second)| {
-                overlap(&watch.cars[first].0, &watch.cars[second].0, CONTACT_MARGIN)
+                touch(&watch.cars[first].0, &watch.cars[second].0, CONTACT_MARGIN)
             })
             .collect()
     }
