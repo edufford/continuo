@@ -1587,13 +1587,13 @@ it got there, including the roads not taken.
     with every transport, and it speaks TCP to the bridge as before.
 
 - **2026-11-06**: **Collision detection is a transport monitor that warns
-  for traffic and halts for the ego.** `CollisionMonitor` reads every
-  car's pose off the transport and checks between ticks, outside the sim:
-  the poses are already on the wire, and a component would move the world
-  hash and the schedule. An overlap between two traffic cars is logged
-  once per episode, while one involving the ego stops the run, because the
-  demo's claim is that the ego's controller prevents it, so reaching one
-  is a scenario bug worth stopping for. The demo hash does not move.
+  for traffic and halts for the ego.** `CollisionMonitor` reads every car's
+  pose off the transport and checks between ticks, outside the sim: the
+  poses are already on the wire, and a component would move the world hash
+  and the schedule. An overlap between two traffic cars is logged once per
+  collision episode, while one involving the ego stops the run, because the
+  demo's claim is that the ego's controller prevents it, so reaching one is
+  a scenario bug worth stopping for. The demo hash does not move.
   - **Footprints in world coordinates, not lane bands.** Each car is a
     `CAR_LENGTH` by `CAR_WIDTH` rectangle at its pose, tested with the
     separating axis test, and touching counts: cars that meet with no gap
@@ -1605,20 +1605,19 @@ it got there, including the roads not taken.
   - **A grid from the start, checked against every pair.** The grid finds
     only new contacts, and its cells are about 1.3 m wider than the furthest
     apart two touching cars can be, so rounding cannot file such a pair two
-    cells apart. A pair already in an episode is checked directly rather
-    than through the grid, so whether an episode goes on never depends on
-    the cells its cars are in. A check costs the cars present rather than
-    every pair of them. A property test runs random moves and leaves and
-    asserts the grid finds exactly the touching pairs checking every pair
-    finds; halving the cell fails it at once. Rejected: checking every pair,
-    which grows with the square of the population; a sweep along the road,
-    which assumes one road; a quadtree or KD tree, since every car is one
-    size and moves every tick, so a tree would be rebalanced or rebuilt each
-    tick for nothing.
-  - **An episode ends once the footprints part by a margin.** A pair
-    starts one when its footprints overlap and ends it when footprints
-    grown by 0.5 m stop overlapping, so a pair hovering at contact reports
-    once.
+    cells apart. A pair already in a collision episode is checked directly
+    rather than through the grid, so whether a collision episode goes on
+    never depends on the cells its cars are in. A check costs the cars
+    present rather than every pair of them. A property test runs random
+    moves and leaves and asserts the grid finds exactly the touching pairs
+    checking every pair finds; halving the cell fails it at once. Rejected:
+    checking every pair, which grows with the square of the population; a
+    sweep along the road, which assumes one road; a quadtree or KD tree,
+    since every car is one size and moves every tick, so a tree would be
+    rebalanced or rebuilt each tick for nothing.
+  - **A collision episode ends once the footprints part by a margin.** A
+    pair starts one when its footprints touch and ends it when footprints
+    grown by 0.5 m are apart, so a pair hovering at contact reports once.
   - **One handle carries the requests and the watch.**
     `TrafficRequestHandler` becomes `LiveTrafficHandler`: its transport
     callback feeds both, `setup_live_traffic_scenario` takes it to register

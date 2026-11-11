@@ -20,9 +20,9 @@ use crate::traffic_world::ScenarioError;
 /// How far each footprint grows, in meters, for a pair already in contact
 /// to count as still touching.
 ///
-/// A pair starts an episode when the footprints touch and ends it only once
-/// the grown footprints are apart, so two cars hovering at contact report
-/// once rather than on every tick they cross it.
+/// A pair starts a collision episode when the footprints touch and ends it
+/// only once the grown footprints are apart, so two cars hovering at
+/// contact report once rather than on every tick they cross it.
 const CONTACT_MARGIN: f64 = 0.5;
 
 /// The ego's footprint touching or overlapping another car's.
@@ -38,10 +38,11 @@ pub struct Collision {
 /// Watches every car's pose for an overlap with another car's.
 ///
 /// An overlap between two cars that are not the ego is logged as a warning
-/// once per episode and the run goes on, since traffic overlapping is a
-/// flaw in the scenario rather than in what it tests. An overlap involving
-/// the ego stops the run with [`ScenarioError::Collision`], since the
-/// demo's claim is that the ego's controller never lets one happen.
+/// once per collision episode and the run goes on, since traffic
+/// overlapping is a flaw in the scenario rather than in what it tests. An
+/// overlap involving the ego stops the run with
+/// [`ScenarioError::Collision`], since the demo's claim is that the ego's
+/// controller never lets one happen.
 ///
 /// Candidate pairs come from a grid of cells a little wider than the
 /// furthest two touching cars can be apart, so a check costs the cars
@@ -133,9 +134,10 @@ impl CollisionMonitor {
         }
     }
 
-    /// How many overlap episodes have started, the ego's included.
-    pub fn episodes(&self) -> usize {
-        self.lock().episodes
+    /// How many collisions there have been, the ego's included. A collision
+    /// episode counts once, however long the cars stay in contact.
+    pub fn num_collisions(&self) -> usize {
+        self.lock().num_collisions
     }
 
     /// How many poses the monitor has taken in, which is what shows it was
@@ -298,12 +300,12 @@ struct Watch {
     /// The cars in each occupied cell. An empty cell is removed rather
     /// than kept.
     grid: BTreeMap<Cell, BTreeSet<String>>,
-    /// The pairs in an episode, each named in order.
+    /// The pairs in a collision episode, each named in order.
     in_contact: BTreeSet<(String, String)>,
     /// Whether a pose has arrived or a car has gone since the last check.
     changed: bool,
     poses_seen: usize,
-    episodes: usize,
+    num_collisions: usize,
     /// The first pose that could not be read, held until a check reports
     /// it.
     unreadable_pose: Option<CoreError>,
@@ -325,7 +327,8 @@ impl Watch {
         self.changed = true;
     }
 
-    /// Forgets `actor`, its footprint, its cell and any episode it is in.
+    /// Forgets `actor`, its footprint, its cell and any collision episode
+    /// it is in.
     fn remove(&mut self, actor: &str) {
         if let Some((_, cell)) = self.cars.remove(actor) {
             self.leave_cell(actor, cell);
@@ -370,17 +373,19 @@ impl Watch {
         pairs
     }
 
-    /// Brings the episodes up to date with the latest footprints, returning
-    /// the pairs whose episode starts now and when each did.
+    /// Brings the collision episodes up to date with the latest footprints,
+    /// returning the pairs whose collision episode starts now and when each
+    /// did.
     ///
-    /// A pair already in an episode stays in it while its grown footprints
-    /// touch. Those pairs are checked directly rather than found through the
-    /// grid, so whether an episode goes on never depends on which cells its
-    /// cars are filed in. The grid's candidates are checked only for new
-    /// contacts, which start when the footprints themselves touch.
+    /// A pair already in a collision episode stays in it while its grown
+    /// footprints touch. Those pairs are checked directly rather than found
+    /// through the grid, so whether a collision episode goes on never
+    /// depends on which cells its cars are filed in. The grid's candidates
+    /// are checked only for new contacts, which start when the footprints
+    /// themselves touch.
     fn update_contacts(&mut self) -> Vec<(String, String, SimTime)> {
-        // Every car in an episode is still known, since `remove` ends a
-        // car's episodes when it forgets the car.
+        // Every car in a collision episode is still known, since `remove`
+        // ends a car's collision episodes when it forgets the car.
         let mut still_in_contact: BTreeSet<(String, String)> = self
             .in_contact
             .iter()
@@ -406,9 +411,9 @@ impl Watch {
             }
         }
         self.in_contact = still_in_contact;
-        self.episodes += started.len();
+        self.num_collisions += started.len();
 
-        // Return the episodes that began with this update.
+        // Return the collision episodes that began with this update.
         started
     }
 }
@@ -514,19 +519,20 @@ mod tests {
     }
 
     #[test]
-    fn a_pair_overlapping_twice_without_parting_is_one_episode() {
+    fn a_pair_overlapping_twice_without_parting_is_one_collision_episode() {
         let mut watch = Watch::default();
         watch.place("a", footprint(0.0, 0.0, EAST));
         watch.place("b", footprint(4.0, 0.0, EAST));
         assert_eq!(watch.update_contacts().len(), 1);
 
-        // Just apart, but within the margin: the same episode.
+        // Just apart, but within the margin: the same collision episode.
         watch.place("b", footprint(CAR_LENGTH + 0.2, 0.0, EAST));
         assert!(watch.update_contacts().is_empty());
         watch.place("b", footprint(4.0, 0.0, EAST));
         assert!(watch.update_contacts().is_empty());
 
-        // Apart by more than the margin, then back: a second episode.
+        // Apart by more than the margin, then back: a second collision
+        // episode.
         watch.place(
             "b",
             footprint(CAR_LENGTH + 2.0 * CONTACT_MARGIN + 0.1, 0.0, EAST),
@@ -534,14 +540,14 @@ mod tests {
         assert!(watch.update_contacts().is_empty());
         watch.place("b", footprint(4.0, 0.0, EAST));
         assert_eq!(watch.update_contacts().len(), 1);
-        assert_eq!(watch.episodes, 2);
+        assert_eq!(watch.num_collisions, 2);
     }
 
     #[test]
-    fn an_episode_goes_on_whichever_cells_its_cars_are_filed_in() {
-        // Apart, but within the margin, so the episode goes on. Filing the
-        // second car three cells away by hand takes the pair out of the
-        // grid's candidates, which must not end it.
+    fn a_collision_episode_goes_on_whichever_cells_its_cars_are_filed_in() {
+        // Apart, but within the margin, so the collision episode goes on.
+        // Filing the second car three cells away by hand takes the pair out
+        // of the grid's candidates, which must not end it.
         let mut watch = Watch::default();
         watch.place("a", footprint(0.0, 0.0, EAST));
         watch.place("b", footprint(4.0, 0.0, EAST));
@@ -565,11 +571,11 @@ mod tests {
                 .in_contact
                 .contains(&("a".to_string(), "b".to_string()))
         );
-        assert_eq!(watch.episodes, 1);
+        assert_eq!(watch.num_collisions, 1);
     }
 
     #[test]
-    fn a_car_that_leaves_takes_its_cell_and_its_episodes_with_it() {
+    fn a_car_that_leaves_takes_its_cell_and_its_collision_episodes_with_it() {
         let mut watch = Watch::default();
         watch.place("a", footprint(0.0, 0.0, EAST));
         watch.place("b", footprint(4.0, 0.0, EAST));

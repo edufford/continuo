@@ -108,7 +108,11 @@ fn no_two_cars_overlap_anywhere_in_the_demo() {
     let (_, live_traffic_handler) = record_watched_highway(traffic_world::SIM_SECONDS);
     let collisions = live_traffic_handler.collisions();
     assert!(collisions.poses_seen() > 0, "the monitor watched nothing");
-    assert_eq!(collisions.episodes(), 0, "cars overlapped in the demo");
+    assert_eq!(
+        collisions.num_collisions(),
+        0,
+        "cars overlapped in the demo"
+    );
 }
 
 #[test]

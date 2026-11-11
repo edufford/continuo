@@ -879,7 +879,7 @@ mod tests {
     ];
 
     #[test]
-    fn a_traffic_overlap_warns_once_per_episode_and_does_not_halt() {
+    fn a_traffic_overlap_warns_once_per_collision_episode_and_does_not_halt() {
         // Constant speed is the fixture because it is the physics the FMU
         // took away: nothing brakes, so the overlap is certain. The fast car
         // reaches the slow one at about 4.5 s and is clear of it by 5.5 s.
@@ -892,7 +892,7 @@ mod tests {
             None,
         )
         .expect("traffic overlapping is a warning, not a halt");
-        assert_eq!(live_traffic_handler.collisions().episodes(), 1);
+        assert_eq!(live_traffic_handler.collisions().num_collisions(), 1);
     }
 
     #[test]
@@ -959,7 +959,7 @@ mod tests {
             .expect("the parked car is there to remove");
         run_live_traffic_scenario(&mut conductor, &removed, end, None)
             .expect("a car that has left cannot be hit");
-        assert_eq!(removed.collisions().episodes(), 0);
+        assert_eq!(removed.collisions().num_collisions(), 0);
     }
 
     #[test]
@@ -987,6 +987,6 @@ mod tests {
         // run that was watched rather than one that was not.
         assert_eq!(watched.world_hash(), unwatched.world_hash());
         assert!(live_traffic_handler.collisions().poses_seen() > 0);
-        assert_eq!(live_traffic_handler.collisions().episodes(), 1);
+        assert_eq!(live_traffic_handler.collisions().num_collisions(), 1);
     }
 }
