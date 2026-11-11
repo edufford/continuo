@@ -4,7 +4,8 @@
 //! crate is packaged by this and by CI with no edit anywhere.
 
 use std::io;
-use std::process::Stdio;
+use std::path::PathBuf;
+use std::process::{Command, Stdio};
 
 /// The crate-name prefix an FMU crate carries.
 ///
@@ -16,6 +17,9 @@ const FMU_CRATE_PREFIX: &str = "continuo-fmu-";
 /// What to install when the packaging subcommand is missing.
 const INSTALL_CARGO_FMI: &str = "cargo install cargo-fmi";
 
+/// What rebuilds the packaging subcommand on the active toolchain.
+const REINSTALL_CARGO_FMI: &str = "cargo install cargo-fmi --force";
+
 /// Packages every FMU crate in the workspace.
 pub fn run() -> Result<(), String> {
     let fmu_crates = fmu_crates()?;
@@ -23,6 +27,7 @@ pub fn run() -> Result<(), String> {
         return Err(format!("no {FMU_CRATE_PREFIX}* crate in this workspace"));
     }
     require_cargo_fmi()?;
+    warn_if_cargo_fmi_built_by_another_rustc();
     for name in &fmu_crates {
         println!("packaging {name}");
         package(name)?;
@@ -93,6 +98,93 @@ fn require_cargo_fmi() -> Result<(), String> {
     }
 }
 
+/// Warns when `cargo fmi` was built by a different rustc than the one
+/// about to build the FMU crates, saying how to rebuild it.
+///
+/// cargo-fmi loads the library it packages and calls into it through
+/// Rust's own ABI, taking back a struct describing the model. That ABI is
+/// not stable between compiler versions, so a packager left behind by a
+/// `rustup update` can read garbage out of a library the new compiler
+/// built. It shows up as a crash or an allocation of terabytes, with
+/// nothing in it naming the cause.
+///
+/// A warning rather than an error, since two versions often lay the
+/// struct out alike and packaging then works. Rebuilding cargo-fmi here
+/// would replace a tool on the user's path without asking.
+///
+/// Says nothing when either version cannot be read, since cargo records
+/// which rustc built a binary only for what `cargo install` put there.
+fn warn_if_cargo_fmi_built_by_another_rustc() {
+    let Some(built_by) = cargo_install_record()
+        .as_deref()
+        .and_then(rustc_that_built_cargo_fmi)
+    else {
+        return;
+    };
+    let Some(active) = active_rustc() else {
+        return;
+    };
+    if built_by != active {
+        eprintln!(
+            "warning: `cargo fmi` was built by {built_by}, but this toolchain is \
+             {active}.\n\
+             It reads the library it packages through Rust's ABI, which is not \
+             stable between compiler versions, so packaging may crash.\n\
+             Rebuild it on this toolchain with: {REINSTALL_CARGO_FMI}"
+        );
+    }
+}
+
+/// The record `cargo install` keeps of what it installed and how.
+///
+/// It sits in cargo's home, which is `CARGO_HOME` when that is set and
+/// `.cargo` under the user's home directory otherwise. The home directory
+/// is found the way cargo finds it: `USERPROFILE` on Windows, where cargo
+/// ignores the `HOME` that Git Bash and MSYS2 set, and `HOME` elsewhere.
+fn cargo_install_record() -> Option<String> {
+    let home_var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+    let cargo_home = std::env::var_os("CARGO_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os(home_var).map(|home| PathBuf::from(home).join(".cargo")))?;
+
+    // Return the record, or nothing when cargo has never installed anything.
+    std::fs::read_to_string(cargo_home.join(".crates2.json")).ok()
+}
+
+/// The rustc that built the installed cargo-fmi, as `rustc -V` names it,
+/// read from cargo's install record.
+///
+/// The record keeps the whole of `rustc -vV`, and its first line is what
+/// `rustc -V` prints, so the two compare directly.
+fn rustc_that_built_cargo_fmi(install_record: &str) -> Option<String> {
+    let record: serde_json::Value = serde_json::from_str(install_record).ok()?;
+    let (_, install) = record["installs"]
+        .as_object()?
+        .iter()
+        .find(|(package, _)| package.starts_with("cargo-fmi "))?;
+    let rustc = install["rustc"].as_str()?.lines().next()?;
+
+    // Return the version line alone, which is what the warning shows.
+    Some(rustc.to_string())
+}
+
+/// The rustc that cargo builds with here, as `rustc -V` names it.
+///
+/// Asked from the workspace root, so a toolchain file there chooses it
+/// for this exactly as it does for cargo.
+fn active_rustc() -> Option<String> {
+    let rustc = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
+    let output = Command::new(rustc)
+        .arg("-V")
+        .current_dir(crate::task::workspace_root())
+        .output()
+        .ok()
+        .filter(|output| output.status.success())?;
+
+    // Return the version line, trimmed of the newline that ends it.
+    Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
 /// Packages one FMU crate into `target/fmu`.
 ///
 /// `--release` because the default is the debug profile, and how a
@@ -110,4 +202,35 @@ fn package(name: &str) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::rustc_that_built_cargo_fmi;
+
+    #[test]
+    fn the_rustc_that_built_cargo_fmi_is_read_from_the_install_record() {
+        let record = r#"{"installs": {
+            "ripgrep 14.1.1 (registry+https://github.com/rust-lang/crates.io-index)": {
+                "rustc": "rustc 1.80.0 (051478957 2024-07-21)\nrelease: 1.80.0\n"
+            },
+            "cargo-fmi 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)": {
+                "rustc": "rustc 1.92.0 (ded5c06cf 2025-12-08)\nrelease: 1.92.0\n"
+            }
+        }}"#;
+        assert_eq!(
+            rustc_that_built_cargo_fmi(record).as_deref(),
+            Some("rustc 1.92.0 (ded5c06cf 2025-12-08)")
+        );
+    }
+
+    #[test]
+    fn an_install_record_without_cargo_fmi_names_no_rustc() {
+        let record = r#"{"installs": {
+            "ripgrep 14.1.1 (registry+https://github.com/rust-lang/crates.io-index)": {
+                "rustc": "rustc 1.80.0 (051478957 2024-07-21)\n"
+            }
+        }}"#;
+        assert_eq!(rustc_that_built_cargo_fmi(record), None);
+    }
 }
