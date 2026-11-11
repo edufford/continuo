@@ -1602,16 +1602,19 @@ it got there, including the roads not taken.
     lane change. The heading comes from the quaternion by multiplies and
     adds, so no transcendental is evaluated. `CAR_WIDTH` joins `CAR_LENGTH`
     in `continuo-actors`, mirrored in the viewer.
-  - **A grid from the start, checked against every pair.** Cells are a meter
-    wider than the furthest two touching cars can be apart, so a pair
-    exactly that far apart cannot round into cells two apart, and a check
-    costs the cars present rather than every pair of them. A property test
-    runs random moves and leaves and asserts the grid finds exactly what
-    checking every pair finds; halving the cell fails it at once. Rejected:
-    checking every pair, which grows with the square of the population; a
-    sweep along the road, which assumes one road; a quadtree or KD tree,
-    since every car is one size and moves every tick, so a tree would be
-    rebalanced or rebuilt each tick for nothing.
+  - **A grid from the start, checked against every pair.** The grid finds
+    only new contacts, and its cells are about 1.3 m wider than the furthest
+    apart two touching cars can be, so rounding cannot file such a pair two
+    cells apart. A pair already in an episode is checked directly rather
+    than through the grid, so whether an episode goes on never depends on
+    the cells its cars are in. A check costs the cars present rather than
+    every pair of them. A property test runs random moves and leaves and
+    asserts the grid finds exactly the touching pairs checking every pair
+    finds; halving the cell fails it at once. Rejected: checking every pair,
+    which grows with the square of the population; a sweep along the road,
+    which assumes one road; a quadtree or KD tree, since every car is one
+    size and moves every tick, so a tree would be rebalanced or rebuilt each
+    tick for nothing.
   - **An episode ends once the footprints part by a margin.** A pair
     starts one when its footprints overlap and ends it when footprints
     grown by 0.5 m stop overlapping, so a pair hovering at contact reports

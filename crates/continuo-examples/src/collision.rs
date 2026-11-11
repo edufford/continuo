@@ -25,14 +25,6 @@ use crate::traffic_world::ScenarioError;
 /// once rather than on every tick they cross it.
 const CONTACT_MARGIN: f64 = 0.5;
 
-/// How much wider a grid cell is than the furthest apart two touching cars
-/// can be, in meters.
-///
-/// A pair exactly that far apart is in contact, and dividing by a cell
-/// exactly that wide could round it two cells apart. Any margin well above
-/// rounding error rules that out, and a meter is plainly enough.
-const CELL_MARGIN: f64 = 1.0;
-
 /// The ego's footprint touching or overlapping another car's.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 #[error("{ego} collided with {other} at sim time {at}")]
@@ -273,15 +265,17 @@ type Cell = (i64, i64);
 
 /// The side of a grid cell, in meters.
 ///
-/// The furthest apart two centers can be while their grown footprints still
-/// touch is one grown footprint's diagonal. With [`CELL_MARGIN`] on top, two
-/// cars that can touch are always in the same cell or adjacent ones.
+/// The grid only finds new contacts, and the furthest apart two centers can
+/// be while their footprints touch is one footprint's diagonal, about
+/// 4.85 m. The cell is the diagonal of a footprint grown by
+/// [`CONTACT_MARGIN`], about 1.3 m more, so two cars that touch are in the
+/// same cell or adjacent ones however the division rounds.
 fn cell_size() -> f64 {
     let length = CAR_LENGTH + 2.0 * CONTACT_MARGIN;
     let width = CAR_WIDTH + 2.0 * CONTACT_MARGIN;
 
-    // Return the grown footprint's diagonal, with the margin added.
-    (length * length + width * width).sqrt() + CELL_MARGIN
+    // Return the grown footprint's diagonal.
+    (length * length + width * width).sqrt()
 }
 
 /// The cell a center falls in. IEEE 754 rounds a division correctly and
@@ -351,7 +345,7 @@ impl Watch {
     }
 
     /// Every pair of cars in the same cell or adjacent ones, each named in
-    /// order. Any pair whose grown footprints can touch is among them.
+    /// order. Any pair whose footprints touch is among them.
     fn pairs_in_reach(&self) -> BTreeSet<(String, String)> {
         let mut pairs = BTreeSet::new();
         for (&(column, row), cars) in &self.grid {
@@ -380,18 +374,29 @@ impl Watch {
     /// the pairs whose episode starts now and when each did.
     ///
     /// A pair already in an episode stays in it while its grown footprints
-    /// touch. A pair that is not starts one when its footprints do.
+    /// touch. Those pairs are checked directly rather than found through the
+    /// grid, so whether an episode goes on never depends on which cells its
+    /// cars are filed in. The grid's candidates are checked only for new
+    /// contacts, which start when the footprints themselves touch.
     fn update_contacts(&mut self) -> Vec<(String, String, SimTime)> {
-        let mut still_in_contact = BTreeSet::new();
+        // Every car in an episode is still known, since `remove` ends a
+        // car's episodes when it forgets the car.
+        let mut still_in_contact: BTreeSet<(String, String)> = self
+            .in_contact
+            .iter()
+            .filter(|(first, second)| {
+                touch(&self.cars[first].0, &self.cars[second].0, CONTACT_MARGIN)
+            })
+            .cloned()
+            .collect();
         let mut started = Vec::new();
         for pair in self.pairs_in_reach() {
+            if self.in_contact.contains(&pair) {
+                continue;
+            }
             let (first, _) = &self.cars[&pair.0];
             let (second, _) = &self.cars[&pair.1];
-            if self.in_contact.contains(&pair) {
-                if touch(first, second, CONTACT_MARGIN) {
-                    still_in_contact.insert(pair);
-                }
-            } else if touch(first, second, 0.0) {
+            if touch(first, second, 0.0) {
                 started.push((
                     pair.0.clone(),
                     pair.1.clone(),
@@ -533,6 +538,37 @@ mod tests {
     }
 
     #[test]
+    fn an_episode_goes_on_whichever_cells_its_cars_are_filed_in() {
+        // Apart, but within the margin, so the episode goes on. Filing the
+        // second car three cells away by hand takes the pair out of the
+        // grid's candidates, which must not end it.
+        let mut watch = Watch::default();
+        watch.place("a", footprint(0.0, 0.0, EAST));
+        watch.place("b", footprint(4.0, 0.0, EAST));
+        assert_eq!(watch.update_contacts().len(), 1);
+
+        watch.place("b", footprint(CAR_LENGTH + 0.2, 0.0, EAST));
+        let (_, filed) = watch.cars["b"];
+        let elsewhere = (filed.0 + 3, filed.1);
+        watch.leave_cell("b", filed);
+        watch
+            .grid
+            .entry(elsewhere)
+            .or_default()
+            .insert("b".to_string());
+        watch.cars.get_mut("b").expect("b is placed").1 = elsewhere;
+        assert!(watch.pairs_in_reach().is_empty());
+
+        assert!(watch.update_contacts().is_empty());
+        assert!(
+            watch
+                .in_contact
+                .contains(&("a".to_string(), "b".to_string()))
+        );
+        assert_eq!(watch.episodes, 1);
+    }
+
+    #[test]
     fn a_car_that_leaves_takes_its_cell_and_its_episodes_with_it() {
         let mut watch = Watch::default();
         watch.place("a", footprint(0.0, 0.0, EAST));
@@ -544,8 +580,8 @@ mod tests {
         assert!(watch.update_contacts().is_empty());
     }
 
-    /// Every pair whose grown footprints touch, found by checking each
-    /// pair of cars: the answer the grid must reproduce.
+    /// Every pair whose footprints touch, found by checking each pair of
+    /// cars: the answer the grid must reproduce.
     fn every_pair_in_contact(watch: &Watch) -> BTreeSet<(String, String)> {
         let mut pairs = BTreeSet::new();
         for (first, (a, _)) in &watch.cars {
@@ -553,7 +589,7 @@ mod tests {
                 .cars
                 .range::<String, _>((std::ops::Bound::Excluded(first), std::ops::Bound::Unbounded))
             {
-                if touch(a, b, CONTACT_MARGIN) {
+                if touch(a, b, 0.0) {
                     pairs.insert((first.clone(), second.clone()));
                 }
             }
@@ -563,14 +599,12 @@ mod tests {
         pairs
     }
 
-    /// The pairs among the grid's candidates whose grown footprints touch.
+    /// The pairs among the grid's candidates whose footprints touch.
     fn grid_pairs_in_contact(watch: &Watch) -> BTreeSet<(String, String)> {
         watch
             .pairs_in_reach()
             .into_iter()
-            .filter(|(first, second)| {
-                touch(&watch.cars[first].0, &watch.cars[second].0, CONTACT_MARGIN)
-            })
+            .filter(|(first, second)| touch(&watch.cars[first].0, &watch.cars[second].0, 0.0))
             .collect()
     }
 
