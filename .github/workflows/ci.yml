@@ -46,7 +46,7 @@ jobs:
       # three are cached; only the second ever compiles anything.
       - name: "Install: Rust (stable)"
         uses: dtolnay/rust-toolchain@stable
-        id: rust
+        id: install_rust
         with:
           components: rustfmt, clippy
 
@@ -84,7 +84,7 @@ jobs:
           path: |
             ~/.cargo/bin/cargo-fmi
             ~/.cargo/bin/cargo-fmi.exe
-          key: cargo-fmi-0.3.0-${{ runner.os }}-${{ runner.arch }}-rustc-${{ steps.rust.outputs.cachekey }}
+          key: cargo-fmi-0.3.0-${{ runner.os }}-${{ runner.arch }}-rustc-${{ steps.install_rust.outputs.cachekey }}
 
       # `--force` because two caches can own this path. `rust-cache` above
       # keeps `~/.cargo/bin`, so a run that restores it and misses the key
