@@ -14,11 +14,10 @@ use std::process::{Command, Stdio};
 /// with no edit anywhere.
 const FMU_CRATE_PREFIX: &str = "continuo-fmu-";
 
-/// What to install when the packaging subcommand is missing.
-const INSTALL_CARGO_FMI: &str = "cargo install cargo-fmi";
-
-/// What rebuilds the packaging subcommand on the active toolchain.
-const REINSTALL_CARGO_FMI: &str = "cargo install cargo-fmi --force";
+/// What installs the packaging subcommand, or rebuilds it on the active
+/// toolchain. `--force` lets it replace one already installed, so the one
+/// command serves both.
+const INSTALL_CARGO_FMI: &str = "cargo install cargo-fmi --force";
 
 /// Packages every FMU crate in the workspace.
 pub fn run() -> Result<(), String> {
@@ -130,7 +129,7 @@ fn warn_if_cargo_fmi_built_by_another_rustc() {
              {active}.\n\
              It reads the library it packages through Rust's ABI, which is not \
              stable between compiler versions, so packaging may crash.\n\
-             Rebuild it on this toolchain with: {REINSTALL_CARGO_FMI}"
+             Rebuild it on this toolchain with: {INSTALL_CARGO_FMI}"
         );
     }
 }
