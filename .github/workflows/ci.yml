@@ -71,12 +71,9 @@ jobs:
 
       # Pinned by version, since a packager that changed under us would
       # rewrite modelDescription.xml on a commit that touched nothing. The
-      # cache key carries the runner because the binary is native, and the
-      # rustc that built it because cargo-fmi calls into the library it
-      # packages through Rust's ABI, which is not stable between compiler
-      # versions: a binary kept from the previous stable can read garbage
-      # out of an FMU the current one built. A miss costs a release build of
-      # cargo-fmi, which is why it is cached at all.
+      # key names the runner because the binary is native, and the rustc
+      # because cargo-fmi reads the FMU through Rust's ABI, which can change
+      # between compiler versions.
       - name: "Install: cargo-fmi (cached)"
         uses: actions/cache@v6
         id: cargo-fmi-cache
