@@ -21,7 +21,7 @@ fn record_highway(seconds: i64) -> EventLog {
 }
 
 /// Runs the demo world for `seconds`, returning its recorded log and the
-/// handler that drove it, which still holds what its collision watch saw.
+/// handler that drove it.
 fn record_watched_highway(seconds: i64) -> (EventLog, LiveTrafficHandler) {
     let config = traffic_world::config();
     let recorder = Recorder::new(&config);
@@ -102,9 +102,8 @@ fn traffic_arrives_and_retires_while_the_run_is_under_way() {
 
 #[test]
 fn no_two_cars_overlap_anywhere_in_the_demo() {
-    // The ego overlapping anything would already have halted the run, so
-    // what this adds is the traffic, whose overlaps only warn. The monitor
-    // taking in poses is what makes a count of zero mean something.
+    // The ego's collisions halt the run, so this checks the traffic's,
+    // which only warn.
     let (_, live_traffic_handler) = record_watched_highway(traffic_world::SIM_SECONDS);
     let collisions = live_traffic_handler.collisions();
     assert!(collisions.poses_seen() > 0, "the monitor watched nothing");

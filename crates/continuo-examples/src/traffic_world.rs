@@ -127,8 +127,7 @@ pub enum ScenarioError {
         source: FmuConstructionError,
     },
 
-    /// The ego overlapped another car, which its controller is there to
-    /// prevent, so the scenario is wrong somewhere and the run stops.
+    /// The ego touched another car, which its controller should prevent.
     #[error(transparent)]
     Collision(#[from] Collision),
 }
@@ -417,9 +416,8 @@ fn add_spawner<T: Transport>(conductor: &mut Conductor<T>) -> Result<(), Conduct
 /// while the run is under way, so this is the whole world only at sim time
 /// zero, and [`run_live_traffic_scenario`] is what builds the rest of it.
 ///
-/// Also has the conductor tell `live_traffic_handler` when a car leaves, so
-/// its collision watch forgets the car. Every live scenario starts here, so
-/// no run can watch poses without also watching who leaves.
+/// Also registers `live_traffic_handler` for leaves, so its collision watch
+/// removes cars that have gone.
 ///
 /// *Live* because the traffic is decided as the run happens. `traffic_resim`
 /// assembles the other kind by hand: the same ego and logger, but no
@@ -574,18 +572,8 @@ fn add_logger<T: Transport>(conductor: &mut Conductor<T>) -> Result<(), Conducto
 }
 
 /// What the live scenario needs from outside the sim: the spawner's
-/// requests carried out, and every car watched for collisions.
-///
-/// The requests are one job split by a boundary the sim cannot cross: a
-/// component can decide a car should exist but cannot build one. So this
-/// collects what the spawner publishes and turns it into membership
-/// changes. The collision watch reads the same traffic, so it rides on the
-/// same transport.
-///
-/// [`Self::wrap_transport`] wires up the reading,
-/// [`setup_live_traffic_scenario`] tells it when cars leave, and
-/// [`run_live_traffic_scenario`] acts on both between ticks. One handle
-/// carries both jobs, so a caller cannot wire up one without the other.
+/// requests turned into cars, and every car watched for collisions. One
+/// handle carries both, so a caller cannot wire up one without the other.
 #[derive(Clone)]
 pub struct LiveTrafficHandler {
     /// Requests collected since the last [`Self::apply`], in publish order.
@@ -598,7 +586,7 @@ pub struct LiveTrafficHandler {
     /// one wins: the run stops at the next tick boundary, and later failures
     /// are consequences of a scenario that is already wrong.
     unreadable_request: Arc<Mutex<Option<CoreError>>>,
-    /// Every car's pose, watched for an overlap with another car's.
+    /// Every car's pose, watched for contact with another car's.
     collisions: CollisionMonitor,
 }
 
@@ -619,9 +607,8 @@ enum Request {
 }
 
 impl LiveTrafficHandler {
-    /// A monitor callback that picks the spawner's requests and every car's
-    /// pose out of the traffic. Attach it to a `MonitorTransport` wrapping
-    /// the conductor's transport.
+    /// A `MonitorTransport` callback that picks the spawner's requests and
+    /// every car's pose out of the traffic.
     pub fn callback(&self) -> impl FnMut(&Message) + Send + 'static {
         let mut collect_requests = self.request_callback();
         let mut collect_poses = self.collisions.message_callback();
@@ -633,7 +620,7 @@ impl LiveTrafficHandler {
         }
     }
 
-    /// The collision watch, for what it has seen so far.
+    /// The collision watch.
     pub fn collisions(&self) -> &CollisionMonitor {
         &self.collisions
     }
@@ -681,9 +668,8 @@ impl LiveTrafficHandler {
         }
     }
 
-    /// Wraps `inner` so the spawner's requests are collected and every
-    /// car's pose is watched as they are published, which is what
-    /// [`run_live_traffic_scenario`] then acts on.
+    /// Wraps `inner` so the handler reads what is published, for
+    /// [`run_live_traffic_scenario`] to act on.
     ///
     /// Takes a transport rather than building one, so an example that also
     /// wants its own observer nests the two:
@@ -699,8 +685,7 @@ impl LiveTrafficHandler {
         MonitorTransport::new(inner, self.callback())
     }
 
-    /// Has the conductor say when a car leaves, so the collision watch
-    /// forgets it rather than keeping its last pose on the road.
+    /// Has the conductor tell the collision watch when a car leaves.
     fn watch_membership<T: Transport>(&self, conductor: &mut Conductor<T>) {
         conductor.add_membership_callback(self.collisions.membership_callback());
     }
@@ -798,8 +783,8 @@ pub fn run_live_traffic_scenario<T: Transport>(
             .is_some_and(|instant| instant <= end)
     {
         conductor.step_once()?;
-        // The tick's poses before its requests, so a collision is reported
-        // among the cars that were there when it happened.
+        // Before the requests, so a collision names the cars it happened
+        // among.
         live_traffic_handler.collisions.check()?;
         live_traffic_handler.apply(conductor)?;
     }
@@ -880,9 +865,8 @@ mod tests {
 
     #[test]
     fn a_traffic_overlap_warns_once_per_collision_episode_and_does_not_halt() {
-        // Constant speed is the fixture because it is the physics the FMU
-        // took away: nothing brakes, so the overlap is certain. The fast car
-        // reaches the slow one at about 4.5 s and is clear of it by 5.5 s.
+        // At constant speed nothing brakes, so the fast car reaches the slow
+        // one at about 4.5 s and is clear of it by 5.5 s.
         let live_traffic_handler = LiveTrafficHandler::default();
         let mut conductor = watched_world(&live_traffic_handler, &CONVERGING);
         run_live_traffic_scenario(
@@ -932,9 +916,8 @@ mod tests {
 
     #[test]
     fn a_retired_cars_last_pose_cannot_collide() {
-        // A car parked 60 m ahead of the ego, which reaches it a little
-        // before 2 s. Left in place it is a collision, which shows the
-        // fixture would catch a pose kept after its car has gone.
+        // The ego reaches a car parked 60 m ahead before 2 s, so left in
+        // place it is a collision.
         let parked = [
             (EGO_NAME, 0.0, EGO_LANE, 30.0),
             ("parked", 60.0, EGO_LANE, 0.0),
@@ -948,8 +931,7 @@ mod tests {
             Err(ScenarioError::Collision(_))
         ));
 
-        // Removed at 1 s, before the ego gets there, the car's last pose
-        // goes with it, and the ego drives on through where it stood.
+        // Removed at 1 s, its last pose goes with it.
         let removed = LiveTrafficHandler::default();
         let mut conductor = watched_world(&removed, &parked);
         run_live_traffic_scenario(&mut conductor, &removed, SimTime::from_secs(1), None)
@@ -966,8 +948,7 @@ mod tests {
     fn watching_for_collisions_does_not_change_the_world_hash() {
         let end = SimTime::from_secs(10);
 
-        // The same cars on a bare transport, stepped the way the live loop
-        // steps, with nothing reading the traffic.
+        // The same cars with nothing reading the traffic.
         let mut unwatched =
             Conductor::new(config(), InProcTransport::new()).expect("config is accepted");
         add_cars(&mut unwatched, &CONVERGING);
@@ -983,8 +964,7 @@ mod tests {
         run_live_traffic_scenario(&mut watched, &live_traffic_handler, end, None)
             .expect("the run completes");
 
-        // The monitor saw the run, overlap and all, so the equal hash is a
-        // run that was watched rather than one that was not.
+        // The monitor saw the run, collision and all.
         assert_eq!(watched.world_hash(), unwatched.world_hash());
         assert!(live_traffic_handler.collisions().poses_seen() > 0);
         assert_eq!(live_traffic_handler.collisions().num_collisions(), 1);

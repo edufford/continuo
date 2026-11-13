@@ -1,12 +1,8 @@
 //! Watching a run for cars that collide.
 //!
-//! [`CollisionMonitor`] reads every car's pose off the transport the way a
-//! recorder does, so watching changes nothing about the run: no component
-//! steps for it, and nothing it holds reaches the world hash. Each car is a
-//! [`CAR_LENGTH`] by [`CAR_WIDTH`] rectangle at its pose, and two cars
-//! collide when their rectangles touch or overlap. Nothing here asks which
-//! road or lane a car is on, so the check holds on curves, merges and
-//! crossings as well as on the demo's straight road.
+//! [`CollisionMonitor`] reads poses off the transport, so watching cannot
+//! change the run. Each car is a [`CAR_LENGTH`] by [`CAR_WIDTH`] rectangle at
+//! its pose, with no assumption about roads or lanes.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
@@ -17,12 +13,8 @@ use continuo_core::{CoreError, KeyExpr, Message, SimTime};
 
 use crate::traffic_world::ScenarioError;
 
-/// How far each footprint grows, in meters, for a pair already in contact
-/// to count as still touching.
-///
-/// A pair starts a collision episode when the footprints touch and ends it
-/// only once the grown footprints are apart, so two cars hovering at
-/// contact report once rather than on every tick they cross it.
+/// How far each footprint grows, in meters, for a pair in a collision
+/// episode to count as still in contact.
 const CONTACT_MARGIN: f64 = 0.5;
 
 /// The ego's footprint touching or overlapping another car's.
@@ -31,35 +23,18 @@ const CONTACT_MARGIN: f64 = 0.5;
 pub struct Collision {
     pub ego: String,
     pub other: String,
-    /// The later of the two poses that overlapped.
+    /// The later of the two poses that touched.
     pub at: SimTime,
 }
 
-/// Watches every car's pose for an overlap with another car's.
-///
-/// An overlap between two cars that are not the ego is logged as a warning
-/// once per collision episode and the run goes on, since traffic
-/// overlapping is a flaw in the scenario rather than in what it tests. An
-/// overlap involving the ego stops the run with
-/// [`ScenarioError::Collision`], since the demo's claim is that the ego's
-/// controller never lets one happen.
-///
-/// Candidate pairs come from a grid of cells a little wider than the
-/// furthest two touching cars can be apart, so a check costs the cars
-/// present rather than every pair of them, and runs only when something has
-/// changed since the last one.
-///
-/// Each check is a snapshot, comparing every car's latest pose. In the demo
-/// every car's physics publishes on one 10 ms grid, so those poses share an
-/// instant; a car on another period would be compared up to one of its
-/// periods out of step. A snapshot also misses two cars passing through
-/// each other between poses, which side-on means crossing two car widths in
-/// one period: about 360 m/s at 10 ms.
-// TODO(M7): poses from a remote host may arrive less often or late, which
-// shrinks both of those margins. Dead reckoning, moving each latest pose to
-// the check's instant along its own speed and heading, would line the poses
-// up but still test a snapshot. A swept test, keeping each car's previous
-// pose and checking the motion between the two, would cover both cases.
+/// Watches every car for contact with another: traffic in contact logs a
+/// warning once per collision episode, and the ego in contact stops the run
+/// with [`ScenarioError::Collision`].
+// TODO(M7): each check is a snapshot of every car's latest pose, which holds
+// while every car publishes often and at the same instants. Remote hosts may
+// publish less often or late. Dead reckoning to the check's instant would
+// line the poses up; a swept test over each car's previous and current pose
+// would also catch cars passing through each other between poses.
 #[derive(Clone)]
 pub struct CollisionMonitor {
     watch: Arc<Mutex<Watch>>,
@@ -69,8 +44,8 @@ pub struct CollisionMonitor {
 }
 
 impl CollisionMonitor {
-    /// A monitor for the world named `world_name`, halting on any overlap
-    /// that involves the actor named `ego_name`.
+    /// A monitor for the world `world_name`, halting on contact with
+    /// `ego_name`.
     pub fn new(world_name: &str, ego_name: &str) -> Self {
         CollisionMonitor {
             watch: Arc::default(),
@@ -80,8 +55,7 @@ impl CollisionMonitor {
         }
     }
 
-    /// A monitor callback that takes in every car's pose. Attach it to a
-    /// `MonitorTransport` wrapping the conductor's transport.
+    /// A `MonitorTransport` callback that takes in every car's pose.
     pub fn message_callback(&self) -> impl FnMut(&Message) + Send + 'static {
         let watch = self.watch.clone();
         let pose_keys = self.pose_keys.clone();
@@ -102,9 +76,8 @@ impl CollisionMonitor {
                         Footprint::of(&state, message.sim_time),
                     );
                 }
-                // A pose nobody can read is a car the check cannot see. The
-                // callback has nowhere to return an error to, so the first
-                // one waits for the next check, which reports it.
+                // The callback cannot return an error, so the next check
+                // reports the first one.
                 Err(error) => {
                     if watch.unreadable_pose.is_none() {
                         watch.unreadable_pose = Some(error);
@@ -114,16 +87,13 @@ impl CollisionMonitor {
         }
     }
 
-    /// A membership callback that forgets a car once it leaves, so its last
-    /// pose cannot collide with anything afterward. Register it with
-    /// `Conductor::add_membership_callback`.
+    /// A membership callback that removes a car when it leaves.
     pub fn membership_callback(&self) -> impl FnMut(&MembershipChange) + Send + 'static {
         let watch = self.watch.clone();
 
         // Return the callback, holding its own handle on what it watches.
         move |change: &MembershipChange| {
-            // A car leaves one component at a time, so the first of them
-            // to go is the one that forgets it.
+            // The first of a car's components to leave removes the car.
             if let MembershipChange::Left(leave) = change {
                 let actor = leave.path.split('/').next().unwrap_or(&leave.path);
                 watch
@@ -134,22 +104,18 @@ impl CollisionMonitor {
         }
     }
 
-    /// How many collisions there have been, the ego's included. A collision
-    /// episode counts once, however long the cars stay in contact.
+    /// How many collision episodes have started, the ego's included.
     pub fn num_collisions(&self) -> usize {
         self.lock().num_collisions
     }
 
-    /// How many poses the monitor has taken in, which is what shows it was
-    /// watching at all.
+    /// How many poses the monitor has taken in.
     pub fn poses_seen(&self) -> usize {
         self.lock().poses_seen
     }
 
-    /// Looks for pairs that came into contact since the last check.
-    ///
-    /// Crate-private for the reason `LiveTrafficHandler::apply` is: the
-    /// only loop that drives the live scenario is the one that calls it.
+    /// Reports contact that began since the last check, failing on the
+    /// ego's. Crate-private so only the live loop calls it.
     pub(crate) fn check(&self) -> Result<(), ScenarioError> {
         let mut watch = self.lock();
         if let Some(error) = watch.unreadable_pose.take() {
@@ -211,11 +177,8 @@ struct Footprint {
 
 impl Footprint {
     fn of(state: &CarState, sim_time: SimTime) -> Self {
-        // The pose's rotation applied to the x axis, written out. A
-        // quaternion turns a vector with multiplies and adds alone, so no
-        // angle is formed and no transcendental is evaluated. Cars here stay
-        // level, so the result has length one up to rounding, and dividing
-        // by it keeps the contact test's half extents in meters.
+        // The pose's rotation of the x axis, by multiplies and adds alone,
+        // so no transcendental is evaluated.
         let q = state.orientation;
         let x = 1.0 - 2.0 * (q.y * q.y + q.z * q.z);
         let y = 2.0 * (q.x * q.y + q.w * q.z);
@@ -231,13 +194,8 @@ impl Footprint {
     }
 }
 
-/// Whether two footprints touch or overlap once each grows by `margin` on
-/// every side.
-///
-/// The separating axis test: two rectangles are apart exactly when, along
-/// one of their four edge directions, the distance between their centers
-/// exceeds the sum of their half extents along it. A distance equal to that
-/// sum is touching, and counts: cars that meet with no gap have collided.
+/// Whether two footprints, each grown by `margin`, touch or overlap, by
+/// the separating axis test with a zero gap counted as contact.
 fn touch(a: &Footprint, b: &Footprint, margin: f64) -> bool {
     let half_length = CAR_LENGTH / 2.0 + margin;
     let half_width = CAR_WIDTH / 2.0 + margin;
@@ -265,13 +223,9 @@ fn left_of(forward: (f64, f64)) -> (f64, f64) {
 /// A grid cell, by its integer coordinates.
 type Cell = (i64, i64);
 
-/// The side of a grid cell, in meters.
-///
-/// The grid only finds new contacts, and the furthest apart two centers can
-/// be while their footprints touch is one footprint's diagonal, about
-/// 4.85 m. The cell is the diagonal of a footprint grown by
-/// [`CONTACT_MARGIN`], about 1.3 m more, so two cars that touch are in the
-/// same cell or adjacent ones however the division rounds.
+/// The side of a grid cell, in meters: a grown footprint's diagonal, about
+/// 1.3 m more than two touching cars can be apart, so they always share a
+/// cell or adjacent ones.
 fn cell_size() -> f64 {
     let length = CAR_LENGTH + 2.0 * CONTACT_MARGIN;
     let width = CAR_WIDTH + 2.0 * CONTACT_MARGIN;
@@ -280,8 +234,7 @@ fn cell_size() -> f64 {
     (length * length + width * width).sqrt()
 }
 
-/// The cell a center falls in. IEEE 754 rounds a division correctly and
-/// `floor` exactly, so a center lands in the same cell on every platform.
+/// The cell a center falls in.
 fn cell_of(footprint: &Footprint) -> Cell {
     let size = cell_size();
 
@@ -297,8 +250,7 @@ fn cell_of(footprint: &Footprint) -> Cell {
 struct Watch {
     /// Each car's latest footprint and the cell it is filed under.
     cars: BTreeMap<String, (Footprint, Cell)>,
-    /// The cars in each occupied cell. An empty cell is removed rather
-    /// than kept.
+    /// The cars in each occupied cell.
     grid: BTreeMap<Cell, BTreeSet<String>>,
     /// The pairs in a collision episode, each named in order.
     in_contact: BTreeSet<(String, String)>,
@@ -306,8 +258,7 @@ struct Watch {
     changed: bool,
     poses_seen: usize,
     num_collisions: usize,
-    /// The first pose that could not be read, held until a check reports
-    /// it.
+    /// The first pose that could not be read, for the next check to report.
     unreadable_pose: Option<CoreError>,
 }
 
@@ -327,7 +278,7 @@ impl Watch {
         self.changed = true;
     }
 
-    /// Forgets `actor`, its footprint, its cell and any collision episode
+    /// Removes `actor`, its footprint, its cell and any collision episode
     /// it is in.
     fn remove(&mut self, actor: &str) {
         if let Some((_, cell)) = self.cars.remove(actor) {
@@ -373,19 +324,11 @@ impl Watch {
         pairs
     }
 
-    /// Brings the collision episodes up to date with the latest footprints,
-    /// returning the pairs whose collision episode starts now and when each
-    /// did.
-    ///
-    /// A pair already in a collision episode stays in it while its grown
-    /// footprints touch. Those pairs are checked directly rather than found
-    /// through the grid, so whether a collision episode goes on never
-    /// depends on which cells its cars are filed in. The grid's candidates
-    /// are checked only for new contacts, which start when the footprints
-    /// themselves touch.
+    /// Updates the collision episodes and returns those starting now. Ongoing
+    /// ones are checked directly with grown footprints; the grid finds new
+    /// ones.
     fn update_contacts(&mut self) -> Vec<(String, String, SimTime)> {
-        // Every car in a collision episode is still known, since `remove`
-        // ends a car's collision episodes when it forgets the car.
+        // `remove` ends a car's collision episodes, so every car here is known.
         let mut still_in_contact: BTreeSet<(String, String)> = self
             .in_contact
             .iter()

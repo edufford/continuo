@@ -80,11 +80,8 @@ pub const MAX_DETECTIONS: usize = 64;
 /// PLAN.md's "World and map" work publishes extents.
 pub const CAR_LENGTH: f64 = 4.5;
 
-/// How wide a car is, side to side, in meters.
-///
-/// The collision check's footprint is a [`CAR_LENGTH`] by `CAR_WIDTH`
-/// rectangle. `CAR_WIDTH` in `python/continuo_viz/render.py` draws the
-/// same body, and the two stay equal for the reason [`CAR_LENGTH`] gives.
+/// How wide a car is, side to side, in meters. Must equal `CAR_WIDTH` in
+/// `python/continuo_viz/render.py`, as [`CAR_LENGTH`] explains.
 pub const CAR_WIDTH: f64 = 1.8;
 
 /// Key for an actor's pose in `world`.
