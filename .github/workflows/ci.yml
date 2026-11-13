@@ -46,6 +46,7 @@ jobs:
       # three are cached; only the second ever compiles anything.
       - name: "Install: Rust (stable)"
         uses: dtolnay/rust-toolchain@stable
+        id: install_rust
         with:
           components: rustfmt, clippy
 
@@ -70,8 +71,9 @@ jobs:
 
       # Pinned by version, since a packager that changed under us would
       # rewrite modelDescription.xml on a commit that touched nothing. The
-      # cache key carries the runner because the binary is native, and a miss
-      # costs a release build of cargo-fmi, which is why it is cached at all.
+      # key names the runner because the binary is native, and the rustc
+      # because cargo-fmi reads the FMU through Rust's ABI, which can change
+      # between compiler versions.
       - name: "Install: cargo-fmi (cached)"
         uses: actions/cache@v6
         id: cargo-fmi-cache
@@ -79,7 +81,7 @@ jobs:
           path: |
             ~/.cargo/bin/cargo-fmi
             ~/.cargo/bin/cargo-fmi.exe
-          key: cargo-fmi-0.3.0-${{ runner.os }}-${{ runner.arch }}
+          key: cargo-fmi-0.3.0-${{ runner.os }}-${{ runner.arch }}-rustc-${{ steps.install_rust.outputs.cachekey }}
 
       # `--force` because two caches can own this path. `rust-cache` above
       # keeps `~/.cargo/bin`, so a run that restores it and misses the key
