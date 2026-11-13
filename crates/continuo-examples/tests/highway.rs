@@ -11,17 +11,24 @@ use continuo_actors::AccelCmd;
 use continuo_conductor::record::LogEvent;
 use continuo_conductor::{Conductor, Divergence, EventLog, Recorder, Verifier};
 use continuo_core::SimTime;
-use continuo_examples::traffic_world::{self, TrafficRequestHandler};
+use continuo_examples::traffic_world::{self, LiveTrafficHandler};
 use continuo_transport::{InProcTransport, MonitorTransport};
 
 /// Runs the demo world for `seconds`, returning its recorded log.
 fn record_highway(seconds: i64) -> EventLog {
+    // Return the log alone, for the tests with no use for the handler.
+    record_watched_highway(seconds).0
+}
+
+/// Runs the demo world for `seconds`, returning its recorded log and the
+/// handler that drove it.
+fn record_watched_highway(seconds: i64) -> (EventLog, LiveTrafficHandler) {
     let config = traffic_world::config();
     let recorder = Recorder::new(&config);
-    let traffic_request_handler = TrafficRequestHandler::default();
+    let live_traffic_handler = LiveTrafficHandler::default();
     let mut conductor = Conductor::new(
         config,
-        traffic_request_handler.wrap_transport(MonitorTransport::new(
+        live_traffic_handler.wrap_transport(MonitorTransport::new(
             InProcTransport::new(),
             recorder.message_callback(),
         )),
@@ -30,17 +37,18 @@ fn record_highway(seconds: i64) -> EventLog {
     conductor.add_tick_callback(recorder.tick_callback());
     conductor.add_membership_callback(recorder.membership_callback());
     conductor.add_observation_callback(recorder.observation_callback());
-    traffic_world::setup_live_traffic_scenario(&mut conductor).expect("the world builds");
+    traffic_world::setup_live_traffic_scenario(&mut conductor, &live_traffic_handler)
+        .expect("the world builds");
     traffic_world::run_live_traffic_scenario(
         &mut conductor,
-        &traffic_request_handler,
+        &live_traffic_handler,
         SimTime::from_secs(seconds),
         None,
     )
     .expect("the run completes");
 
-    // Return the recorded log.
-    recorder.finish()
+    // Return the recorded log, and the handler with what it watched.
+    (recorder.finish(), live_traffic_handler)
 }
 
 /// Actor names in the order they joined and left, from a recorded log.
@@ -89,6 +97,20 @@ fn traffic_arrives_and_retires_while_the_run_is_under_way() {
     assert!(
         traffic_leaves < traffic_joins,
         "with cars still on the road when the run ends"
+    );
+}
+
+#[test]
+fn no_two_cars_overlap_anywhere_in_the_demo() {
+    // The ego's collisions halt the run, so this checks the traffic's,
+    // which only warn.
+    let (_, live_traffic_handler) = record_watched_highway(traffic_world::SIM_SECONDS);
+    let collisions = live_traffic_handler.collisions();
+    assert!(collisions.poses_seen() > 0, "the monitor watched nothing");
+    assert_eq!(
+        collisions.num_collisions(),
+        0,
+        "cars overlapped in the demo"
     );
 }
 
@@ -205,10 +227,10 @@ fn the_demo_world_hashes_to_the_same_value_on_every_platform() {
 fn verify_highway(recorded: EventLog, seconds: i64) -> (SimTime, Result<usize, Divergence>) {
     let config = traffic_world::config();
     let verifier = Verifier::new(recorded, &config);
-    let traffic_request_handler = TrafficRequestHandler::default();
+    let live_traffic_handler = LiveTrafficHandler::default();
     let mut conductor = Conductor::new(
         config,
-        traffic_request_handler.wrap_transport(MonitorTransport::new(
+        live_traffic_handler.wrap_transport(MonitorTransport::new(
             InProcTransport::new(),
             verifier.message_callback(),
         )),
@@ -216,11 +238,12 @@ fn verify_highway(recorded: EventLog, seconds: i64) -> (SimTime, Result<usize, D
     .expect("free-run config is always accepted");
     conductor.add_tick_callback(verifier.tick_callback());
     conductor.add_membership_callback(verifier.membership_callback());
-    traffic_world::setup_live_traffic_scenario(&mut conductor).expect("the world builds");
+    traffic_world::setup_live_traffic_scenario(&mut conductor, &live_traffic_handler)
+        .expect("the world builds");
 
     traffic_world::run_live_traffic_scenario(
         &mut conductor,
-        &traffic_request_handler,
+        &live_traffic_handler,
         SimTime::from_secs(seconds),
         Some(&verifier),
     )

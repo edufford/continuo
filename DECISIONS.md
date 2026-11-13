@@ -1585,3 +1585,45 @@ it got there, including the roads not taken.
     want TLS or QUIC, and each is one feature on the workspace dependency.
   - **The Python viewer is unaffected.** `eclipse-zenoh` is a wheel built
     with every transport, and it speaks TCP to the bridge as before.
+
+- **2026-11-06**: **Collision detection is a transport monitor that warns
+  for traffic and halts for the ego.** `CollisionMonitor` reads every car's
+  pose off the transport and checks between ticks, outside the sim: the
+  poses are already on the wire, and a component would move the world hash
+  and the schedule. An overlap between two traffic cars is logged once per
+  collision episode, while one involving the ego stops the run, because the
+  demo's claim is that the ego's controller prevents it, so reaching one is
+  a scenario bug worth stopping for. The demo hash does not move.
+  - **Footprints in world coordinates, not lane bands.** Each car is a
+    `CAR_LENGTH` by `CAR_WIDTH` rectangle at its pose, tested with the
+    separating axis test, and touching counts: cars that meet with no gap
+    have collided. A test on lane offset and distance along the road would
+    assume one road, and miss cars meeting at a merge, a crossing or mid
+    lane change. The heading comes from the quaternion by multiplies and
+    adds, so no transcendental is evaluated. `CAR_WIDTH` joins `CAR_LENGTH`
+    in `continuo-actors`, mirrored in the viewer.
+  - **A grid from the start, checked against every pair.** The grid finds
+    only new contacts, and its cells are about 1.3 m wider than the furthest
+    apart two touching cars can be, so rounding cannot file such a pair two
+    cells apart. A pair already in a collision episode is checked directly
+    rather than through the grid, so whether a collision episode goes on
+    never depends on the cells its cars are in. A check costs the cars
+    present rather than every pair of them. A property test runs random
+    moves and leaves and asserts the grid finds exactly the touching pairs
+    checking every pair finds; halving the cell fails it at once. Rejected:
+    checking every pair, which grows with the square of the population; a
+    sweep along the road, which assumes one road; a quadtree or KD tree,
+    since every car is one size and moves every tick, so a tree would be
+    rebalanced or rebuilt each tick for nothing.
+  - **A collision episode ends once the footprints part by a margin.** A
+    pair starts one when its footprints touch and ends it when footprints
+    grown by 0.5 m are apart, so a pair hovering at contact reports once.
+  - **One handle carries the requests and the watch.**
+    `TrafficRequestHandler` becomes `LiveTrafficHandler`: its transport
+    callback feeds both, `setup_live_traffic_scenario` takes it to register
+    the leave callback, and `run_live_traffic_scenario` checks before
+    applying requests each tick. A separate monitor passed alongside would
+    leave a caller able to wire one without the other.
+  - **Leaves come from the conductor's membership callback**, the
+    mechanism the viz bridge uses until membership crosses the transport
+    at milestone 7. A car's first leaf to leave drops it.

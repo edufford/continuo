@@ -1241,10 +1241,9 @@ all).
   `ConstantSpeed` through M6 (see PR H).
 - highway.rs: `DEMO_WORLD_HASH` moves; README sample output moves in the
   same commit. `a_car_leaves_as_a_whole_actor` expects `[radar,
-  controller, physics]`. New: `no_two_same_lane_cars_ever_overlap` (fold
-  the recorded log's poses per actor, sample on a grid, assert every
-  same-lane pair keeps |delta s| >= CAR_LENGTH; PR G reuses it unchanged)
-  and `following_actually_engages_somewhere` (some traffic car's
+  controller, physics]`. New: `no_two_same_lane_cars_ever_overlap`, which
+  review dropped in favor of the collision monitor's own demo test in PR
+  F, and `following_actually_engages_somewhere` (some traffic car's
   published speed range exceeds 1 m/s, guarding against a mapping that
   quietly feeds free-road forever). Turnover assertions expected to
   survive (the ego still overtakes at 30 m/s); re-verify the seed-42
@@ -1311,8 +1310,9 @@ overlap, so reaching it is a scenario bug worth stopping for).
   scale-scenario one stays true and stays, the spawner's is rewritten to
   describe the parameter rather than the world. README narrative
   rewritten; sample output and `DEMO_WORLD_HASH` move together.
-- highway.rs assertions retuned to the new story: overlap-free everywhere
-  (now covering the ego's lane), the ego's published speed drops
+- highway.rs assertions retuned to the new story: PR F's
+  `no_two_cars_overlap_anywhere_in_the_demo` stays green (it already
+  covers the ego's lane), the ego's published speed drops
   materially below EGO_SPEED (following engaged), retirement still
   occurs, leaves less than joins, determinism/verify/hash tests
   unchanged. A doc comment on the constants block points at the
