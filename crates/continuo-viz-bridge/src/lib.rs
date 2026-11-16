@@ -185,8 +185,11 @@ impl VizBridge {
 
     /// Wraps `inner` so every published message is offered to the viewer.
     pub fn wrap_transport<T: Transport>(&self, inner: T) -> MonitorTransport<T> {
+        let mut transport = MonitorTransport::new(inner);
+        transport.add_message_callback(self.message_callback());
+
         // Return the wrapped transport, tapped for the viewer.
-        MonitorTransport::new(inner, self.message_callback())
+        transport
     }
 
     /// The transport tap, for composing with other monitors by hand.

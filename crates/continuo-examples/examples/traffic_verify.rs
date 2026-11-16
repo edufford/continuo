@@ -29,16 +29,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = traffic_world::config();
     let verifier = Verifier::new(expected, &config);
     let live_traffic_handler = LiveTrafficHandler::default();
-    let mut conductor = Conductor::new(
-        config,
-        live_traffic_handler.wrap_transport(MonitorTransport::new(
-            InProcTransport::new(),
-            verifier.message_callback(),
-        )),
-    )?;
+    let mut transport = MonitorTransport::new(InProcTransport::new());
+    transport.add_message_callback(verifier.message_callback());
+    transport.add_message_callback(live_traffic_handler.message_callback());
+    let mut conductor = Conductor::new(config, transport)?;
     conductor.add_tick_callback(verifier.tick_callback());
     conductor.add_membership_callback(verifier.membership_callback());
-    traffic_world::setup_live_traffic_scenario(&mut conductor, &live_traffic_handler)?;
+    conductor.add_membership_callback(live_traffic_handler.membership_callback());
+    traffic_world::setup_live_traffic_scenario(&mut conductor)?;
 
     // The same driver every other example uses, which is what makes this a
     // re-run rather than a lookalike; the verifier only adds a reason to

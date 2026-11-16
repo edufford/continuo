@@ -23,7 +23,7 @@
 use continuo_conductor::{Conductor, Pacing};
 use continuo_core::SimTime;
 use continuo_examples::traffic_world::{self, LiveTrafficHandler};
-use continuo_transport::InProcTransport;
+use continuo_transport::{InProcTransport, MonitorTransport};
 use continuo_viz_bridge::{VizBridge, ZenohSink};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -39,15 +39,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let zenoh_sink = ZenohSink::new()?;
     let viz_bridge = VizBridge::new(&config, zenoh_sink);
 
-    // Two observers on the transport: the request handler the scenario needs
-    // in order to run at all, wrapped by the bridge that watches it.
     let live_traffic_handler = LiveTrafficHandler::default();
-    let transport =
-        viz_bridge.wrap_transport(live_traffic_handler.wrap_transport(InProcTransport::new()));
+    let mut transport = MonitorTransport::new(InProcTransport::new());
+    transport.add_message_callback(viz_bridge.message_callback());
+    transport.add_message_callback(live_traffic_handler.message_callback());
 
     let mut conductor = Conductor::new(config, transport)?;
     conductor.add_membership_callback(viz_bridge.membership_callback());
-    traffic_world::setup_live_traffic_scenario(&mut conductor, &live_traffic_handler)?;
+    conductor.add_membership_callback(live_traffic_handler.membership_callback());
+    traffic_world::setup_live_traffic_scenario(&mut conductor)?;
 
     println!(
         "publishing to continuo_viz/{}/** ; start a viewer to watch",

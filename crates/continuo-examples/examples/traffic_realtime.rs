@@ -16,7 +16,7 @@
 use continuo_conductor::{Conductor, Pacing};
 use continuo_core::SimTime;
 use continuo_examples::traffic_world::{self, LiveTrafficHandler};
-use continuo_transport::InProcTransport;
+use continuo_transport::{InProcTransport, MonitorTransport};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     continuo_examples::init_logging();
@@ -34,11 +34,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Pacing::real_time()
     };
     let live_traffic_handler = LiveTrafficHandler::default();
-    let mut conductor = Conductor::new(
-        traffic_world::config_paced(pacing),
-        live_traffic_handler.wrap_transport(InProcTransport::new()),
-    )?;
-    traffic_world::setup_live_traffic_scenario(&mut conductor, &live_traffic_handler)?;
+    let mut transport = MonitorTransport::new(InProcTransport::new());
+    transport.add_message_callback(live_traffic_handler.message_callback());
+    let mut conductor = Conductor::new(traffic_world::config_paced(pacing), transport)?;
+    conductor.add_membership_callback(live_traffic_handler.membership_callback());
+    traffic_world::setup_live_traffic_scenario(&mut conductor)?;
 
     // Wall time is fine to read here: the example's main is outside the
     // simulation, where wall clocks are forbidden.

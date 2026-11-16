@@ -33,12 +33,12 @@ use continuo_actors::{
 };
 use continuo_conductor::record::LogEvent;
 use continuo_conductor::{
-    Conductor, ConductorConfig, ConductorError, EventLog, JoinMetadata, Pacing, PlaybackComponent,
-    Verifier, WORLD_LEVEL,
+    Conductor, ConductorConfig, ConductorError, EventLog, JoinMetadata, MembershipChange, Pacing,
+    PlaybackComponent, Verifier, WORLD_LEVEL,
 };
 use continuo_core::{Component, ComponentId, CoreError, Message, SimDuration, SimTime};
 use continuo_fmi::{FmuComponent, FmuConstructionError, FmuMapping, InputBinding, OutputBinding};
-use continuo_transport::{MonitorTransport, Transport};
+use continuo_transport::Transport;
 use serde_json::json;
 
 use crate::collision::{Collision, CollisionMonitor};
@@ -416,17 +416,12 @@ fn add_spawner<T: Transport>(conductor: &mut Conductor<T>) -> Result<(), Conduct
 /// while the run is under way, so this is the whole world only at sim time
 /// zero, and [`run_live_traffic_scenario`] is what builds the rest of it.
 ///
-/// Also registers `live_traffic_handler` for leaves, so its collision watch
-/// removes cars that have gone.
-///
 /// *Live* because the traffic is decided as the run happens. `traffic_resim`
 /// assembles the other kind by hand: the same ego and logger, but no
 /// spawner, and cars played back from a log rather than chosen.
 pub fn setup_live_traffic_scenario<T: Transport>(
     conductor: &mut Conductor<T>,
-    live_traffic_handler: &LiveTrafficHandler,
 ) -> Result<(), ScenarioError> {
-    live_traffic_handler.watch_membership(conductor);
     add_ego(conductor, EGO_START, EGO_LANE, EGO_SPEED)?;
     add_spawner(conductor)?;
     add_logger(conductor)?;
@@ -609,7 +604,7 @@ enum Request {
 impl LiveTrafficHandler {
     /// A `MonitorTransport` callback that picks the spawner's requests and
     /// every car's pose out of the traffic.
-    pub fn callback(&self) -> impl FnMut(&Message) + Send + 'static {
+    pub fn message_callback(&self) -> impl FnMut(&Message) + Send + 'static {
         let mut collect_requests = self.request_callback();
         let mut collect_poses = self.collisions.message_callback();
 
@@ -620,12 +615,18 @@ impl LiveTrafficHandler {
         }
     }
 
+    /// A membership callback that tells the collision watch when a car leaves.
+    pub fn membership_callback(&self) -> impl FnMut(&MembershipChange) + Send + 'static {
+        self.collisions.membership_callback()
+    }
+
     /// The collision watch.
     pub fn collisions(&self) -> &CollisionMonitor {
         &self.collisions
     }
 
-    /// The half of [`Self::callback`] that collects the spawner's requests.
+    /// The half of [`Self::message_callback`] that collects the spawner's
+    /// requests.
     fn request_callback(&self) -> impl FnMut(&Message) + Send + 'static {
         let pending_requests = self.pending_requests.clone();
         let unreadable_request = self.unreadable_request.clone();
@@ -666,28 +667,6 @@ impl LiveTrafficHandler {
                 }
             }
         }
-    }
-
-    /// Wraps `inner` so the handler reads what is published, for
-    /// [`run_live_traffic_scenario`] to act on.
-    ///
-    /// Takes a transport rather than building one, so an example that also
-    /// wants its own observer nests the two:
-    ///
-    /// ```ignore
-    /// live_traffic_handler.wrap_transport(MonitorTransport::new(
-    ///     InProcTransport::new(),
-    ///     recorder.message_callback(),
-    /// ))
-    /// ```
-    pub fn wrap_transport<T: Transport>(&self, inner: T) -> MonitorTransport<T> {
-        // Return the transport with the handler's reading layered on.
-        MonitorTransport::new(inner, self.callback())
-    }
-
-    /// Has the conductor tell the collision watch when a car leaves.
-    fn watch_membership<T: Transport>(&self, conductor: &mut Conductor<T>) {
-        conductor.add_membership_callback(self.collisions.membership_callback());
     }
 
     /// Applies everything the spawner has asked for since the last call,
@@ -815,7 +794,7 @@ pub fn run_playback_traffic_scenario<T: Transport>(
 
 #[cfg(test)]
 mod tests {
-    use continuo_transport::InProcTransport;
+    use continuo_transport::{InProcTransport, MonitorTransport};
 
     use super::*;
 
@@ -839,17 +818,15 @@ mod tests {
     }
 
     /// A live world holding only `cars`, watched by `live_traffic_handler`
-    /// the way [`setup_live_traffic_scenario`] watches the demo.
+    /// the way the examples watch the demo.
     fn watched_world(
         live_traffic_handler: &LiveTrafficHandler,
         cars: &[Car],
     ) -> Conductor<MonitorTransport<InProcTransport>> {
-        let mut conductor = Conductor::new(
-            config(),
-            live_traffic_handler.wrap_transport(InProcTransport::new()),
-        )
-        .expect("config is accepted");
-        live_traffic_handler.watch_membership(&mut conductor);
+        let mut transport = MonitorTransport::new(InProcTransport::new());
+        transport.add_message_callback(live_traffic_handler.message_callback());
+        let mut conductor = Conductor::new(config(), transport).expect("config is accepted");
+        conductor.add_membership_callback(live_traffic_handler.membership_callback());
         add_cars(&mut conductor, cars);
 
         // Return the world, ready to run.
