@@ -122,8 +122,8 @@ mod tests {
         monitor.add_message_callback(tagging("first"));
         monitor.add_message_callback(tagging("second"));
 
-        monitor.publish(msg("w/data", 0));
+        monitor.publish(msg("w/data", 7));
 
-        assert_eq!(*seen.lock().unwrap(), vec![("first", 0), ("second", 0)]);
+        assert_eq!(*seen.lock().unwrap(), vec![("first", 7), ("second", 7)]);
     }
 }
