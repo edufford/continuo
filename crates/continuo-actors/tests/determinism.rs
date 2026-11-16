@@ -35,7 +35,8 @@ fn run_world(sim_seconds: i64, world_seed: u64) -> EventLog {
         pacing: Pacing::FreeRun,
     };
     let recorder = Recorder::new(&config);
-    let transport = MonitorTransport::new(InProcTransport::new(), recorder.message_callback());
+    let mut transport = MonitorTransport::new(InProcTransport::new());
+    transport.add_message_callback(recorder.message_callback());
 
     // 72 samples = one point per 5 degrees of arc; on the 40 m semi-axis the
     // worst-case chord deviation is ~4 cm, smooth enough for the

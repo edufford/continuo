@@ -311,7 +311,8 @@ fn record_a_run_costing(step_cost: Duration) -> EventLog {
     let config = timing_config();
     let steps: StepLog = Default::default();
     let recorder = Recorder::new(&config);
-    let transport = MonitorTransport::new(InProcTransport::new(), recorder.message_callback());
+    let mut transport = MonitorTransport::new(InProcTransport::new());
+    transport.add_message_callback(recorder.message_callback());
     let mut conductor =
         Conductor::new(config, transport).expect("free-run config is always accepted");
     conductor.add_tick_callback(recorder.tick_callback());
@@ -389,7 +390,8 @@ fn a_re_run_that_misses_different_budgets_still_verifies() {
     let config = timing_config();
     let steps: StepLog = Default::default();
     let verifier = Verifier::new(recorded, &config);
-    let transport = MonitorTransport::new(InProcTransport::new(), verifier.message_callback());
+    let mut transport = MonitorTransport::new(InProcTransport::new());
+    transport.add_message_callback(verifier.message_callback());
     let mut conductor =
         Conductor::new(config, transport).expect("free-run config is always accepted");
     conductor.add_tick_callback(verifier.tick_callback());
@@ -434,7 +436,8 @@ fn the_log_says_why_a_timed_out_component_left() {
     let config = timing_config();
     let steps: StepLog = Default::default();
     let recorder = Recorder::new(&config);
-    let transport = MonitorTransport::new(InProcTransport::new(), recorder.message_callback());
+    let mut transport = MonitorTransport::new(InProcTransport::new());
+    transport.add_message_callback(recorder.message_callback());
     let mut conductor =
         Conductor::new(config, transport).expect("free-run config is always accepted");
     conductor.add_tick_callback(recorder.tick_callback());

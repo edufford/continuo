@@ -14,7 +14,7 @@ use continuo_actors::traffic_spawn_key;
 use continuo_conductor::{Conductor, WORLD_LEVEL};
 use continuo_core::{Component, ComponentId, CoreError, KeyExpr, SimDuration, SimTime, StepCtx};
 use continuo_examples::traffic_world::{self, TrafficRequestHandler};
-use continuo_transport::InProcTransport;
+use continuo_transport::{InProcTransport, MonitorTransport};
 
 /// Publishes one request the handler cannot decode, on a key it does read.
 ///
@@ -52,11 +52,10 @@ impl Component for Saboteur {
 /// Runs two seconds of the demo, with or without the saboteur in the world.
 fn run_demo(sabotaged: bool) -> Result<(), traffic_world::ScenarioError> {
     let traffic_request_handler = TrafficRequestHandler::default();
-    let mut conductor = Conductor::new(
-        traffic_world::config(),
-        traffic_request_handler.wrap_transport(InProcTransport::new()),
-    )
-    .expect("free-run config is always accepted");
+    let mut transport = MonitorTransport::new(InProcTransport::new());
+    transport.add_message_callback(traffic_request_handler.message_callback());
+    let mut conductor = Conductor::new(traffic_world::config(), transport)
+        .expect("free-run config is always accepted");
     traffic_world::setup_live_traffic_scenario(&mut conductor).expect("the world builds");
     if sabotaged {
         conductor

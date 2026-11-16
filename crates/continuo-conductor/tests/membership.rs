@@ -286,7 +286,8 @@ fn adding_at_the_start_only_works_before_the_run_starts() {
 fn record_a_dynamic_run(config: &ConductorConfig) -> continuo_conductor::EventLog {
     let steps: StepLog = Default::default();
     let recorder = Recorder::new(config);
-    let transport = MonitorTransport::new(InProcTransport::new(), recorder.message_callback());
+    let mut transport = MonitorTransport::new(InProcTransport::new());
+    transport.add_message_callback(recorder.message_callback());
     let mut conductor =
         Conductor::new(config.clone(), transport).expect("free-run config is always accepted");
     conductor.add_tick_callback(recorder.tick_callback());
@@ -400,7 +401,8 @@ fn a_component_removed_before_its_join_takes_effect_is_never_announced() {
     let steps: StepLog = Default::default();
     let config = membership_config();
     let recorder = Recorder::new(&config);
-    let transport = MonitorTransport::new(InProcTransport::new(), recorder.message_callback());
+    let mut transport = MonitorTransport::new(InProcTransport::new());
+    transport.add_message_callback(recorder.message_callback());
     let mut conductor =
         Conductor::new(config.clone(), transport).expect("free-run config is always accepted");
     conductor.add_tick_callback(recorder.tick_callback());
@@ -478,7 +480,8 @@ fn a_recorded_dynamic_run_verifies_against_a_faithful_re_run() {
     // messages, tick fingerprints, and membership changes alike.
     let steps: StepLog = Default::default();
     let verifier = Verifier::new(expected, &config);
-    let transport = MonitorTransport::new(InProcTransport::new(), verifier.message_callback());
+    let mut transport = MonitorTransport::new(InProcTransport::new());
+    transport.add_message_callback(verifier.message_callback());
     let mut conductor =
         Conductor::new(config, transport).expect("free-run config is always accepted");
     conductor.add_tick_callback(verifier.tick_callback());
@@ -514,7 +517,8 @@ fn a_re_run_that_skips_a_departure_is_caught() {
     // Same world, same join, but `a` never leaves.
     let steps: StepLog = Default::default();
     let verifier = Verifier::new(expected, &config);
-    let transport = MonitorTransport::new(InProcTransport::new(), verifier.message_callback());
+    let mut transport = MonitorTransport::new(InProcTransport::new());
+    transport.add_message_callback(verifier.message_callback());
     let mut conductor =
         Conductor::new(config, transport).expect("free-run config is always accepted");
     conductor.add_tick_callback(verifier.tick_callback());

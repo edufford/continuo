@@ -82,7 +82,8 @@ fn hashing_world(world_seed: u64) -> ConductorConfig {
 fn run_noise_world(world_seed: u64) -> EventLog {
     let config = hashing_world(world_seed);
     let recorder = Recorder::new(&config);
-    let transport = MonitorTransport::new(InProcTransport::new(), recorder.message_callback());
+    let mut transport = MonitorTransport::new(InProcTransport::new());
+    transport.add_message_callback(recorder.message_callback());
     let mut conductor =
         Conductor::new(config, transport).expect("free-run config is always accepted");
     conductor.add_tick_callback(recorder.tick_callback());
@@ -182,7 +183,8 @@ fn live_verification_stops_at_the_first_divergence() {
     // divergence.
     let config = hashing_world(42);
     let checker = Verifier::new(expected, &config);
-    let transport = MonitorTransport::new(InProcTransport::new(), checker.message_callback());
+    let mut transport = MonitorTransport::new(InProcTransport::new());
+    transport.add_message_callback(checker.message_callback());
     let mut conductor =
         Conductor::new(config, transport).expect("free-run config is always accepted");
     conductor.add_tick_callback(checker.tick_callback());
@@ -216,7 +218,8 @@ fn playback_double_reproduces_the_recorded_messages() {
     // double, recording what that playback double publishes.
     let config = hashing_world(42);
     let recorder = Recorder::new(&config);
-    let transport = MonitorTransport::new(InProcTransport::new(), recorder.message_callback());
+    let mut transport = MonitorTransport::new(InProcTransport::new());
+    transport.add_message_callback(recorder.message_callback());
     let mut conductor =
         Conductor::new(config, transport).expect("free-run config is always accepted");
     conductor.add_tick_callback(recorder.tick_callback());

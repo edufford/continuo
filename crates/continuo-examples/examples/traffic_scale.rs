@@ -72,12 +72,11 @@ fn measure(cars: usize, lanes: usize) -> Result<Measurement, Box<dyn std::error:
     let steps = Arc::new(AtomicU64::new(0));
     let counter = Arc::clone(&steps);
 
-    let mut conductor = Conductor::new(
-        traffic_world::config(),
-        MonitorTransport::new(InProcTransport::new(), move |_message| {
-            counter.fetch_add(1, Ordering::Relaxed);
-        }),
-    )?;
+    let mut transport = MonitorTransport::new(InProcTransport::new());
+    transport.add_message_callback(move |_message| {
+        counter.fetch_add(1, Ordering::Relaxed);
+    });
+    let mut conductor = Conductor::new(traffic_world::config(), transport)?;
     traffic_world::setup_scale_scenario(&mut conductor, cars, lanes)?;
 
     // Wall time is fine to read here: the example's main is outside the

@@ -37,7 +37,7 @@ use continuo_conductor::{
 };
 use continuo_core::{Component, ComponentId, CoreError, Message, SimDuration, SimTime};
 use continuo_fmi::{FmuComponent, FmuConstructionError, FmuMapping, InputBinding, OutputBinding};
-use continuo_transport::{MonitorTransport, Transport};
+use continuo_transport::Transport;
 use serde_json::json;
 
 /// One seed for the whole demo family: record, verify, and resim must all
@@ -564,7 +564,7 @@ fn add_logger<T: Transport>(conductor: &mut Conductor<T>) -> Result<(), Conducto
 ///
 /// Both halves are here because they are one job split by a boundary the
 /// sim cannot cross: a component can decide a car should exist but cannot
-/// build one. [`Self::wrap_transport`] wires up the collecting, and
+/// build one. [`Self::message_callback`] does the collecting, and
 /// [`run_live_traffic_scenario`] does the building between ticks.
 #[derive(Clone, Default)]
 pub struct TrafficRequestHandler {
@@ -587,10 +587,9 @@ enum Request {
 }
 
 impl TrafficRequestHandler {
-    /// A monitor callback that picks the spawner's requests out of the
-    /// traffic. Attach it to a `MonitorTransport` wrapping the conductor's
-    /// transport.
-    pub fn callback(&self) -> impl FnMut(&Message) + Send + 'static {
+    /// A `MonitorTransport` callback that picks the spawner's requests out
+    /// of the traffic.
+    pub fn message_callback(&self) -> impl FnMut(&Message) + Send + 'static {
         let pending_requests = self.pending_requests.clone();
         let unreadable_request = self.unreadable_request.clone();
         let spawn = traffic_spawn_key(WORLD_NAME);
@@ -630,23 +629,6 @@ impl TrafficRequestHandler {
                 }
             }
         }
-    }
-
-    /// Wraps `inner` so the spawner's requests are collected as they are
-    /// published, which is what [`run_live_traffic_scenario`] then acts on.
-    ///
-    /// Takes a transport rather than building one, so an example that also
-    /// wants its own observer nests the two:
-    ///
-    /// ```ignore
-    /// traffic_request_handler.wrap_transport(MonitorTransport::new(
-    ///     InProcTransport::new(),
-    ///     recorder.message_callback(),
-    /// ))
-    /// ```
-    pub fn wrap_transport<T: Transport>(&self, inner: T) -> MonitorTransport<T> {
-        // Return the transport with request collection layered on.
-        MonitorTransport::new(inner, self.callback())
     }
 
     /// Applies everything the spawner has asked for since the last call,

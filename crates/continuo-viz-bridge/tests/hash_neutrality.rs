@@ -196,7 +196,8 @@ fn watching_and_recording_the_same_run_leaves_the_log_untouched() {
     // artifact people actually keep.
     let recorded_alone = {
         let recorder = Recorder::new(&config());
-        let transport = MonitorTransport::new(InProcTransport::new(), recorder.message_callback());
+        let mut transport = MonitorTransport::new(InProcTransport::new());
+        transport.add_message_callback(recorder.message_callback());
         let mut conductor = Conductor::new(config(), transport).expect("config is accepted");
         conductor.add_membership_callback(recorder.membership_callback());
         conductor.add_tick_callback(recorder.tick_callback());
@@ -210,7 +211,8 @@ fn watching_and_recording_the_same_run_leaves_the_log_untouched() {
         let recorder = Recorder::new(&config());
         // Both observers on the transport: the recorder inside, the bridge
         // wrapping it.
-        let transport = MonitorTransport::new(InProcTransport::new(), recorder.message_callback());
+        let mut transport = MonitorTransport::new(InProcTransport::new());
+        transport.add_message_callback(recorder.message_callback());
         let mut conductor =
             Conductor::new(config(), bridge.wrap_transport(transport)).expect("config is accepted");
         conductor.add_membership_callback(recorder.membership_callback());
