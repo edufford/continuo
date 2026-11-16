@@ -19,14 +19,11 @@ fn record_highway(seconds: i64) -> EventLog {
     let config = traffic_world::config();
     let recorder = Recorder::new(&config);
     let traffic_request_handler = TrafficRequestHandler::default();
-    let mut conductor = Conductor::new(
-        config,
-        traffic_request_handler.wrap_transport(MonitorTransport::new(
-            InProcTransport::new(),
-            recorder.message_callback(),
-        )),
-    )
-    .expect("free-run config is always accepted");
+    let mut transport = MonitorTransport::new(InProcTransport::new());
+    transport.add_message_callback(recorder.message_callback());
+    transport.add_message_callback(traffic_request_handler.message_callback());
+    let mut conductor =
+        Conductor::new(config, transport).expect("free-run config is always accepted");
     conductor.add_tick_callback(recorder.tick_callback());
     conductor.add_membership_callback(recorder.membership_callback());
     conductor.add_observation_callback(recorder.observation_callback());
@@ -206,14 +203,11 @@ fn verify_highway(recorded: EventLog, seconds: i64) -> (SimTime, Result<usize, D
     let config = traffic_world::config();
     let verifier = Verifier::new(recorded, &config);
     let traffic_request_handler = TrafficRequestHandler::default();
-    let mut conductor = Conductor::new(
-        config,
-        traffic_request_handler.wrap_transport(MonitorTransport::new(
-            InProcTransport::new(),
-            verifier.message_callback(),
-        )),
-    )
-    .expect("free-run config is always accepted");
+    let mut transport = MonitorTransport::new(InProcTransport::new());
+    transport.add_message_callback(verifier.message_callback());
+    transport.add_message_callback(traffic_request_handler.message_callback());
+    let mut conductor =
+        Conductor::new(config, transport).expect("free-run config is always accepted");
     conductor.add_tick_callback(verifier.tick_callback());
     conductor.add_membership_callback(verifier.membership_callback());
     traffic_world::setup_live_traffic_scenario(&mut conductor).expect("the world builds");

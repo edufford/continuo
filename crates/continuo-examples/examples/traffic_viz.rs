@@ -23,7 +23,7 @@
 use continuo_conductor::{Conductor, Pacing};
 use continuo_core::SimTime;
 use continuo_examples::traffic_world::{self, TrafficRequestHandler};
-use continuo_transport::InProcTransport;
+use continuo_transport::{InProcTransport, MonitorTransport};
 use continuo_viz_bridge::{VizBridge, ZenohSink};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -39,11 +39,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let zenoh_sink = ZenohSink::new()?;
     let viz_bridge = VizBridge::new(&config, zenoh_sink);
 
-    // Two observers on the transport: the request handler the scenario needs
-    // in order to run at all, wrapped by the bridge that watches it.
+    // Two observers on the transport: the bridge that watches the run, and
+    // the request handler the scenario needs in order to run at all.
     let traffic_request_handler = TrafficRequestHandler::default();
-    let transport =
-        viz_bridge.wrap_transport(traffic_request_handler.wrap_transport(InProcTransport::new()));
+    let mut transport = MonitorTransport::new(InProcTransport::new());
+    transport.add_message_callback(viz_bridge.message_callback());
+    transport.add_message_callback(traffic_request_handler.message_callback());
 
     let mut conductor = Conductor::new(config, transport)?;
     conductor.add_membership_callback(viz_bridge.membership_callback());

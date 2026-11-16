@@ -2,29 +2,38 @@ use continuo_core::{ComponentPath, KeyExpr, Message};
 
 use crate::Transport;
 
-/// Wraps a transport and invokes a callback for every published message before
-/// it is routed.
+type MessageCallback = Box<dyn FnMut(&Message) + Send>;
+
+/// Wraps a transport and invokes its callbacks for every published message
+/// before it is routed.
 ///
-/// This is the out-of-band observation mechanism: the callback sees **all**
+/// This is the out-of-band observation mechanism: the callbacks see **all**
 /// traffic at publish time, regardless of subscriptions (including messages
 /// nobody subscribes to), with no visibility delay and no presence in the
 /// schedule. Use it for logging, debugging, and recording (the milestone 2
 /// event log builds on this).
 ///
-/// The callback is not part of the simulation: it must never feed data back into
-/// components. In-simulation observers (which see messages under the
+/// The callbacks are not part of the simulation: they must never feed data back
+/// into components. In-simulation observers (which see messages under the
 /// visibility rule, like any participant) are ordinary components instead.
 pub struct MonitorTransport<T: Transport> {
     inner: T,
-    callback: Box<dyn FnMut(&Message) + Send>,
+    callbacks: Vec<MessageCallback>,
 }
 
 impl<T: Transport> MonitorTransport<T> {
-    pub fn new(inner: T, callback: impl FnMut(&Message) + Send + 'static) -> Self {
+    /// Wraps `inner`, with no callbacks until some are added.
+    pub fn new(inner: T) -> Self {
         MonitorTransport {
             inner,
-            callback: Box::new(callback),
+            callbacks: Vec::new(),
         }
+    }
+
+    /// Calls `callback` for every published message, after the callbacks
+    /// added before it.
+    pub fn add_message_callback(&mut self, callback: impl FnMut(&Message) + Send + 'static) {
+        self.callbacks.push(Box::new(callback));
     }
 
     pub fn into_inner(self) -> T {
@@ -42,7 +51,9 @@ impl<T: Transport> Transport for MonitorTransport<T> {
     }
 
     fn publish(&mut self, message: Message) {
-        (self.callback)(&message);
+        for callback in &mut self.callbacks {
+            callback(&message);
+        }
         self.inner.publish(message);
     }
 
@@ -75,7 +86,8 @@ mod tests {
     #[test]
     fn callback_sees_every_publish_even_without_subscribers() {
         let seen = Arc::new(Mutex::new(Vec::new()));
-        let mut monitor = MonitorTransport::new(InProcTransport::new(), {
+        let mut monitor = MonitorTransport::new(InProcTransport::new());
+        monitor.add_message_callback({
             let seen = seen.clone();
             move |m: &Message| seen.lock().unwrap().push(m.key.to_string())
         });
@@ -99,5 +111,21 @@ mod tests {
         let released = monitor.drain(&ComponentPath::parse("sub").unwrap(), &|_| true);
         assert_eq!(released.len(), 1);
         assert_eq!(released[0].seq, 1);
+    }
+
+    #[test]
+    fn added_callbacks_each_see_every_publish_in_the_order_added() {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let tagging = |tag: &'static str| {
+            let seen = seen.clone();
+            move |m: &Message| seen.lock().unwrap().push((tag, m.seq))
+        };
+        let mut monitor = MonitorTransport::new(InProcTransport::new());
+        monitor.add_message_callback(tagging("first"));
+        monitor.add_message_callback(tagging("second"));
+
+        monitor.publish(msg("w/data", 0));
+
+        assert_eq!(*seen.lock().unwrap(), vec![("first", 0), ("second", 0)]);
     }
 }

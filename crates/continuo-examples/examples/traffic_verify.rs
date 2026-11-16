@@ -29,13 +29,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = traffic_world::config();
     let verifier = Verifier::new(expected, &config);
     let traffic_request_handler = TrafficRequestHandler::default();
-    let mut conductor = Conductor::new(
-        config,
-        traffic_request_handler.wrap_transport(MonitorTransport::new(
-            InProcTransport::new(),
-            verifier.message_callback(),
-        )),
-    )?;
+    let mut transport = MonitorTransport::new(InProcTransport::new());
+    transport.add_message_callback(verifier.message_callback());
+    transport.add_message_callback(traffic_request_handler.message_callback());
+    let mut conductor = Conductor::new(config, transport)?;
     conductor.add_tick_callback(verifier.tick_callback());
     conductor.add_membership_callback(verifier.membership_callback());
     traffic_world::setup_live_traffic_scenario(&mut conductor)?;
