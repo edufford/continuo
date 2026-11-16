@@ -39,8 +39,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let zenoh_sink = ZenohSink::new()?;
     let viz_bridge = VizBridge::new(&config, zenoh_sink);
 
-    // Two observers on the transport: the bridge that watches the run, and
-    // the request handler the scenario needs in order to run at all.
     let traffic_request_handler = TrafficRequestHandler::default();
     let mut transport = MonitorTransport::new(InProcTransport::new());
     transport.add_message_callback(viz_bridge.message_callback());

@@ -30,8 +30,6 @@ impl<T: Transport> MonitorTransport<T> {
         }
     }
 
-    /// Calls `callback` for every published message, after the callbacks
-    /// added before it.
     pub fn add_message_callback(&mut self, callback: impl FnMut(&Message) + Send + 'static) {
         self.callbacks.push(Box::new(callback));
     }
