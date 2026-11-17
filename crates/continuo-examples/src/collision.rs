@@ -7,9 +7,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
-use continuo_actors::{CAR_LENGTH, CAR_WIDTH, CarState};
+use continuo_actors::{CAR_LENGTH, CAR_WIDTH};
 use continuo_conductor::{ConductorError, MembershipChange, RecordedCollision};
-use continuo_core::{CoreError, KeyExpr, Message, SimTime};
+use continuo_core::{CoreError, KeyExpr, Message, Pose, SimTime};
 
 use crate::traffic_world::ScenarioError;
 
@@ -58,12 +58,12 @@ impl CollisionMonitor {
             let mut contact_tracker = contact_tracker
                 .lock()
                 .expect("collision monitor mutex is never poisoned");
-            match message.decode::<CarState>() {
-                Ok(state) => {
+            match message.decode::<Pose>() {
+                Ok(pose) => {
                     contact_tracker.poses_seen += 1;
                     contact_tracker.place_on_grid(
                         actor_of(message.key.as_str()),
-                        ActorPlacement::of(&state, message.sim_time),
+                        ActorPlacement::of(&pose, message.sim_time),
                     );
                 }
                 // The callback cannot return an error, so the next check
@@ -163,18 +163,18 @@ struct ActorPlacement {
 }
 
 impl ActorPlacement {
-    fn of(state: &CarState, sim_time: SimTime) -> Self {
+    fn of(pose: &Pose, sim_time: SimTime) -> Self {
         // The pose's rotation of the x axis, by multiplies and adds alone,
         // so no transcendental is evaluated.
-        let q = state.orientation;
+        let q = pose.orientation;
         let x = 1.0 - 2.0 * (q.y * q.y + q.z * q.z);
         let y = 2.0 * (q.x * q.y + q.w * q.z);
         let length = (x * x + y * y).sqrt();
 
         // Return the placement at the pose's position.
         ActorPlacement {
-            x: state.position.x,
-            y: state.position.y,
+            x: pose.position.x,
+            y: pose.position.y,
             forward: (x / length, y / length),
             sim_time,
         }
@@ -184,6 +184,8 @@ impl ActorPlacement {
 /// Whether the footprints of two placed actors, each grown by `margin`,
 /// touch or overlap, by the separating axis test with a zero gap counted as
 /// contact.
+// TODO(PLAN "World and map"): every actor is given a car's size. Read each
+// actor's size from the world spec instead.
 fn are_touching(a: &ActorPlacement, b: &ActorPlacement, margin: f64) -> bool {
     let half_length = CAR_LENGTH / 2.0 + margin;
     let half_width = CAR_WIDTH / 2.0 + margin;
@@ -356,7 +358,7 @@ impl ContactTracker {
 
 #[cfg(test)]
 mod tests {
-    use continuo_core::{Pose, Quat, Vec3};
+    use continuo_core::{Quat, Vec3};
     use proptest::prelude::*;
 
     use super::*;
@@ -380,18 +382,15 @@ mod tests {
     fn a_placement_points_where_the_pose_does() {
         // Built from the quaternion of a quarter turn left, so the forward
         // axis should come out pointing north.
-        let state = CarState::new(
-            Pose {
-                position: Vec3 {
-                    x: 3.0,
-                    y: -2.0,
-                    z: 0.0,
-                },
-                orientation: Quat::from_yaw(std::f64::consts::FRAC_PI_2),
+        let pose = Pose {
+            position: Vec3 {
+                x: 3.0,
+                y: -2.0,
+                z: 0.0,
             },
-            10.0,
-        );
-        let found = ActorPlacement::of(&state, SimTime::ZERO);
+            orientation: Quat::from_yaw(std::f64::consts::FRAC_PI_2),
+        };
+        let found = ActorPlacement::of(&pose, SimTime::ZERO);
         assert_eq!((found.x, found.y), (3.0, -2.0));
         assert!(found.forward.0.abs() < 1e-12, "{found:?}");
         assert!((found.forward.1 - 1.0).abs() < 1e-12, "{found:?}");

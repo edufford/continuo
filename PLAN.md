@@ -431,6 +431,8 @@ component in particular.
   ids, optional parent, transform, and an open-ended properties bag, so v1 stays
   basic (frames, geometry, paths) while later growth (semantic tags, spawn
   points, richer geometry) extends nodes instead of reshaping the schema.
+- An actor's **size** belongs in the spec too. The collision monitor gives
+  every actor a car's footprint until an actor can declare its own.
 
 ## Scenario configuration
 
