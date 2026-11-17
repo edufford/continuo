@@ -12,7 +12,7 @@ use continuo_conductor::record::LogEvent;
 use continuo_conductor::{
     Conductor, Divergence, EventLog, RecordedObservation, Recorder, Verifier,
 };
-use continuo_core::SimTime;
+use continuo_core::{ComponentPath, SimTime};
 use continuo_examples::traffic_world::{self, LiveTrafficHandler};
 use continuo_transport::{InProcTransport, MonitorTransport};
 
@@ -142,7 +142,8 @@ fn a_car_leaves_as_a_whole_actor() {
     let log = record_highway(traffic_world::SIM_SECONDS);
     let left = left(&log);
     let first = left.first().expect("the ego overtakes somebody");
-    let actor = first.split('/').next().expect("a leaf path has an actor");
+    let path = ComponentPath::parse(first).expect("a leave names a valid path");
+    let actor = path.actor().expect("a leaf path has an actor").as_str();
 
     let pair: Vec<&&str> = left.iter().filter(|p| p.starts_with(actor)).collect();
     assert_eq!(

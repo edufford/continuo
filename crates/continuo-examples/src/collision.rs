@@ -7,9 +7,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
-use continuo_actors::{CAR_LENGTH, CAR_WIDTH};
+use continuo_actors::{CAR_LENGTH, CAR_WIDTH, actor_of_pose_key};
 use continuo_conductor::{ConductorError, MembershipChange, RecordedCollision};
-use continuo_core::{CoreError, KeyExpr, Message, Pose, SimTime};
+use continuo_core::{ComponentPath, CoreError, KeyExpr, Message, Pose, SimTime};
 
 use crate::traffic_world::ScenarioError;
 
@@ -62,7 +62,7 @@ impl CollisionMonitor {
                 Ok(pose) => {
                     contact_tracker.poses_seen += 1;
                     contact_tracker.place_on_grid(
-                        actor_of(message.key.as_str()),
+                        actor_of_pose_key(message.key.as_str()),
                         ActorPlacement::of(&pose, message.sim_time),
                     );
                 }
@@ -85,11 +85,13 @@ impl CollisionMonitor {
         move |change: &MembershipChange| {
             // The first of a car's components to leave removes the car.
             if let MembershipChange::Left(leave) = change {
-                let actor = leave.path.split('/').next().unwrap_or(&leave.path);
-                contact_tracker
-                    .lock()
-                    .expect("collision monitor mutex is never poisoned")
-                    .remove(actor);
+                let path = ComponentPath::parse(&leave.path).expect("a leave names a valid path");
+                if let Some(actor) = path.actor() {
+                    contact_tracker
+                        .lock()
+                        .expect("collision monitor mutex is never poisoned")
+                        .remove(actor.as_str());
+                }
             }
         }
     }
@@ -138,15 +140,6 @@ impl CollisionMonitor {
             .lock()
             .expect("collision monitor mutex is never poisoned")
     }
-}
-
-/// The actor a pose key belongs to: the segment after `actor`.
-fn actor_of(pose_key: &str) -> &str {
-    pose_key
-        .split('/')
-        .skip_while(|segment| *segment != "actor")
-        .nth(1)
-        .expect("a pose key names the actor it belongs to")
 }
 
 /// An actor's position and heading in the plane, and when they were

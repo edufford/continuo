@@ -89,6 +89,15 @@ pub fn pose_key(world_name: &str, actor_name: &str) -> KeyExpr {
     KeyExpr::new_rooted(format!("{world_name}/actor/{actor_name}/pose")).expect("valid pose key")
 }
 
+/// The actor a pose key belongs to: the segment after `actor`. Panics on a
+/// key with none, which [`pose_key`] never builds.
+pub fn actor_of_pose_key(key: &str) -> &str {
+    key.split('/')
+        .skip_while(|segment| *segment != "actor")
+        .nth(1)
+        .expect("a pose key names the actor it belongs to")
+}
+
 /// Key for the acceleration commanded to an actor in `world`.
 pub fn accel_cmd_key(world_name: &str, actor_name: &str) -> KeyExpr {
     KeyExpr::new_rooted(format!("{world_name}/actor/{actor_name}/accel_cmd"))

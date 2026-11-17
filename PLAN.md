@@ -797,13 +797,13 @@ under "Wire format", rather than churning the fingerprint once apiece.
   projects every pose in the world onto the road and filters, which is
   work proportional to the population for every sensor at every scan. A
   quadtree, or a per-lane sort by arc length, would answer against what
-  is local instead, and the collision monitor's pair scan wants the same
-  structure. It would also bound a scan properly: `MAX_DETECTIONS` is a
-  defensive cap that sorts by range to choose what to drop, where
-  locality would have decided already. Deferred because no world here
-  reaches the cap, and because it belongs with the consolidated scene
-  view above, the other consumer that wants the world rather than every
-  message in it.
+  is local instead, and the collision monitor could share it in place of
+  the uniform grid it keeps for itself. It would also bound a scan
+  properly: `MAX_DETECTIONS` is a defensive cap that sorts by range to
+  choose what to drop, where locality would have decided already.
+  Deferred because no world here reaches the cap, and because it belongs
+  with the consolidated scene view above, the other consumer that wants
+  the world rather than every message in it.
 
 - **A subscriber cannot ask for only the latest message per key.** The
   visibility rule queues every message until the subscriber next runs, so a

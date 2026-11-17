@@ -78,6 +78,12 @@ impl ComponentPath {
         self.0.is_empty()
     }
 
+    /// The actor this path belongs to: the id of its top-level component, or
+    /// `None` for the root.
+    pub fn actor(&self) -> Option<&ComponentId> {
+        self.0.first()
+    }
+
     /// Returns a new path with `id` appended, like `Path::join`.
     pub fn join(&self, id: ComponentId) -> ComponentPath {
         let mut segments = self.0.clone();
