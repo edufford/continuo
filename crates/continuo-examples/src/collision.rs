@@ -282,11 +282,11 @@ impl ContactTracker {
                     let Some(neighbors) = self.grid.get(&(neighbor_column, neighbor_row)) else {
                         continue;
                     };
+                    // Each pair once, under one name: the smaller actor name
+                    // first, and never a car with itself. Collision episodes
+                    // are keyed by that name.
                     for first in cars {
-                        for second in neighbors.range::<String, _>((
-                            std::ops::Bound::Excluded(first),
-                            std::ops::Bound::Unbounded,
-                        )) {
+                        for second in neighbors.iter().filter(|second| *second > first) {
                             pairs.insert((first.clone(), second.clone()));
                         }
                     }
@@ -515,7 +515,8 @@ mod tests {
         for (first, (a, _)) in &contact_tracker.cars {
             for (second, (b, _)) in contact_tracker
                 .cars
-                .range::<String, _>((std::ops::Bound::Excluded(first), std::ops::Bound::Unbounded))
+                .iter()
+                .filter(|(second, _)| *second > first)
             {
                 if are_touching(a, b, 0.0) {
                     pairs.insert((first.clone(), second.clone()));
