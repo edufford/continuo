@@ -872,6 +872,14 @@ under "Wire format", rather than churning the fingerprint once apiece.
     time between joins. Proving a fix wants a churn measurement, since
     `traffic_scale` joins every car before its timer starts.
 
+- **Pacing slips recorded in the event log.** When real-time pacing falls
+  behind past its re-anchor threshold, the slip is counted by
+  `Conductor::overrun_reanchor_count` and warned through `tracing`, and
+  neither reaches the log, so a recorded run cannot say afterwards that it
+  fell behind real time. It belongs as a `RecordedObservation` beside the
+  budget misses, being a fact about the machine that differs between
+  identical runs. Deferred because nothing has needed it yet.
+
 - **Road-network importer**: which format (OpenDRIVE, Lanelet2, other) lowers
   into the world spec; decide when realistic road scenarios are needed.
 

@@ -9,20 +9,15 @@
 
 use continuo_actors::AccelCmd;
 use continuo_conductor::record::LogEvent;
-use continuo_conductor::{Conductor, Divergence, EventLog, Recorder, Verifier};
+use continuo_conductor::{
+    Conductor, Divergence, EventLog, RecordedObservation, Recorder, Verifier,
+};
 use continuo_core::SimTime;
 use continuo_examples::traffic_world::{self, LiveTrafficHandler};
 use continuo_transport::{InProcTransport, MonitorTransport};
 
 /// Runs the demo world for `seconds`, returning its recorded log.
 fn record_highway(seconds: i64) -> EventLog {
-    // Return the log alone, for the tests with no use for the handler.
-    record_watched_highway(seconds).0
-}
-
-/// Runs the demo world for `seconds`, returning its recorded log and the
-/// handler that drove it.
-fn record_watched_highway(seconds: i64) -> (EventLog, LiveTrafficHandler) {
     let config = traffic_world::config();
     let recorder = Recorder::new(&config);
     let live_traffic_handler = LiveTrafficHandler::default();
@@ -44,8 +39,8 @@ fn record_watched_highway(seconds: i64) -> (EventLog, LiveTrafficHandler) {
     )
     .expect("the run completes");
 
-    // Return the recorded log, and the handler with what it watched.
-    (recorder.finish(), live_traffic_handler)
+    // Return the recorded log.
+    recorder.finish()
 }
 
 /// Actor names in the order they joined and left, from a recorded log.
@@ -98,17 +93,16 @@ fn traffic_arrives_and_retires_while_the_run_is_under_way() {
 }
 
 #[test]
-fn no_two_cars_overlap_anywhere_in_the_demo() {
-    // The ego's collisions halt the run, so this checks the traffic's,
-    // which only warn.
-    let (_, live_traffic_handler) = record_watched_highway(traffic_world::SIM_SECONDS);
-    let collisions = live_traffic_handler.collisions();
-    assert!(collisions.poses_seen() > 0, "the monitor watched nothing");
-    assert_eq!(
-        collisions.num_collisions(),
-        0,
-        "cars overlapped in the demo"
-    );
+fn no_two_cars_collide_anywhere_in_the_demo() {
+    // An ego collision would fail the run inside `record_highway`. Traffic
+    // collisions do not stop the run, so this looks for them in the log.
+    let log = record_highway(traffic_world::SIM_SECONDS);
+    let collisions: Vec<_> = log
+        .events
+        .iter()
+        .filter(|event| matches!(event, LogEvent::Observed(RecordedObservation::Collision(_))))
+        .collect();
+    assert!(collisions.is_empty(), "{collisions:?}");
 }
 
 #[test]

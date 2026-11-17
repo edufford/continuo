@@ -34,14 +34,14 @@ use continuo_actors::{
 use continuo_conductor::record::LogEvent;
 use continuo_conductor::{
     Conductor, ConductorConfig, ConductorError, EventLog, JoinMetadata, MembershipChange, Pacing,
-    PlaybackComponent, Verifier, WORLD_LEVEL,
+    PlaybackComponent, RecordedCollision, RecordedObservation, Verifier, WORLD_LEVEL,
 };
 use continuo_core::{Component, ComponentId, CoreError, Message, SimDuration, SimTime};
 use continuo_fmi::{FmuComponent, FmuConstructionError, FmuMapping, InputBinding, OutputBinding};
 use continuo_transport::Transport;
 use serde_json::json;
 
-use crate::collision::{Collision, CollisionMonitor};
+use crate::collision::CollisionMonitor;
 
 /// One seed for the whole demo family: record, verify, and resim must all
 /// agree on it.
@@ -128,8 +128,8 @@ pub enum ScenarioError {
     },
 
     /// The ego touched another car, which its controller should prevent.
-    #[error(transparent)]
-    Collision(#[from] Collision),
+    #[error("{} and {} collided at sim time {}", .0.first, .0.second, .0.sim_time)]
+    EgoCollision(RecordedCollision),
 }
 
 /// A handle on the one road every car in this world drives, built once and
@@ -669,6 +669,30 @@ impl LiveTrafficHandler {
         }
     }
 
+    /// Records the collisions that began since the last call, failing on
+    /// the ego's.
+    fn process_collisions<T: Transport>(
+        &self,
+        conductor: &mut Conductor<T>,
+    ) -> Result<(), ScenarioError> {
+        let collisions = match self.collisions.check() {
+            Ok(collisions) => collisions,
+            // The ego's collision halts the run, recorded first so the log
+            // says why.
+            Err(ScenarioError::EgoCollision(collision)) => {
+                conductor.report_observation(RecordedObservation::Collision(collision.clone()));
+                return Err(ScenarioError::EgoCollision(collision));
+            }
+            Err(error) => return Err(error),
+        };
+        for collision in collisions {
+            conductor.report_observation(RecordedObservation::Collision(collision));
+        }
+
+        // Return success; no collision involved the ego.
+        Ok(())
+    }
+
     /// Applies everything the spawner has asked for since the last call,
     /// in the order it asked.
     ///
@@ -764,7 +788,7 @@ pub fn run_live_traffic_scenario<T: Transport>(
         conductor.step_once()?;
         // Before the requests, so a collision names the cars it happened
         // among.
-        live_traffic_handler.collisions.check()?;
+        live_traffic_handler.process_collisions(conductor)?;
         live_traffic_handler.apply(conductor)?;
     }
 
@@ -794,6 +818,7 @@ pub fn run_playback_traffic_scenario<T: Transport>(
 
 #[cfg(test)]
 mod tests {
+    use continuo_conductor::Recorder;
     use continuo_transport::{InProcTransport, MonitorTransport};
 
     use super::*;
@@ -833,6 +858,19 @@ mod tests {
         conductor
     }
 
+    /// The collisions an event log recorded, in order.
+    fn recorded_collisions(log: &EventLog) -> Vec<RecordedCollision> {
+        log.events
+            .iter()
+            .filter_map(|event| match event {
+                LogEvent::Observed(RecordedObservation::Collision(collision)) => {
+                    Some(collision.clone())
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
     /// A faster car catching a slower one in the same traffic lane. They
     /// drive through each other, since nothing here models a crash.
     const CONVERGING: [Car; 2] = [
@@ -846,6 +884,8 @@ mod tests {
         // one at about 4.5 s and is clear of it by 5.5 s.
         let live_traffic_handler = LiveTrafficHandler::default();
         let mut conductor = watched_world(&live_traffic_handler, &CONVERGING);
+        let recorder = Recorder::new(&config());
+        conductor.add_observation_callback(recorder.observation_callback());
         run_live_traffic_scenario(
             &mut conductor,
             &live_traffic_handler,
@@ -853,7 +893,13 @@ mod tests {
             None,
         )
         .expect("traffic overlapping is a warning, not a halt");
-        assert_eq!(live_traffic_handler.collisions().num_collisions(), 1);
+
+        let collisions = recorded_collisions(&recorder.finish());
+        assert_eq!(collisions.len(), 1, "{collisions:?}");
+        assert_eq!(
+            (collisions[0].first.as_str(), collisions[0].second.as_str()),
+            ("fast", "slow")
+        );
     }
 
     #[test]
@@ -867,6 +913,8 @@ mod tests {
                 ("slow", 50.0, EGO_LANE, 10.0),
             ],
         );
+        let recorder = Recorder::new(&config());
+        conductor.add_observation_callback(recorder.observation_callback());
         let error = run_live_traffic_scenario(
             &mut conductor,
             &live_traffic_handler,
@@ -875,19 +923,27 @@ mod tests {
         )
         .expect_err("the ego running into a car halts the run");
 
-        let ScenarioError::Collision(collision) = &error else {
-            panic!("expected a collision, got {error}");
+        let ScenarioError::EgoCollision(collision) = &error else {
+            panic!("expected the ego's collision, got {error}");
         };
-        assert_eq!(collision.ego, EGO_NAME);
-        assert_eq!(collision.other, "slow");
+        assert_eq!(
+            (collision.first.as_str(), collision.second.as_str()),
+            (EGO_NAME, "slow")
+        );
         assert!(
-            (2.2..2.4).contains(&collision.at.as_secs_f64()),
-            "{collision}"
+            (2.2..2.4).contains(&collision.sim_time.as_secs_f64()),
+            "{error}"
         );
         let message = error.to_string();
         assert!(
             message.contains(EGO_NAME) && message.contains("slow"),
             "{message}"
+        );
+
+        // Recorded before the halt, so the log says why the run stopped.
+        assert_eq!(
+            recorded_collisions(&recorder.finish()),
+            vec![collision.clone()]
         );
     }
 
@@ -905,7 +961,7 @@ mod tests {
         let mut conductor = watched_world(&kept, &parked);
         assert!(matches!(
             run_live_traffic_scenario(&mut conductor, &kept, end, None),
-            Err(ScenarioError::Collision(_))
+            Err(ScenarioError::EgoCollision(_))
         ));
 
         // Removed at 1 s, its last pose goes with it.

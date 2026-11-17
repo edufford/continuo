@@ -1586,44 +1586,35 @@ it got there, including the roads not taken.
   - **The Python viewer is unaffected.** `eclipse-zenoh` is a wheel built
     with every transport, and it speaks TCP to the bridge as before.
 
-- **2026-11-06**: **Collision detection is a transport monitor that warns
-  for traffic and halts for the ego.** `CollisionMonitor` reads every car's
-  pose off the transport and checks between ticks, outside the sim: the
-  poses are already on the wire, and a component would move the world hash
-  and the schedule. An overlap between two traffic cars is logged once per
-  collision episode, while one involving the ego stops the run, because the
-  demo's claim is that the ego's controller prevents it, so reaching one is
-  a scenario bug worth stopping for. The demo hash does not move.
+- **2026-11-06**: **Collision detection is a transport monitor that records
+  every collision and halts for the ego.** `CollisionMonitor` reads poses
+  off the transport and checks after each instant, outside the sim, since a
+  component would move the world hash and the schedule. Traffic collisions
+  warn and the run goes on. An ego collision stops it, since the ego's
+  controller should prevent one, so reaching it means that controller
+  failed.
+  - **A collision is an observation, not an expectation.** The poses
+    already determine it, so comparing it would add nothing, and would fail
+    a run recorded without the monitor. `check` returns the collisions and
+    the run loop reports them through `Conductor::report_observation`, so
+    the monitor needs no conductor. The ego's is reported before its error
+    returns, so the log says why the run stopped.
   - **Footprints in world coordinates, not lane bands.** Each car is a
-    `CAR_LENGTH` by `CAR_WIDTH` rectangle at its pose, tested with the
-    separating axis test, and touching counts: cars that meet with no gap
-    have collided. A test on lane offset and distance along the road would
-    assume one road, and miss cars meeting at a merge, a crossing or mid
-    lane change. The heading comes from the quaternion by multiplies and
-    adds, so no transcendental is evaluated. `CAR_WIDTH` joins `CAR_LENGTH`
-    in `continuo-actors`, mirrored in the viewer.
-  - **A grid from the start, checked against every pair.** The grid finds
-    only new contacts, and its cells are about 1.3 m wider than the furthest
-    apart two touching cars can be, so rounding cannot file such a pair two
-    cells apart. A pair already in a collision episode is checked directly
-    rather than through the grid, so whether a collision episode goes on
-    never depends on the cells its cars are in. A check costs the cars
-    present rather than every pair of them. A property test runs random
-    moves and leaves and asserts the grid finds exactly the touching pairs
-    checking every pair finds; halving the cell fails it at once. Rejected:
-    checking every pair, which grows with the square of the population; a
-    sweep along the road, which assumes one road; a quadtree or KD tree,
-    since every car is one size and moves every tick, so a tree would be
-    rebalanced or rebuilt each tick for nothing.
-  - **A collision episode ends once the footprints part by a margin.** A
-    pair starts one when its footprints touch and ends it when footprints
-    grown by 0.5 m are apart, so a pair hovering at contact reports once.
-  - **One handle carries the requests and the watch.**
-    `TrafficRequestHandler` becomes `LiveTrafficHandler`: its transport
-    callback feeds both, `setup_live_traffic_scenario` takes it to register
-    the leave callback, and `run_live_traffic_scenario` checks before
-    applying requests each tick. A separate monitor passed alongside would
-    leave a caller able to wire one without the other.
-  - **Leaves come from the conductor's membership callback**, the
-    mechanism the viz bridge uses until membership crosses the transport
-    at milestone 7. A car's first leaf to leave drops it.
+    `CAR_LENGTH` by `CAR_WIDTH` rectangle at its pose, and touching counts.
+    A test on lane offset would assume one road and miss cars meeting at a
+    merge or a crossing. The heading comes from the quaternion with no
+    transcendental.
+  - **A uniform grid finds actor pairs with new collisions.** Its cells
+    are wider than two touching cars can be apart, and a pair already in a
+    collision episode is checked directly instead. A property test
+    checks it against every pair. Rejected: every pair, which grows with
+    the square of the population; a sweep along the road, which assumes one
+    road; a quadtree or KD tree, which would be rebuilt at every check for
+    cars all of one size.
+  - **A collision episode ends once the footprints part by 0.5 m**, so a
+    pair hovering at contact reports once.
+  - **`LiveTrafficHandler` carries the requests and the monitor**, renamed
+    from `TrafficRequestHandler`, since the run loop handles both after
+    each instant. Leaves come from the conductor's membership callback, as
+    the viz bridge's do until membership crosses the transport at
+    milestone 7.

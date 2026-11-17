@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
 use continuo_actors::{CAR_LENGTH, CAR_WIDTH, CarState};
-use continuo_conductor::{ConductorError, MembershipChange};
+use continuo_conductor::{ConductorError, MembershipChange, RecordedCollision};
 use continuo_core::{CoreError, KeyExpr, Message, SimTime};
 
 use crate::traffic_world::ScenarioError;
@@ -17,19 +17,9 @@ use crate::traffic_world::ScenarioError;
 /// episode to count as still in contact.
 const CONTACT_MARGIN: f64 = 0.5;
 
-/// The ego's footprint touching or overlapping another car's.
-#[derive(Debug, Clone, PartialEq, thiserror::Error)]
-#[error("{ego} collided with {other} at sim time {at}")]
-pub struct Collision {
-    pub ego: String,
-    pub other: String,
-    /// The later of the two poses that touched.
-    pub at: SimTime,
-}
-
 /// Watches every car for contact with another: traffic in contact logs a
 /// warning once per collision episode, and the ego in contact stops the run
-/// with [`ScenarioError::Collision`].
+/// with [`ScenarioError::EgoCollision`].
 // TODO(M7): each check is a snapshot of every car's latest pose, which holds
 // while every car publishes often and at the same instants. Remote hosts may
 // publish less often or late. Dead reckoning to the check's instant would
@@ -114,37 +104,33 @@ impl CollisionMonitor {
         self.lock().poses_seen
     }
 
-    /// Reports contact that began since the last check, failing on the
+    /// The collisions that began since the last check, failing on the
     /// ego's. Crate-private so only the live loop calls it.
-    pub(crate) fn check(&self) -> Result<(), ScenarioError> {
+    pub(crate) fn check(&self) -> Result<Vec<RecordedCollision>, ScenarioError> {
         let mut watch = self.lock();
         if let Some(error) = watch.unreadable_pose.take() {
             return Err(ConductorError::Core(error).into());
         }
         if !watch.changed {
-            return Ok(());
+            return Ok(Vec::new());
         }
         watch.changed = false;
+        let collisions = watch.update_contacts();
 
-        for (first, second, at) in watch.update_contacts() {
-            if first == self.ego_name || second == self.ego_name {
-                let other = if first == self.ego_name {
-                    second
-                } else {
-                    first
-                };
-                return Err(Collision {
-                    ego: self.ego_name.clone(),
-                    other,
-                    at,
-                }
-                .into());
+        for collision in &collisions {
+            if collision.first == self.ego_name || collision.second == self.ego_name {
+                return Err(ScenarioError::EgoCollision(collision.clone()));
             }
-            tracing::warn!(%first, %second, %at, "traffic cars collide");
+            tracing::warn!(
+                first = %collision.first,
+                second = %collision.second,
+                sim_time = %collision.sim_time,
+                "traffic cars collide"
+            );
         }
 
-        // Return success; nothing touched the ego.
-        Ok(())
+        // Return the traffic's collisions, none of which halt the run.
+        Ok(collisions)
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Watch> {
@@ -327,7 +313,7 @@ impl Watch {
     /// Updates the collision episodes and returns those starting now. Ongoing
     /// ones are checked directly with grown footprints; the grid finds new
     /// ones.
-    fn update_contacts(&mut self) -> Vec<(String, String, SimTime)> {
+    fn update_contacts(&mut self) -> Vec<RecordedCollision> {
         // `remove` ends a car's collision episodes, so every car here is known.
         let mut still_in_contact: BTreeSet<(String, String)> = self
             .in_contact
@@ -345,11 +331,15 @@ impl Watch {
             let (first, _) = &self.cars[&pair.0];
             let (second, _) = &self.cars[&pair.1];
             if touch(first, second, 0.0) {
-                started.push((
-                    pair.0.clone(),
-                    pair.1.clone(),
-                    first.sim_time.max(second.sim_time),
-                ));
+                started.push(RecordedCollision {
+                    first: pair.0.clone(),
+                    second: pair.1.clone(),
+                    // The later pose, since the collision is known only once
+                    // both are. The two times are equal when both cars step
+                    // at the same instants; `CollisionMonitor`'s TODO covers
+                    // when they do not.
+                    sim_time: first.sim_time.max(second.sim_time),
+                });
                 still_in_contact.insert(pair);
             }
         }

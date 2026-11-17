@@ -1311,7 +1311,7 @@ overlap, so reaching it is a scenario bug worth stopping for).
   describe the parameter rather than the world. README narrative
   rewritten; sample output and `DEMO_WORLD_HASH` move together.
 - highway.rs assertions retuned to the new story: PR F's
-  `no_two_cars_overlap_anywhere_in_the_demo` stays green (it already
+  `no_two_cars_collide_anywhere_in_the_demo` stays green (it already
   covers the ego's lane), the ego's published speed drops
   materially below EGO_SPEED (following engaged), retirement still
   occurs, leaves less than joins, determinism/verify/hash tests
