@@ -1595,10 +1595,11 @@ it got there, including the roads not taken.
   failed.
   - **A collision is an observation, not an expectation.** The poses
     already determine it, so comparing it would add nothing, and would fail
-    a run recorded without the monitor. `check` returns the collisions and
-    the run loop reports them through `Conductor::report_observation`, so
-    the monitor needs no conductor. The ego's is reported before its error
-    returns, so the log says why the run stopped.
+    a run recorded without the monitor. `check_collisions` returns the
+    collisions and `LiveTrafficHandler::process_collisions` reports them
+    through `Conductor::report_observation`, so the monitor needs no
+    conductor. The ego's is reported before its error returns, so the log
+    says why the run stopped.
   - **Footprints in world coordinates, not lane bands.** Each car is a
     `CAR_LENGTH` by `CAR_WIDTH` rectangle at its pose, and touching counts.
     A test on lane offset would assume one road and miss cars meeting at a

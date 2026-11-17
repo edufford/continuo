@@ -571,10 +571,11 @@ fn add_logger<T: Transport>(conductor: &mut Conductor<T>) -> Result<(), Conducto
 /// handle carries both, so a caller cannot wire up one without the other.
 #[derive(Clone)]
 pub struct LiveTrafficHandler {
-    /// Requests collected since the last [`Self::apply`], in publish order.
+    /// Requests collected since the last [`Self::apply_traffic_requests`],
+    /// in publish order.
     pending_requests: Arc<Mutex<Vec<Request>>>,
-    /// The first request that could not be read, held until [`Self::apply`]
-    /// reports it.
+    /// The first request that could not be read, held until
+    /// [`Self::apply_traffic_requests`] reports it.
     ///
     /// The collecting callback is an `FnMut(&Message)` with nowhere to return
     /// an error to, so a request it cannot decode is put here instead. First
@@ -582,7 +583,7 @@ pub struct LiveTrafficHandler {
     /// are consequences of a scenario that is already wrong.
     unreadable_request: Arc<Mutex<Option<CoreError>>>,
     /// Every car's pose, watched for contact with another car's.
-    collisions: CollisionMonitor,
+    collision_monitor: CollisionMonitor,
 }
 
 impl Default for LiveTrafficHandler {
@@ -590,7 +591,7 @@ impl Default for LiveTrafficHandler {
         LiveTrafficHandler {
             pending_requests: Arc::default(),
             unreadable_request: Arc::default(),
-            collisions: CollisionMonitor::new(WORLD_NAME, EGO_NAME),
+            collision_monitor: CollisionMonitor::new(WORLD_NAME, EGO_NAME),
         }
     }
 }
@@ -606,7 +607,7 @@ impl LiveTrafficHandler {
     /// every car's pose out of the traffic.
     pub fn message_callback(&self) -> impl FnMut(&Message) + Send + 'static {
         let mut collect_requests = self.request_callback();
-        let mut collect_poses = self.collisions.message_callback();
+        let mut collect_poses = self.collision_monitor.message_callback();
 
         // Return one callback feeding both.
         move |message: &Message| {
@@ -615,14 +616,15 @@ impl LiveTrafficHandler {
         }
     }
 
-    /// A membership callback that tells the collision watch when a car leaves.
+    /// A membership callback that tells the collision monitor when a car
+    /// leaves.
     pub fn membership_callback(&self) -> impl FnMut(&MembershipChange) + Send + 'static {
-        self.collisions.membership_callback()
+        self.collision_monitor.membership_callback()
     }
 
-    /// The collision watch.
-    pub fn collisions(&self) -> &CollisionMonitor {
-        &self.collisions
+    /// The collision monitor.
+    pub fn collision_monitor(&self) -> &CollisionMonitor {
+        &self.collision_monitor
     }
 
     /// The half of [`Self::message_callback`] that collects the spawner's
@@ -654,9 +656,9 @@ impl LiveTrafficHandler {
                     .push(request),
                 // A request on one of this handler's own keys that it cannot
                 // read is a car that never arrives or never leaves, changing
-                // the scenario in silence. `apply` reports it at the next tick
-                // boundary, which is the first place with somewhere to return
-                // an error to.
+                // the scenario in silence. `apply_traffic_requests` reports it
+                // at the next tick boundary, which is the first place with
+                // somewhere to return an error to.
                 Err(error) => {
                     let mut slot = unreadable_request
                         .lock()
@@ -675,7 +677,7 @@ impl LiveTrafficHandler {
         &self,
         conductor: &mut Conductor<T>,
     ) -> Result<(), ScenarioError> {
-        let collisions = match self.collisions.check() {
+        let collisions = match self.collision_monitor.check_collisions() {
             Ok(collisions) => collisions,
             // The ego's collision halts the run, recorded first so the log
             // says why.
@@ -700,7 +702,10 @@ impl LiveTrafficHandler {
     /// calling this would run a different world from the recorded one, so
     /// the only way to drive this scenario is
     /// [`run_live_traffic_scenario`], which cannot forget.
-    fn apply<T: Transport>(&self, conductor: &mut Conductor<T>) -> Result<(), ScenarioError> {
+    fn apply_traffic_requests<T: Transport>(
+        &self,
+        conductor: &mut Conductor<T>,
+    ) -> Result<(), ScenarioError> {
         // Before anything is applied, since a request that could not be read
         // means the collected ones are an incomplete account of what the sim
         // asked for.
@@ -789,7 +794,7 @@ pub fn run_live_traffic_scenario<T: Transport>(
         // Before the requests, so a collision names the cars it happened
         // among.
         live_traffic_handler.process_collisions(conductor)?;
-        live_traffic_handler.apply(conductor)?;
+        live_traffic_handler.apply_traffic_requests(conductor)?;
     }
 
     // Return once nothing remains scheduled at or before `end`.
@@ -974,7 +979,7 @@ mod tests {
             .expect("the parked car is there to remove");
         run_live_traffic_scenario(&mut conductor, &removed, end, None)
             .expect("a car that has left cannot be hit");
-        assert_eq!(removed.collisions().num_collisions(), 0);
+        assert_eq!(removed.collision_monitor().num_collisions(), 0);
     }
 
     #[test]
@@ -999,7 +1004,7 @@ mod tests {
 
         // The monitor saw the run, collision and all.
         assert_eq!(watched.world_hash(), unwatched.world_hash());
-        assert!(live_traffic_handler.collisions().poses_seen() > 0);
-        assert_eq!(live_traffic_handler.collisions().num_collisions(), 1);
+        assert!(live_traffic_handler.collision_monitor().poses_seen() > 0);
+        assert_eq!(live_traffic_handler.collision_monitor().num_collisions(), 1);
     }
 }

@@ -5,10 +5,10 @@
 //! error to, so the `?` that covers every other site cannot reach them.
 //!
 //! What they get instead is the next place that *does* have somewhere to
-//! return to: `LiveTrafficHandler::apply` runs between ticks and already
-//! reports to the scenario loop. A request that cannot be read is a car that
-//! never arrives or never leaves, which changes the run in silence, so it is
-//! worth the same halt as any other unreadable payload.
+//! return to: `LiveTrafficHandler::apply_traffic_requests` runs between ticks
+//! and already reports to the scenario loop. A request that cannot be read is
+//! a car that never arrives or never leaves, which changes the run in silence,
+//! so it is worth the same halt as any other unreadable payload.
 
 use continuo_actors::traffic_spawn_key;
 use continuo_conductor::{Conductor, WORLD_LEVEL};

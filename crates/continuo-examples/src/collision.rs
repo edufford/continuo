@@ -27,9 +27,9 @@ const CONTACT_MARGIN: f64 = 0.5;
 // would also catch cars passing through each other between poses.
 #[derive(Clone)]
 pub struct CollisionMonitor {
-    watch: Arc<Mutex<Watch>>,
+    contact_tracker: Arc<Mutex<ContactTracker>>,
     /// Every actor's pose key in the world being watched.
-    pose_keys: KeyExpr,
+    pose_key_pattern: KeyExpr,
     ego_name: String,
 }
 
@@ -38,8 +38,8 @@ impl CollisionMonitor {
     /// `ego_name`.
     pub fn new(world_name: &str, ego_name: &str) -> Self {
         CollisionMonitor {
-            watch: Arc::default(),
-            pose_keys: KeyExpr::new_rooted(format!("{world_name}/actor/*/pose"))
+            contact_tracker: Arc::default(),
+            pose_key_pattern: KeyExpr::new_rooted(format!("{world_name}/actor/*/pose"))
                 .expect("valid pose key"),
             ego_name: ego_name.to_string(),
         }
@@ -47,30 +47,30 @@ impl CollisionMonitor {
 
     /// A `MonitorTransport` callback that takes in every car's pose.
     pub fn message_callback(&self) -> impl FnMut(&Message) + Send + 'static {
-        let watch = self.watch.clone();
-        let pose_keys = self.pose_keys.clone();
+        let contact_tracker = self.contact_tracker.clone();
+        let pose_key_pattern = self.pose_key_pattern.clone();
 
         // Return the callback, holding its own handle on what it watches.
         move |message: &Message| {
-            if !pose_keys.matches(&message.key) {
+            if !pose_key_pattern.matches(&message.key) {
                 return;
             }
-            let mut watch = watch
+            let mut contact_tracker = contact_tracker
                 .lock()
                 .expect("collision monitor mutex is never poisoned");
             match message.decode::<CarState>() {
                 Ok(state) => {
-                    watch.poses_seen += 1;
-                    watch.place(
+                    contact_tracker.poses_seen += 1;
+                    contact_tracker.place_on_grid(
                         actor_of(message.key.as_str()),
-                        Footprint::of(&state, message.sim_time),
+                        ActorPlacement::of(&state, message.sim_time),
                     );
                 }
                 // The callback cannot return an error, so the next check
                 // reports the first one.
                 Err(error) => {
-                    if watch.unreadable_pose.is_none() {
-                        watch.unreadable_pose = Some(error);
+                    if contact_tracker.unreadable_pose.is_none() {
+                        contact_tracker.unreadable_pose = Some(error);
                     }
                 }
             }
@@ -79,14 +79,14 @@ impl CollisionMonitor {
 
     /// A membership callback that removes a car when it leaves.
     pub fn membership_callback(&self) -> impl FnMut(&MembershipChange) + Send + 'static {
-        let watch = self.watch.clone();
+        let contact_tracker = self.contact_tracker.clone();
 
         // Return the callback, holding its own handle on what it watches.
         move |change: &MembershipChange| {
             // The first of a car's components to leave removes the car.
             if let MembershipChange::Left(leave) = change {
                 let actor = leave.path.split('/').next().unwrap_or(&leave.path);
-                watch
+                contact_tracker
                     .lock()
                     .expect("collision monitor mutex is never poisoned")
                     .remove(actor);
@@ -106,16 +106,16 @@ impl CollisionMonitor {
 
     /// The collisions that began since the last check, failing on the
     /// ego's. Crate-private so only the live loop calls it.
-    pub(crate) fn check(&self) -> Result<Vec<RecordedCollision>, ScenarioError> {
-        let mut watch = self.lock();
-        if let Some(error) = watch.unreadable_pose.take() {
+    pub(crate) fn check_collisions(&self) -> Result<Vec<RecordedCollision>, ScenarioError> {
+        let mut contact_tracker = self.lock();
+        if let Some(error) = contact_tracker.unreadable_pose.take() {
             return Err(ConductorError::Core(error).into());
         }
-        if !watch.changed {
+        if !contact_tracker.changed {
             return Ok(Vec::new());
         }
-        watch.changed = false;
-        let collisions = watch.update_contacts();
+        contact_tracker.changed = false;
+        let collisions = contact_tracker.update_contacts();
 
         for collision in &collisions {
             if collision.first == self.ego_name || collision.second == self.ego_name {
@@ -133,8 +133,8 @@ impl CollisionMonitor {
         Ok(collisions)
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, Watch> {
-        self.watch
+    fn lock(&self) -> std::sync::MutexGuard<'_, ContactTracker> {
+        self.contact_tracker
             .lock()
             .expect("collision monitor mutex is never poisoned")
     }
@@ -149,9 +149,10 @@ fn actor_of(pose_key: &str) -> &str {
         .expect("a pose key names the actor it belongs to")
 }
 
-/// A car's position and heading, as the contact test wants them.
+/// An actor's position and heading in the plane, and when they were
+/// published.
 #[derive(Debug, Clone, Copy, PartialEq)]
-struct Footprint {
+struct ActorPlacement {
     /// The center, in world coordinates.
     x: f64,
     y: f64,
@@ -161,7 +162,7 @@ struct Footprint {
     sim_time: SimTime,
 }
 
-impl Footprint {
+impl ActorPlacement {
     fn of(state: &CarState, sim_time: SimTime) -> Self {
         // The pose's rotation of the x axis, by multiplies and adds alone,
         // so no transcendental is evaluated.
@@ -170,8 +171,8 @@ impl Footprint {
         let y = 2.0 * (q.x * q.y + q.w * q.z);
         let length = (x * x + y * y).sqrt();
 
-        // Return the footprint at the pose's position.
-        Footprint {
+        // Return the placement at the pose's position.
+        ActorPlacement {
             x: state.position.x,
             y: state.position.y,
             forward: (x / length, y / length),
@@ -180,14 +181,15 @@ impl Footprint {
     }
 }
 
-/// Whether two footprints, each grown by `margin`, touch or overlap, by
-/// the separating axis test with a zero gap counted as contact.
-fn touch(a: &Footprint, b: &Footprint, margin: f64) -> bool {
+/// Whether the footprints of two placed actors, each grown by `margin`,
+/// touch or overlap, by the separating axis test with a zero gap counted as
+/// contact.
+fn are_touching(a: &ActorPlacement, b: &ActorPlacement, margin: f64) -> bool {
     let half_length = CAR_LENGTH / 2.0 + margin;
     let half_width = CAR_WIDTH / 2.0 + margin;
-    let reach = |footprint: &Footprint, axis: (f64, f64)| {
-        half_length * dot(footprint.forward, axis).abs()
-            + half_width * dot(left_of(footprint.forward), axis).abs()
+    let reach = |placement: &ActorPlacement, axis: (f64, f64)| {
+        half_length * dot(placement.forward, axis).abs()
+            + half_width * dot(left_of(placement.forward), axis).abs()
     };
     let between = (b.x - a.x, b.y - a.y);
     let axes = [a.forward, left_of(a.forward), b.forward, left_of(b.forward)];
@@ -221,21 +223,22 @@ fn cell_size() -> f64 {
 }
 
 /// The cell a center falls in.
-fn cell_of(footprint: &Footprint) -> Cell {
+fn cell_of(placement: &ActorPlacement) -> Cell {
     let size = cell_size();
 
     // Return the cell's integer coordinates.
     (
-        (footprint.x / size).floor() as i64,
-        (footprint.y / size).floor() as i64,
+        (placement.x / size).floor() as i64,
+        (placement.y / size).floor() as i64,
     )
 }
 
-/// What the monitor knows, behind the one lock its callbacks share.
+/// Every car's latest placement, filed on a grid, and the pairs in a
+/// collision episode.
 #[derive(Default)]
-struct Watch {
-    /// Each car's latest footprint and the cell it is filed under.
-    cars: BTreeMap<String, (Footprint, Cell)>,
+struct ContactTracker {
+    /// Each car's latest placement and the cell it is filed under.
+    cars: BTreeMap<String, (ActorPlacement, Cell)>,
     /// The cars in each occupied cell.
     grid: BTreeMap<Cell, BTreeSet<String>>,
     /// The pairs in a collision episode, each named in order.
@@ -248,11 +251,11 @@ struct Watch {
     unreadable_pose: Option<CoreError>,
 }
 
-impl Watch {
-    /// Records `actor`'s latest footprint, moving it to another cell if it
+impl ContactTracker {
+    /// Records `actor`'s latest placement, moving it to another cell if it
     /// crossed into one.
-    fn place(&mut self, actor: &str, footprint: Footprint) {
-        let cell = cell_of(&footprint);
+    fn place_on_grid(&mut self, actor: &str, placement: ActorPlacement) {
+        let cell = cell_of(&placement);
         if let Some((_, previous)) = self.cars.get(actor) {
             let previous = *previous;
             if previous != cell {
@@ -260,11 +263,11 @@ impl Watch {
             }
         }
         self.grid.entry(cell).or_default().insert(actor.to_string());
-        self.cars.insert(actor.to_string(), (footprint, cell));
+        self.cars.insert(actor.to_string(), (placement, cell));
         self.changed = true;
     }
 
-    /// Removes `actor`, its footprint, its cell and any collision episode
+    /// Removes `actor`, its placement, its cell and any collision episode
     /// it is in.
     fn remove(&mut self, actor: &str) {
         if let Some((_, cell)) = self.cars.remove(actor) {
@@ -319,7 +322,7 @@ impl Watch {
             .in_contact
             .iter()
             .filter(|(first, second)| {
-                touch(&self.cars[first].0, &self.cars[second].0, CONTACT_MARGIN)
+                are_touching(&self.cars[first].0, &self.cars[second].0, CONTACT_MARGIN)
             })
             .cloned()
             .collect();
@@ -330,7 +333,7 @@ impl Watch {
             }
             let (first, _) = &self.cars[&pair.0];
             let (second, _) = &self.cars[&pair.1];
-            if touch(first, second, 0.0) {
+            if are_touching(first, second, 0.0) {
                 started.push(RecordedCollision {
                     first: pair.0.clone(),
                     second: pair.1.clone(),
@@ -358,11 +361,11 @@ mod tests {
 
     use super::*;
 
-    /// A footprint at `(x, y)` pointing along `forward`, which need not be
+    /// A placement at `(x, y)` pointing along `forward`, which need not be
     /// a unit vector.
-    fn footprint(x: f64, y: f64, forward: (f64, f64)) -> Footprint {
+    fn placement(x: f64, y: f64, forward: (f64, f64)) -> ActorPlacement {
         let length = (forward.0 * forward.0 + forward.1 * forward.1).sqrt();
-        Footprint {
+        ActorPlacement {
             x,
             y,
             forward: (forward.0 / length, forward.1 / length),
@@ -374,7 +377,7 @@ mod tests {
     const NORTH: (f64, f64) = (0.0, 1.0);
 
     #[test]
-    fn a_footprint_points_where_the_pose_does() {
+    fn a_placement_points_where_the_pose_does() {
         // Built from the quaternion of a quarter turn left, so the forward
         // axis should come out pointing north.
         let state = CarState::new(
@@ -388,7 +391,7 @@ mod tests {
             },
             10.0,
         );
-        let found = Footprint::of(&state, SimTime::ZERO);
+        let found = ActorPlacement::of(&state, SimTime::ZERO);
         assert_eq!((found.x, found.y), (3.0, -2.0));
         assert!(found.forward.0.abs() < 1e-12, "{found:?}");
         assert!((found.forward.1 - 1.0).abs() < 1e-12, "{found:?}");
@@ -399,32 +402,36 @@ mod tests {
         // Both cars share their long edges' lines, the case a test on edges
         // crossing gets wrong. Exactly a car length apart they touch end to
         // end, with no gap, which counts.
-        let lead = footprint(10.0, 0.0, EAST);
-        let behind = |gap: f64| footprint(10.0 - CAR_LENGTH - gap, 0.0, EAST);
-        assert!(touch(&lead, &behind(-0.1), 0.0));
-        assert!(touch(&lead, &behind(0.0), 0.0));
-        assert!(!touch(&lead, &behind(0.1), 0.0));
+        let lead = placement(10.0, 0.0, EAST);
+        let behind = |gap: f64| placement(10.0 - CAR_LENGTH - gap, 0.0, EAST);
+        assert!(are_touching(&lead, &behind(-0.1), 0.0));
+        assert!(are_touching(&lead, &behind(0.0), 0.0));
+        assert!(!are_touching(&lead, &behind(0.1), 0.0));
     }
 
     #[test]
     fn cars_side_by_side_in_neighboring_lanes_do_not_collide() {
         // 3.5 m apart center to center, which is less than one car length,
         // so a test on distance alone would call this a collision.
-        let left = footprint(0.0, 3.5, EAST);
-        let right = footprint(0.0, 0.0, EAST);
-        assert!(!touch(&left, &right, 0.0));
-        assert!(touch(&left, &right, CAR_WIDTH));
+        let left = placement(0.0, 3.5, EAST);
+        let right = placement(0.0, 0.0, EAST);
+        assert!(!are_touching(&left, &right, 0.0));
+        assert!(are_touching(&left, &right, CAR_WIDTH));
     }
 
     #[test]
     fn rectangles_touching_only_at_a_corner_collide() {
         // Corner to corner exactly. Halving and doubling the extents are
         // exact, so the touch is exact rather than a rounding either way.
-        let a = footprint(0.0, 0.0, EAST);
-        assert!(touch(&a, &footprint(CAR_LENGTH, CAR_WIDTH, EAST), 0.0));
-        assert!(!touch(
+        let a = placement(0.0, 0.0, EAST);
+        assert!(are_touching(
             &a,
-            &footprint(CAR_LENGTH, CAR_WIDTH + 0.01, EAST),
+            &placement(CAR_LENGTH, CAR_WIDTH, EAST),
+            0.0
+        ));
+        assert!(!are_touching(
+            &a,
+            &placement(CAR_LENGTH, CAR_WIDTH + 0.01, EAST),
             0.0
         ));
     }
@@ -433,11 +440,11 @@ mod tests {
     fn a_car_crossing_another_at_right_angles_overlaps_where_their_bodies_meet() {
         // The north-bound car's nose reaches into the east-bound car's side,
         // where neither center is within the other's footprint.
-        let east = footprint(0.0, 0.0, EAST);
-        let north_touching = footprint(0.0, -(CAR_WIDTH / 2.0 + CAR_LENGTH / 2.0) + 0.1, NORTH);
-        let north_clear = footprint(0.0, -(CAR_WIDTH / 2.0 + CAR_LENGTH / 2.0) - 0.1, NORTH);
-        assert!(touch(&east, &north_touching, 0.0));
-        assert!(!touch(&east, &north_clear, 0.0));
+        let east = placement(0.0, 0.0, EAST);
+        let north_touching = placement(0.0, -(CAR_WIDTH / 2.0 + CAR_LENGTH / 2.0) + 0.1, NORTH);
+        let north_clear = placement(0.0, -(CAR_WIDTH / 2.0 + CAR_LENGTH / 2.0) - 0.1, NORTH);
+        assert!(are_touching(&east, &north_touching, 0.0));
+        assert!(!are_touching(&east, &north_clear, 0.0));
     }
 
     #[test]
@@ -446,34 +453,34 @@ mod tests {
         // 2.23 m, still overlaps the other's, so the other car's edge
         // directions see no gap. Its own left edge direction does, which is
         // why the test takes the edge directions of both cars.
-        let east = footprint(0.0, 0.0, EAST);
-        assert!(!touch(&east, &footprint(4.45, 0.0, (1.0, 1.0)), 0.0));
-        assert!(touch(&east, &footprint(4.3, 0.0, (1.0, 1.0)), 0.0));
+        let east = placement(0.0, 0.0, EAST);
+        assert!(!are_touching(&east, &placement(4.45, 0.0, (1.0, 1.0)), 0.0));
+        assert!(are_touching(&east, &placement(4.3, 0.0, (1.0, 1.0)), 0.0));
     }
 
     #[test]
     fn a_pair_overlapping_twice_without_parting_is_one_collision_episode() {
-        let mut watch = Watch::default();
-        watch.place("a", footprint(0.0, 0.0, EAST));
-        watch.place("b", footprint(4.0, 0.0, EAST));
-        assert_eq!(watch.update_contacts().len(), 1);
+        let mut contact_tracker = ContactTracker::default();
+        contact_tracker.place_on_grid("a", placement(0.0, 0.0, EAST));
+        contact_tracker.place_on_grid("b", placement(4.0, 0.0, EAST));
+        assert_eq!(contact_tracker.update_contacts().len(), 1);
 
         // Just apart, but within the margin: the same collision episode.
-        watch.place("b", footprint(CAR_LENGTH + 0.2, 0.0, EAST));
-        assert!(watch.update_contacts().is_empty());
-        watch.place("b", footprint(4.0, 0.0, EAST));
-        assert!(watch.update_contacts().is_empty());
+        contact_tracker.place_on_grid("b", placement(CAR_LENGTH + 0.2, 0.0, EAST));
+        assert!(contact_tracker.update_contacts().is_empty());
+        contact_tracker.place_on_grid("b", placement(4.0, 0.0, EAST));
+        assert!(contact_tracker.update_contacts().is_empty());
 
         // Apart by more than the margin, then back: a second collision
         // episode.
-        watch.place(
+        contact_tracker.place_on_grid(
             "b",
-            footprint(CAR_LENGTH + 2.0 * CONTACT_MARGIN + 0.1, 0.0, EAST),
+            placement(CAR_LENGTH + 2.0 * CONTACT_MARGIN + 0.1, 0.0, EAST),
         );
-        assert!(watch.update_contacts().is_empty());
-        watch.place("b", footprint(4.0, 0.0, EAST));
-        assert_eq!(watch.update_contacts().len(), 1);
-        assert_eq!(watch.num_collisions, 2);
+        assert!(contact_tracker.update_contacts().is_empty());
+        contact_tracker.place_on_grid("b", placement(4.0, 0.0, EAST));
+        assert_eq!(contact_tracker.update_contacts().len(), 1);
+        assert_eq!(contact_tracker.num_collisions, 2);
     }
 
     #[test]
@@ -481,54 +488,54 @@ mod tests {
         // Apart, but within the margin, so the collision episode goes on.
         // Filing the second car three cells away by hand takes the pair out
         // of the grid's candidates, which must not end it.
-        let mut watch = Watch::default();
-        watch.place("a", footprint(0.0, 0.0, EAST));
-        watch.place("b", footprint(4.0, 0.0, EAST));
-        assert_eq!(watch.update_contacts().len(), 1);
+        let mut contact_tracker = ContactTracker::default();
+        contact_tracker.place_on_grid("a", placement(0.0, 0.0, EAST));
+        contact_tracker.place_on_grid("b", placement(4.0, 0.0, EAST));
+        assert_eq!(contact_tracker.update_contacts().len(), 1);
 
-        watch.place("b", footprint(CAR_LENGTH + 0.2, 0.0, EAST));
-        let (_, filed) = watch.cars["b"];
+        contact_tracker.place_on_grid("b", placement(CAR_LENGTH + 0.2, 0.0, EAST));
+        let (_, filed) = contact_tracker.cars["b"];
         let elsewhere = (filed.0 + 3, filed.1);
-        watch.leave_cell("b", filed);
-        watch
+        contact_tracker.leave_cell("b", filed);
+        contact_tracker
             .grid
             .entry(elsewhere)
             .or_default()
             .insert("b".to_string());
-        watch.cars.get_mut("b").expect("b is placed").1 = elsewhere;
-        assert!(watch.pairs_in_reach().is_empty());
+        contact_tracker.cars.get_mut("b").expect("b is placed").1 = elsewhere;
+        assert!(contact_tracker.pairs_in_reach().is_empty());
 
-        assert!(watch.update_contacts().is_empty());
+        assert!(contact_tracker.update_contacts().is_empty());
         assert!(
-            watch
+            contact_tracker
                 .in_contact
                 .contains(&("a".to_string(), "b".to_string()))
         );
-        assert_eq!(watch.num_collisions, 1);
+        assert_eq!(contact_tracker.num_collisions, 1);
     }
 
     #[test]
     fn a_car_that_leaves_takes_its_cell_and_its_collision_episodes_with_it() {
-        let mut watch = Watch::default();
-        watch.place("a", footprint(0.0, 0.0, EAST));
-        watch.place("b", footprint(4.0, 0.0, EAST));
-        watch.update_contacts();
-        watch.remove("b");
-        assert!(watch.in_contact.is_empty());
-        assert_eq!(watch.grid.values().flatten().count(), 1);
-        assert!(watch.update_contacts().is_empty());
+        let mut contact_tracker = ContactTracker::default();
+        contact_tracker.place_on_grid("a", placement(0.0, 0.0, EAST));
+        contact_tracker.place_on_grid("b", placement(4.0, 0.0, EAST));
+        contact_tracker.update_contacts();
+        contact_tracker.remove("b");
+        assert!(contact_tracker.in_contact.is_empty());
+        assert_eq!(contact_tracker.grid.values().flatten().count(), 1);
+        assert!(contact_tracker.update_contacts().is_empty());
     }
 
     /// Every pair whose footprints touch, found by checking each pair of
     /// cars: the answer the grid must reproduce.
-    fn every_pair_in_contact(watch: &Watch) -> BTreeSet<(String, String)> {
+    fn every_pair_in_contact(contact_tracker: &ContactTracker) -> BTreeSet<(String, String)> {
         let mut pairs = BTreeSet::new();
-        for (first, (a, _)) in &watch.cars {
-            for (second, (b, _)) in watch
+        for (first, (a, _)) in &contact_tracker.cars {
+            for (second, (b, _)) in contact_tracker
                 .cars
                 .range::<String, _>((std::ops::Bound::Excluded(first), std::ops::Bound::Unbounded))
             {
-                if touch(a, b, 0.0) {
+                if are_touching(a, b, 0.0) {
                     pairs.insert((first.clone(), second.clone()));
                 }
             }
@@ -539,11 +546,17 @@ mod tests {
     }
 
     /// The pairs among the grid's candidates whose footprints touch.
-    fn grid_pairs_in_contact(watch: &Watch) -> BTreeSet<(String, String)> {
-        watch
+    fn grid_pairs_in_contact(contact_tracker: &ContactTracker) -> BTreeSet<(String, String)> {
+        contact_tracker
             .pairs_in_reach()
             .into_iter()
-            .filter(|(first, second)| touch(&watch.cars[first].0, &watch.cars[second].0, 0.0))
+            .filter(|(first, second)| {
+                are_touching(
+                    &contact_tracker.cars[first].0,
+                    &contact_tracker.cars[second].0,
+                    0.0,
+                )
+            })
             .collect()
     }
 
@@ -600,25 +613,25 @@ mod tests {
         fn the_grid_finds_exactly_the_pairs_every_pair_checking_finds(
             events in any_events(),
         ) {
-            let mut watch = Watch::default();
+            let mut contact_tracker = ContactTracker::default();
             for event in events {
                 match event {
                     Event::Place { car, x, y, heading } => {
-                        watch.place(&format!("car{car}"), footprint(x, y, heading));
+                        contact_tracker.place_on_grid(&format!("car{car}"), placement(x, y, heading));
                     }
-                    Event::Leave { car } => watch.remove(&format!("car{car}")),
+                    Event::Leave { car } => contact_tracker.remove(&format!("car{car}")),
                 }
-                prop_assert_eq!(grid_pairs_in_contact(&watch), every_pair_in_contact(&watch));
+                prop_assert_eq!(grid_pairs_in_contact(&contact_tracker), every_pair_in_contact(&contact_tracker));
             }
 
             // Every car the grid files is one it knows, in the cell it says.
-            for (cell, cars) in &watch.grid {
+            for (cell, cars) in &contact_tracker.grid {
                 prop_assert!(!cars.is_empty());
                 for car in cars {
-                    prop_assert_eq!(watch.cars[car].1, *cell);
+                    prop_assert_eq!(contact_tracker.cars[car].1, *cell);
                 }
             }
-            prop_assert_eq!(watch.grid.values().map(BTreeSet::len).sum::<usize>(), watch.cars.len());
+            prop_assert_eq!(contact_tracker.grid.values().map(BTreeSet::len).sum::<usize>(), contact_tracker.cars.len());
         }
     }
 }
