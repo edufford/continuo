@@ -23,8 +23,28 @@ impl Vec3 {
         z: 0.0,
     };
 
+    /// Straight up: the world frame's +z.
+    pub const UP: Vec3 = Vec3 {
+        x: 0.0,
+        y: 0.0,
+        z: 1.0,
+    };
+
     pub fn new(x: f64, y: f64, z: f64) -> Self {
         Vec3 { x, y, z }
+    }
+
+    pub fn dot(self, other: Vec3) -> f64 {
+        self.x * other.x + self.y * other.y + self.z * other.z
+    }
+
+    /// The right-handed cross product `self x other`.
+    pub fn cross(self, other: Vec3) -> Vec3 {
+        Vec3 {
+            x: self.y * other.z - self.z * other.y,
+            y: self.z * other.x - self.x * other.z,
+            z: self.x * other.y - self.y * other.x,
+        }
     }
 }
 
@@ -134,6 +154,20 @@ impl Quat {
     /// [`Quat::from_yaw`] takes.
     pub fn yaw(self) -> f64 {
         self.to_euler().yaw
+    }
+
+    /// The body's forward (+x) axis in the world frame, by multiplies and
+    /// adds alone. Unit length for a unit quaternion.
+    ///
+    /// Equations: the first column of the rotation matrix. See Wikipedia
+    /// "Quaternions and spatial rotation" (Quaternion-derived rotation
+    /// matrix).
+    pub fn forward(self) -> Vec3 {
+        Vec3 {
+            x: 1.0 - 2.0 * (self.y * self.y + self.z * self.z),
+            y: 2.0 * (self.x * self.y + self.w * self.z),
+            z: 2.0 * (self.x * self.z - self.w * self.y),
+        }
     }
 }
 
@@ -309,6 +343,57 @@ mod tests {
     fn yaw_wraps_at_pi() {
         let q = Quat::from_yaw(PI - 0.01);
         assert_close(q.yaw(), PI - 0.01, ROUND_TRIP_EPS);
+    }
+
+    #[test]
+    fn the_identity_points_forward_along_x() {
+        assert_eq!(Quat::IDENTITY.forward(), Vec3::new(1.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn a_yaw_turns_forward_counterclockwise_in_the_plane() {
+        for step in -12..=12 {
+            let yaw = PI * f64::from(step) / 12.0;
+            let forward = Quat::from_yaw(yaw).forward();
+            assert_close(forward.x, libm::cos(yaw), EPS);
+            assert_close(forward.y, libm::sin(yaw), EPS);
+            assert_close(forward.z, 0.0, EPS);
+        }
+    }
+
+    #[test]
+    fn a_positive_pitch_tips_forward_down() {
+        // continuo's body frame follows REP-103, as ROS does: with +y
+        // pointing left, the right-hand rule turns a positive pitch nose
+        // down. Aerospace frames, with +y right and +z down, have it nose up.
+        let pitch = 0.3;
+        let forward = EulerRad {
+            roll: 0.0,
+            pitch,
+            yaw: 0.0,
+        }
+        .to_quat()
+        .forward();
+        assert_close(forward.x, libm::cos(pitch), EPS);
+        assert_close(forward.y, 0.0, EPS);
+        assert_close(forward.z, -libm::sin(pitch), EPS);
+    }
+
+    #[test]
+    fn the_cross_product_is_right_handed() {
+        let x = Vec3::new(1.0, 0.0, 0.0);
+        let y = Vec3::new(0.0, 1.0, 0.0);
+        assert_eq!(x.cross(y), Vec3::UP);
+        // Up crossed with forward is left, a quarter turn counterclockwise.
+        assert_eq!(Vec3::UP.cross(x), y);
+    }
+
+    #[test]
+    fn the_dot_product_sums_the_products_of_components() {
+        assert_eq!(
+            Vec3::new(1.0, 2.0, 3.0).dot(Vec3::new(4.0, -5.0, 6.0)),
+            12.0
+        );
     }
 
     #[test]

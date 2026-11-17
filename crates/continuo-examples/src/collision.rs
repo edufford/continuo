@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use continuo_actors::{CAR_LENGTH, CAR_WIDTH, actor_of_pose_key};
 use continuo_conductor::{ConductorError, MembershipChange, RecordedCollision};
-use continuo_core::{ComponentPath, CoreError, KeyExpr, Message, Pose, SimTime};
+use continuo_core::{ComponentPath, CoreError, KeyExpr, Message, Pose, SimTime, Vec3};
 
 use crate::traffic_world::ScenarioError;
 
@@ -149,26 +149,23 @@ struct ActorPlacement {
     /// The center, in world coordinates.
     x: f64,
     y: f64,
-    /// A unit vector along the car's heading.
-    forward: (f64, f64),
+    /// A unit vector along the actor's heading, in the plane.
+    forward: Vec3,
     /// When the pose was published.
     sim_time: SimTime,
 }
 
 impl ActorPlacement {
     fn of(pose: &Pose, sim_time: SimTime) -> Self {
-        // The pose's rotation of the x axis, by multiplies and adds alone,
-        // so no transcendental is evaluated.
-        let q = pose.orientation;
-        let x = 1.0 - 2.0 * (q.y * q.y + q.z * q.z);
-        let y = 2.0 * (q.x * q.y + q.w * q.z);
-        let length = (x * x + y * y).sqrt();
+        // The body's forward axis, flattened onto the plane.
+        let forward = pose.orientation.forward();
+        let length = (forward.x * forward.x + forward.y * forward.y).sqrt();
 
         // Return the placement at the pose's position.
         ActorPlacement {
             x: pose.position.x,
             y: pose.position.y,
-            forward: (x / length, y / length),
+            forward: Vec3::new(forward.x / length, forward.y / length, 0.0),
             sim_time,
         }
     }
@@ -182,25 +179,18 @@ impl ActorPlacement {
 fn are_touching(a: &ActorPlacement, b: &ActorPlacement, margin: f64) -> bool {
     let half_length = CAR_LENGTH / 2.0 + margin;
     let half_width = CAR_WIDTH / 2.0 + margin;
-    let reach = |placement: &ActorPlacement, axis: (f64, f64)| {
-        half_length * dot(placement.forward, axis).abs()
-            + half_width * dot(left_of(placement.forward), axis).abs()
+    // Up crossed with forward is a quarter turn left of it.
+    let left_of = |forward: Vec3| Vec3::UP.cross(forward);
+    let reach = |placement: &ActorPlacement, axis: Vec3| {
+        half_length * placement.forward.dot(axis).abs()
+            + half_width * left_of(placement.forward).dot(axis).abs()
     };
-    let between = (b.x - a.x, b.y - a.y);
+    let between = Vec3::new(b.x - a.x, b.y - a.y, 0.0);
     let axes = [a.forward, left_of(a.forward), b.forward, left_of(b.forward)];
 
     // Return whether no axis separates them.
     axes.iter()
-        .all(|&axis| dot(between, axis).abs() <= reach(a, axis) + reach(b, axis))
-}
-
-fn dot(a: (f64, f64), b: (f64, f64)) -> f64 {
-    a.0 * b.0 + a.1 * b.1
-}
-
-/// The direction a quarter turn to the left of `forward`.
-fn left_of(forward: (f64, f64)) -> (f64, f64) {
-    (-forward.1, forward.0)
+        .all(|&axis| between.dot(axis).abs() <= reach(a, axis) + reach(b, axis))
 }
 
 /// A grid cell, by its integer coordinates.
@@ -363,7 +353,7 @@ mod tests {
         ActorPlacement {
             x,
             y,
-            forward: (forward.0 / length, forward.1 / length),
+            forward: Vec3::new(forward.0 / length, forward.1 / length, 0.0),
             sim_time: SimTime::ZERO,
         }
     }
@@ -385,8 +375,8 @@ mod tests {
         };
         let found = ActorPlacement::of(&pose, SimTime::ZERO);
         assert_eq!((found.x, found.y), (3.0, -2.0));
-        assert!(found.forward.0.abs() < 1e-12, "{found:?}");
-        assert!((found.forward.1 - 1.0).abs() < 1e-12, "{found:?}");
+        assert!(found.forward.x.abs() < 1e-12, "{found:?}");
+        assert!((found.forward.y - 1.0).abs() < 1e-12, "{found:?}");
     }
 
     #[test]
