@@ -1,5 +1,5 @@
 //! The demo world shared by every traffic example: an ego car driving a
-//! straight highway, with traffic spawning ahead of it in the neighbouring
+//! straight highway, with traffic spawning ahead of it in the neighboring
 //! lanes and retiring once it has gone past.
 //!
 //! Two scenarios, kept side by side so the difference between them is one
@@ -8,16 +8,11 @@
 //! [`setup_playback_traffic_scenario`], whose cars are doubles of a
 //! recorded run.
 //!
-//! Each comes in two halves, a `setup_` and a `run_`, and both halves are
-//! shared so the examples cannot drift apart.
-//! [`run_live_traffic_scenario`] applies the spawner's requests and checks
-//! for collisions between ticks; sharing that matters as much as sharing
-//! the setup, because an example that stepped the conductor without
-//! applying them would be running a different world, and `traffic_verify`
-//! exists to notice exactly that kind of difference.
+//! Each comes in two halves, a `setup_` and a `run_`, shared so the
+//! examples cannot drift apart. [`run_live_traffic_scenario`] applies the
+//! spawner's requests and checks for collisions between ticks.
 //! [`run_playback_traffic_scenario`] has nothing to apply, since recorded
-//! cars are already a schedule, and the pair sitting together is what
-//! makes that visible.
+//! cars are already a schedule.
 //!
 //! Everything is generic over the transport, so an example picks its own:
 //! plain `InProcTransport` for the base demo, wrapped in a
@@ -567,8 +562,7 @@ fn add_logger<T: Transport>(conductor: &mut Conductor<T>) -> Result<(), Conducto
 }
 
 /// What the live scenario needs from outside the sim: the spawner's
-/// requests turned into cars, and every car watched for collisions. One
-/// handle carries both, so a caller cannot wire up one without the other.
+/// requests turned into cars, and every car watched for collisions.
 #[derive(Clone)]
 pub struct LiveTrafficHandler {
     /// Requests collected since the last [`Self::apply_traffic_requests`],
