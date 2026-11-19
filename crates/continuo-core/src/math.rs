@@ -38,6 +38,10 @@ impl Vec3 {
         self.x * other.x + self.y * other.y + self.z * other.z
     }
 
+    pub fn length(self) -> f64 {
+        self.dot(self).sqrt()
+    }
+
     /// The right-handed cross product `self x other`.
     pub fn cross(self, other: Vec3) -> Vec3 {
         Vec3 {
@@ -394,6 +398,11 @@ mod tests {
             Vec3::new(1.0, 2.0, 3.0).dot(Vec3::new(4.0, -5.0, 6.0)),
             12.0
         );
+    }
+
+    #[test]
+    fn the_length_is_the_square_root_of_the_sum_of_squares() {
+        assert_eq!(Vec3::new(3.0, 4.0, 12.0).length(), 13.0);
     }
 
     #[test]

@@ -153,13 +153,14 @@ impl ActorPlacement {
     fn of(pose: &Pose, sim_time: SimTime) -> Self {
         // The body's forward axis, flattened onto the plane.
         let forward = pose.orientation.forward();
-        let length = (forward.x * forward.x + forward.y * forward.y).sqrt();
+        let flat = Vec3::new(forward.x, forward.y, 0.0);
+        let length = flat.length();
 
         // Return the placement at the pose's position.
         ActorPlacement {
             x: pose.position.x,
             y: pose.position.y,
-            forward: Vec3::new(forward.x / length, forward.y / length, 0.0),
+            forward: Vec3::new(flat.x / length, flat.y / length, 0.0),
             sim_time,
         }
     }
