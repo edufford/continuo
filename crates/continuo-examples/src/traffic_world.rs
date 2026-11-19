@@ -548,7 +548,7 @@ fn recorded_traffic_actor_names(recorded: &EventLog) -> Vec<String> {
 
 /// What the live scenario needs from outside the sim: the spawner's
 /// requests turned into cars, every car watched for collisions, and each car
-/// logged as it joins and leaves.
+/// printed to the console as it joins and leaves.
 #[derive(Clone)]
 pub struct LiveTrafficHandler {
     /// Requests collected since the last [`Self::apply_traffic_requests`],
@@ -565,8 +565,8 @@ pub struct LiveTrafficHandler {
     /// Every car's pose, watched for contact with another car's.
     collision_monitor: CollisionMonitor,
     /// Each car's latest pose, and the arrivals and departures not yet
-    /// logged.
-    car_log: Arc<Mutex<CarLog>>,
+    /// printed.
+    car_console: Arc<Mutex<CarConsole>>,
 }
 
 impl Default for LiveTrafficHandler {
@@ -575,17 +575,17 @@ impl Default for LiveTrafficHandler {
             pending_requests: Arc::default(),
             unreadable_request: Arc::default(),
             collision_monitor: CollisionMonitor::new(WORLD_NAME, EGO_NAME),
-            car_log: Arc::default(),
+            car_console: Arc::default(),
         }
     }
 }
 
-/// Each car's latest pose, and the arrivals and departures not yet logged,
-/// in the order they happened.
+/// Each car's latest pose, and the arrivals and departures not yet printed
+/// to the console, in the order they happened.
 #[derive(Default)]
-struct CarLog {
+struct CarConsole {
     latest_poses: BTreeMap<String, (SimTime, Pose)>,
-    unlogged: Vec<CarChange>,
+    unprinted: Vec<CarChange>,
 }
 
 /// A car joining or leaving, and its pose then: the first one it
@@ -609,12 +609,12 @@ impl LiveTrafficHandler {
     pub fn message_callback(&self) -> impl FnMut(&Message) + Send + 'static {
         let mut collect_requests = self.request_callback();
         let mut collect_poses = self.collision_monitor.message_callback();
-        let car_log = self.car_log.clone();
+        let car_console = self.car_console.clone();
         let pose_key_pattern =
             KeyExpr::new_rooted(format!("{WORLD_NAME}/actor/*/pose")).expect("valid pose key");
 
         // Return one callback feeding the requests, the collision monitor,
-        // and the car log.
+        // and the car console.
         move |message: &Message| {
             collect_requests(message);
             collect_poses(message);
@@ -626,25 +626,29 @@ impl LiveTrafficHandler {
                 return;
             };
             let actor = actor_of_pose_key(message.key.as_str()).to_string();
-            let mut car_log = car_log.lock().expect("car log mutex is never poisoned");
+            let mut car_console = car_console
+                .lock()
+                .expect("car console mutex is never poisoned");
             // A car's first pose is the one it joined with.
-            if !car_log.latest_poses.contains_key(&actor) {
-                car_log.unlogged.push(CarChange {
+            if !car_console.latest_poses.contains_key(&actor) {
+                car_console.unprinted.push(CarChange {
                     verb: "joined",
                     actor: actor.clone(),
                     sim_time: message.sim_time,
                     pose,
                 });
             }
-            car_log.latest_poses.insert(actor, (message.sim_time, pose));
+            car_console
+                .latest_poses
+                .insert(actor, (message.sim_time, pose));
         }
     }
 
     /// A membership callback that tells the collision monitor and the car
-    /// log when a car leaves.
+    /// console when a car leaves.
     pub fn membership_callback(&self) -> impl FnMut(&MembershipChange) + Send + 'static {
         let mut remove_from_monitor = self.collision_monitor.membership_callback();
-        let car_log = self.car_log.clone();
+        let car_console = self.car_console.clone();
 
         // Return one callback feeding both.
         move |change: &MembershipChange| {
@@ -657,10 +661,12 @@ impl LiveTrafficHandler {
                 return;
             };
             // The first of a car's components to leave removes the car, so
-            // each car is logged leaving once.
-            let mut car_log = car_log.lock().expect("car log mutex is never poisoned");
-            if let Some((sim_time, pose)) = car_log.latest_poses.remove(actor.as_str()) {
-                car_log.unlogged.push(CarChange {
+            // each car is printed leaving once.
+            let mut car_console = car_console
+                .lock()
+                .expect("car console mutex is never poisoned");
+            if let Some((sim_time, pose)) = car_console.latest_poses.remove(actor.as_str()) {
+                car_console.unprinted.push(CarChange {
                     verb: "left",
                     actor: actor.to_string(),
                     sim_time,
@@ -719,17 +725,17 @@ impl LiveTrafficHandler {
         }
     }
 
-    /// Logs the cars that joined or left since the last call, in the order
-    /// they did.
-    fn log_car_changes(&self) {
-        let unlogged = std::mem::take(
+    /// Prints the cars that joined or left since the last call to the
+    /// console, in the order they did.
+    fn print_car_changes(&self) {
+        let unprinted = std::mem::take(
             &mut self
-                .car_log
+                .car_console
                 .lock()
-                .expect("car log mutex is never poisoned")
-                .unlogged,
+                .expect("car console mutex is never poisoned")
+                .unprinted,
         );
-        for change in unlogged {
+        for change in unprinted {
             tracing::info!(
                 sim_time = %change.sim_time,
                 actor = change.actor,
@@ -742,16 +748,16 @@ impl LiveTrafficHandler {
         }
     }
 
-    /// Records the collisions that began since the last call, failing on
-    /// the ego's.
+    /// Records the collisions that began since the last call in the event
+    /// log, and warns of the traffic's on the console, failing on the ego's.
     fn process_collisions<T: Transport>(
         &self,
         conductor: &mut Conductor<T>,
     ) -> Result<(), ScenarioError> {
         let collisions = match self.collision_monitor.check_collisions() {
             Ok(collisions) => collisions,
-            // The ego's collision halts the run, recorded first so the log
-            // says why.
+            // The ego's collision halts the run, recorded first so the event
+            // log says why.
             Err(ScenarioError::EgoCollision(collision)) => {
                 conductor.report_observation(RecordedObservation::Collision(collision.clone()));
                 return Err(ScenarioError::EgoCollision(collision));
@@ -868,7 +874,7 @@ pub fn run_live_traffic_scenario<T: Transport>(
             .is_some_and(|instant| instant <= end)
     {
         conductor.step_once()?;
-        live_traffic_handler.log_car_changes();
+        live_traffic_handler.print_car_changes();
         // Before the requests, so a collision names the cars it happened
         // among.
         live_traffic_handler.process_collisions(conductor)?;
@@ -922,7 +928,7 @@ mod tests {
     }
 
     #[test]
-    fn a_car_is_logged_joining_with_its_first_pose_and_leaving_once_with_its_last() {
+    fn a_car_is_printed_joining_with_its_first_pose_and_leaving_once_with_its_last() {
         let live_traffic_handler = LiveTrafficHandler::default();
         let mut on_message = live_traffic_handler.message_callback();
         let mut on_membership = live_traffic_handler.membership_callback();
@@ -936,9 +942,12 @@ mod tests {
             }));
         }
 
-        let car_log = live_traffic_handler.car_log.lock().expect("not poisoned");
-        let logged: Vec<_> = car_log
-            .unlogged
+        let car_console = live_traffic_handler
+            .car_console
+            .lock()
+            .expect("not poisoned");
+        let printed: Vec<_> = car_console
+            .unprinted
             .iter()
             .map(|change| {
                 (
@@ -948,7 +957,7 @@ mod tests {
                 )
             })
             .collect();
-        assert_eq!(logged, [("joined", 1.0, 10.0), ("left", 1.1, 12.0)]);
-        assert!(car_log.latest_poses.is_empty());
+        assert_eq!(printed, [("joined", 1.0, 10.0), ("left", 1.1, 12.0)]);
+        assert!(car_console.latest_poses.is_empty());
     }
 }

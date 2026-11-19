@@ -200,9 +200,9 @@ cargo xtask verify-fmus
 cargo xtask package-fmus
 ```
 
-The demo logs each car as it joins and leaves, with where it was then,
-and finishes in a few wall-seconds. Traffic appears as it is spawned and
-retires once the ego has gone past it:
+The demo prints each car to the console as it joins and leaves, with
+where it was then, and finishes in a few wall-seconds. Traffic appears as
+it is spawned and retires once the ego has gone past it:
 
 ```
 INFO joined sim_time=0.0 actor="ego" x=0.00 y=0.00 yaw_deg=0.0
