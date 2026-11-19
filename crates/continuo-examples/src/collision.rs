@@ -213,12 +213,18 @@ fn cell_of(placement: &ActorPlacement) -> Cell {
     )
 }
 
+/// A car's latest placement and the cell it is filed under.
+#[derive(Debug, Clone, Copy)]
+struct CarOnGrid {
+    placement: ActorPlacement,
+    cell: Cell,
+}
+
 /// Every car's latest placement, filed on a grid, and the pairs in a
 /// collision episode.
 #[derive(Default)]
 struct ContactTracker {
-    /// Each car's latest placement and the cell it is filed under.
-    cars: BTreeMap<String, (ActorPlacement, Cell)>,
+    cars: BTreeMap<String, CarOnGrid>,
     /// The cars in each occupied cell.
     grid: BTreeMap<Cell, BTreeSet<String>>,
     /// The pairs in a collision episode, each named in order.
@@ -235,22 +241,22 @@ impl ContactTracker {
     /// crossed into one.
     fn place_on_grid(&mut self, actor: &str, placement: ActorPlacement) {
         let cell = cell_of(&placement);
-        if let Some((_, previous)) = self.cars.get(actor) {
-            let previous = *previous;
-            if previous != cell {
-                self.leave_cell(actor, previous);
-            }
+        if let Some(prev_cell) = self.cars.get(actor).map(|car| car.cell)
+            && prev_cell != cell
+        {
+            self.leave_cell(actor, prev_cell);
         }
         self.grid.entry(cell).or_default().insert(actor.to_string());
-        self.cars.insert(actor.to_string(), (placement, cell));
+        self.cars
+            .insert(actor.to_string(), CarOnGrid { placement, cell });
         self.changed = true;
     }
 
     /// Removes `actor`, its placement, its cell and any collision episode
     /// it is in.
     fn remove(&mut self, actor: &str) {
-        if let Some((_, cell)) = self.cars.remove(actor) {
-            self.leave_cell(actor, cell);
+        if let Some(car) = self.cars.remove(actor) {
+            self.leave_cell(actor, car.cell);
             self.in_contact
                 .retain(|(first, second)| first != actor && second != actor);
             self.changed = true;
@@ -300,29 +306,33 @@ impl ContactTracker {
         let mut still_in_contact: BTreeSet<(String, String)> = self
             .in_contact
             .iter()
-            .filter(|(first, second)| {
-                are_touching(&self.cars[first].0, &self.cars[second].0, CONTACT_MARGIN)
+            .filter(|(first_name, second_name)| {
+                are_touching(
+                    &self.cars[first_name].placement,
+                    &self.cars[second_name].placement,
+                    CONTACT_MARGIN,
+                )
             })
             .cloned()
             .collect();
         let mut started = Vec::new();
-        for pair in self.pairs_in_reach() {
-            if self.in_contact.contains(&pair) {
+        for pair_names in self.pairs_in_reach() {
+            if self.in_contact.contains(&pair_names) {
                 continue;
             }
-            let (first, _) = &self.cars[&pair.0];
-            let (second, _) = &self.cars[&pair.1];
-            if are_touching(first, second, 0.0) {
+            let first_placement = &self.cars[&pair_names.0].placement;
+            let second_placement = &self.cars[&pair_names.1].placement;
+            if are_touching(first_placement, second_placement, 0.0) {
                 started.push(RecordedCollision {
-                    first: pair.0.clone(),
-                    second: pair.1.clone(),
+                    first: pair_names.0.clone(),
+                    second: pair_names.1.clone(),
                     // The later pose, since the collision is known only once
                     // both are. The two times are equal when both cars step
                     // at the same instants; `CollisionMonitor`'s TODO covers
                     // when they do not.
-                    sim_time: first.sim_time.max(second.sim_time),
+                    sim_time: first_placement.sim_time.max(second_placement.sim_time),
                 });
-                still_in_contact.insert(pair);
+                still_in_contact.insert(pair_names);
             }
         }
         self.in_contact = still_in_contact;
@@ -466,15 +476,15 @@ mod tests {
         assert_eq!(contact_tracker.update_contacts().len(), 1);
 
         contact_tracker.place_on_grid("b", placed(CAR_LENGTH + 0.2, 0.0, 0.0));
-        let (_, filed) = contact_tracker.cars["b"];
-        let elsewhere = (filed.0 + 3, filed.1);
-        contact_tracker.leave_cell("b", filed);
+        let filed_cell = contact_tracker.cars["b"].cell;
+        let elsewhere = (filed_cell.0 + 3, filed_cell.1);
+        contact_tracker.leave_cell("b", filed_cell);
         contact_tracker
             .grid
             .entry(elsewhere)
             .or_default()
             .insert("b".to_string());
-        contact_tracker.cars.get_mut("b").expect("b is placed").1 = elsewhere;
+        contact_tracker.cars.get_mut("b").expect("b is placed").cell = elsewhere;
         assert!(contact_tracker.pairs_in_reach().is_empty());
 
         assert!(contact_tracker.update_contacts().is_empty());

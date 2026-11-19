@@ -23,14 +23,14 @@ fn placed(x: f64, y: f64, yaw: f64) -> ActorPlacement {
 /// the answer the grid must reproduce.
 fn every_pair_in_contact(contact_tracker: &ContactTracker) -> BTreeSet<(String, String)> {
     let mut pairs = BTreeSet::new();
-    for (first, (a, _)) in &contact_tracker.cars {
-        for (second, (b, _)) in contact_tracker
+    for (first_name, first_car) in &contact_tracker.cars {
+        for (second_name, second_car) in contact_tracker
             .cars
             .iter()
-            .filter(|(second, _)| *second > first)
+            .filter(|(second_name, _)| *second_name > first_name)
         {
-            if are_touching(a, b, 0.0) {
-                pairs.insert((first.clone(), second.clone()));
+            if are_touching(&first_car.placement, &second_car.placement, 0.0) {
+                pairs.insert((first_name.clone(), second_name.clone()));
             }
         }
     }
@@ -44,10 +44,10 @@ fn grid_pairs_in_contact(contact_tracker: &ContactTracker) -> BTreeSet<(String, 
     contact_tracker
         .pairs_in_reach()
         .into_iter()
-        .filter(|(first, second)| {
+        .filter(|(first_name, second_name)| {
             are_touching(
-                &contact_tracker.cars[first].0,
-                &contact_tracker.cars[second].0,
+                &contact_tracker.cars[first_name].placement,
+                &contact_tracker.cars[second_name].placement,
                 0.0,
             )
         })
@@ -108,7 +108,7 @@ proptest! {
         for (cell, cars) in &contact_tracker.grid {
             prop_assert!(!cars.is_empty());
             for car in cars {
-                prop_assert_eq!(contact_tracker.cars[car].1, *cell);
+                prop_assert_eq!(contact_tracker.cars[car].cell, *cell);
             }
         }
         prop_assert_eq!(
