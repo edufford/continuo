@@ -353,7 +353,7 @@ fn commands_over(
     situations: &[Situation],
 ) -> Vec<(f64, f64)> {
     let mapping = controller_fmu_mapping(road, pursuit, idm);
-    let mut fmu = FmuComponent::new("controller", packaged(), mapping).expect("the FMU builds");
+    let mut fmu = FmuComponent::new("controller", "", packaged(), mapping).expect("the FMU builds");
 
     // Return each situation's commands, having agreed at every one.
     situations
@@ -667,7 +667,7 @@ fn the_padding_past_the_count_is_never_read() {
     set_parameter(&mut mapping, "road.pts_x", json!(road_pts_x));
     set_parameter(&mut mapping, "road.pts_y", json!(road_pts_y));
 
-    let mut fmu = FmuComponent::new("controller", packaged(), mapping).expect("the FMU builds");
+    let mut fmu = FmuComponent::new("controller", "", packaged(), mapping).expect("the FMU builds");
     for situation in &situations {
         let from_fmu = fmu_commands(&mut fmu, situation);
         let from_laws = native_commands(&road, PURSUIT, IDM, situation);
@@ -694,7 +694,7 @@ fn refusal(bad: &[(&str, Value)]) -> String {
         set_parameter(&mut mapping, name, value.clone());
     }
 
-    let mut fmu = FmuComponent::new("controller", packaged(), mapping).expect("the FMU builds");
+    let mut fmu = FmuComponent::new("controller", "", packaged(), mapping).expect("the FMU builds");
     let mut ctx = StepCtx::new(SimTime::ZERO, None, WORLD, 0, Vec::new());
     let refused = match fmu.step(&mut ctx) {
         Err(CoreError::ComponentFailure { reason }) => reason,
@@ -723,7 +723,7 @@ fn each_command_decodes_as_the_plant_reads_it() {
         OutputBinding::new("accel_cmd", accel_cmd_key(WORLD, "car")),
         OutputBinding::new("steer_cmd", steer_cmd_key(WORLD, "car")),
     ];
-    let mut fmu = FmuComponent::new("controller", packaged(), mapping).expect("the FMU builds");
+    let mut fmu = FmuComponent::new("controller", "", packaged(), mapping).expect("the FMU builds");
     let situation = Situation {
         pose: car_at(&road, 50.0, 0.0, 0.0),
         speed: 22.0,
@@ -831,7 +831,7 @@ fn a_tuning_parameter_changed_between_steps_changes_the_command() {
     mapping
         .inputs
         .push(InputBinding::new("idm.v0_speed_tgt", key("tuning")));
-    let mut fmu = FmuComponent::new("controller", packaged(), mapping).expect("the FMU builds");
+    let mut fmu = FmuComponent::new("controller", "", packaged(), mapping).expect("the FMU builds");
 
     let situation = Situation {
         pose: car_at(&road, 100.0, PURSUIT.lateral_tgt, 0.0),
@@ -899,6 +899,7 @@ fn the_nearest_of_several_detections_is_the_one_followed() {
     let road = Waypoints::build_straight((0.0, 0.0), (600.0, 0.0));
     let mut fmu = FmuComponent::new(
         "controller",
+        "",
         packaged(),
         controller_fmu_mapping(&road, PURSUIT, IDM),
     )

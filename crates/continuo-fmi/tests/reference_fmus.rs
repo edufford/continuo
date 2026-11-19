@@ -74,7 +74,8 @@ fn message(key_name: &str, payload: Value) -> Message {
 fn a_reference_fmu_loads_instantiates_and_steps() {
     let mut mapping = empty_mapping(10);
     mapping.outputs = vec![OutputBinding::new("h", key("ball"))];
-    let mut ball = FmuComponent::new("ball", fixture_path("BouncingBall"), mapping).expect("build");
+    let mut ball =
+        FmuComponent::new("ball", "", fixture_path("BouncingBall"), mapping).expect("build");
 
     // The first step initializes and publishes what the FMU starts holding,
     // which for a ball is the height it was dropped from.
@@ -103,7 +104,7 @@ fn inputs_reach_the_fmu_and_outputs_carry_them_back() {
         vec![InputBinding::new("Float64_continuous_input", key("in")).with_pointer("/value")];
     mapping.outputs = vec![OutputBinding::new("Float64_continuous_output", key("out"))];
     let mut fmu =
-        FmuComponent::new("feedthrough", fixture_path("Feedthrough"), mapping).expect("build");
+        FmuComponent::new("feedthrough", "", fixture_path("Feedthrough"), mapping).expect("build");
 
     step(
         &mut fmu,
@@ -135,7 +136,7 @@ fn an_input_set_during_initialization_survives_to_the_first_output() {
         vec![InputBinding::new("Float64_continuous_input", key("in")).with_pointer("/value")];
     mapping.outputs = vec![OutputBinding::new("Float64_continuous_output", key("out"))];
     let mut fmu =
-        FmuComponent::new("feedthrough", fixture_path("Feedthrough"), mapping).expect("build");
+        FmuComponent::new("feedthrough", "", fixture_path("Feedthrough"), mapping).expect("build");
 
     let published = step(
         &mut fmu,
@@ -159,7 +160,7 @@ fn outputs_route_to_their_declared_keys() {
         OutputBinding::new("Float64_discrete_output", key("b")),
     ];
     let mut fmu =
-        FmuComponent::new("feedthrough", fixture_path("Feedthrough"), mapping).expect("build");
+        FmuComponent::new("feedthrough", "", fixture_path("Feedthrough"), mapping).expect("build");
     let published = step(&mut fmu, SimTime::ZERO, Vec::new());
     assert_eq!(published.len(), 2);
     assert_eq!(published[0].key, "continuo/test/a");
@@ -171,7 +172,7 @@ fn outputs_route_to_their_declared_keys() {
         OutputBinding::new("Float64_discrete_output", key("both")).with_pointer("/position/y"),
     ];
     let mut fmu =
-        FmuComponent::new("feedthrough", fixture_path("Feedthrough"), mapping).expect("build");
+        FmuComponent::new("feedthrough", "", fixture_path("Feedthrough"), mapping).expect("build");
     let published = step(&mut fmu, SimTime::ZERO, Vec::new());
     assert_eq!(published.len(), 1, "one key, one message");
     assert!(published[0].payload["position"]["x"].is_number());
@@ -183,7 +184,7 @@ fn an_unknown_variable_name_fails_at_construction_naming_the_alternatives() {
     let mut mapping = empty_mapping(100);
     mapping.outputs = vec![OutputBinding::new("no_such_variable", key("out"))];
 
-    let reason = match FmuComponent::new("feedthrough", fixture_path("Feedthrough"), mapping) {
+    let reason = match FmuComponent::new("feedthrough", "", fixture_path("Feedthrough"), mapping) {
         Err(error) => error.to_string(),
         Ok(_) => panic!("an unknown variable name should not build"),
     };
@@ -196,15 +197,33 @@ fn a_period_that_is_not_a_multiple_of_the_fixed_internal_step_size_fails() {
     // Feedthrough declares a 0.1 s internal step, so 100 ms lands and 30 ms
     // does not: an FMU stepping internally at its own size would answer from
     // an instant other than the one asked for.
-    assert!(FmuComponent::new("ok", fixture_path("Feedthrough"), empty_mapping(100)).is_ok());
-    assert!(FmuComponent::new("ok", fixture_path("Feedthrough"), empty_mapping(200)).is_ok());
+    assert!(FmuComponent::new("ok", "", fixture_path("Feedthrough"), empty_mapping(100)).is_ok());
+    assert!(FmuComponent::new("ok", "", fixture_path("Feedthrough"), empty_mapping(200)).is_ok());
 
-    let reason = match FmuComponent::new("bad", fixture_path("Feedthrough"), empty_mapping(30)) {
+    let reason = match FmuComponent::new("bad", "", fixture_path("Feedthrough"), empty_mapping(30))
+    {
         Err(error) => error.to_string(),
         Ok(_) => panic!("a period off the internal grid should not build"),
     };
     assert!(reason.contains("0.03"), "{reason}");
     assert!(reason.contains("0.1"), "{reason}");
+}
+
+#[test]
+fn an_instance_is_named_by_the_path_its_component_will_occupy() {
+    // The name reaches the FMU and every error about the instance, so a log
+    // line or a refusal says which car's part it means. The period here is
+    // off the FMU's grid only to provoke an error that names it.
+    let reason = match FmuComponent::new(
+        "engine",
+        "car7/powertrain",
+        fixture_path("Feedthrough"),
+        empty_mapping(30),
+    ) {
+        Err(error) => error.to_string(),
+        Ok(_) => panic!("a period off the internal grid should not build"),
+    };
+    assert!(reason.contains("car7/powertrain/engine"), "{reason}");
 }
 
 #[test]
@@ -215,7 +234,7 @@ fn switching_off_a_declared_log_category_is_accepted_at_construction_and_after_a
     let mut mapping = empty_mapping(100);
     mapping.log_categories_off = Some(vec!["logEvents".to_string()]);
 
-    let mut fmu = FmuComponent::new("feedthrough", fixture_path("Feedthrough"), mapping)
+    let mut fmu = FmuComponent::new("feedthrough", "", fixture_path("Feedthrough"), mapping)
         .expect("the FMU accepts switching off a category it declares");
     fmu.reset().expect("the FMU accepts it again after a reset");
 }
@@ -228,7 +247,7 @@ fn a_log_category_the_fmu_does_not_declare_fails_at_construction_naming_the_alte
     let mut mapping = empty_mapping(100);
     mapping.log_categories_off = Some(vec!["noSuchCategory".to_string()]);
 
-    let reason = match FmuComponent::new("feedthrough", fixture_path("Feedthrough"), mapping) {
+    let reason = match FmuComponent::new("feedthrough", "", fixture_path("Feedthrough"), mapping) {
         Err(error) => error.to_string(),
         Ok(_) => panic!("an unknown log category should not build"),
     };
@@ -261,7 +280,8 @@ fn an_fmu_reads_its_own_resource_files() {
     // suite is unchanged, so nothing here is waiting on a guess.
     let mut mapping = empty_mapping(1000);
     mapping.outputs = vec![OutputBinding::new("y", key("resource"))];
-    let mut fmu = FmuComponent::new("resource", fixture_path("Resource"), mapping).expect("build");
+    let mut fmu =
+        FmuComponent::new("resource", "", fixture_path("Resource"), mapping).expect("build");
 
     let published = step(&mut fmu, SimTime::ZERO, Vec::new());
     // 97 is the character `a`, which is what `resources/y.txt` holds, and the
@@ -278,8 +298,8 @@ fn the_extraction_directory_is_reachable_and_holds_the_fmu() {
     // `tempfile` throws away its cleanup errors on drop, so a Windows delete
     // that fails because the library is still loaded leaves a directory
     // behind in silence. Knowing the path is what makes that diagnosable.
-    let fmu =
-        FmuComponent::new("ball", fixture_path("BouncingBall"), empty_mapping(10)).expect("build");
+    let fmu = FmuComponent::new("ball", "", fixture_path("BouncingBall"), empty_mapping(10))
+        .expect("build");
     let extracted = fmu.extracted_path().to_path_buf();
     assert!(
         extracted.join("modelDescription.xml").is_file(),
@@ -302,7 +322,7 @@ fn a_missing_message_holds_the_previous_value() {
         vec![InputBinding::new("Float64_continuous_input", key("in")).with_pointer("/value")];
     mapping.outputs = vec![OutputBinding::new("Float64_continuous_output", key("out"))];
     let mut fmu =
-        FmuComponent::new("feedthrough", fixture_path("Feedthrough"), mapping).expect("build");
+        FmuComponent::new("feedthrough", "", fixture_path("Feedthrough"), mapping).expect("build");
 
     step(
         &mut fmu,
@@ -326,7 +346,7 @@ fn only_the_newest_message_on_a_key_is_applied() {
         vec![InputBinding::new("Float64_continuous_input", key("in")).with_pointer("/value")];
     mapping.outputs = vec![OutputBinding::new("Float64_continuous_output", key("out"))];
     let mut fmu =
-        FmuComponent::new("feedthrough", fixture_path("Feedthrough"), mapping).expect("build");
+        FmuComponent::new("feedthrough", "", fixture_path("Feedthrough"), mapping).expect("build");
 
     let published = step(
         &mut fmu,
@@ -348,7 +368,7 @@ fn two_identical_fmu_runs_publish_identically() {
         let mut mapping = empty_mapping(10);
         mapping.outputs = vec![OutputBinding::new("h", key("ball"))];
         let mut ball =
-            FmuComponent::new("ball", fixture_path("BouncingBall"), mapping).expect("build");
+            FmuComponent::new("ball", "", fixture_path("BouncingBall"), mapping).expect("build");
 
         (0..50)
             .map(|tick| {
@@ -369,7 +389,8 @@ fn a_reset_instance_runs_again_from_where_it_first_started() {
     let mut mapping = empty_mapping(10);
     mapping.initial_values = vec![("g".to_string(), json!(-20.0))];
     mapping.outputs = vec![OutputBinding::new("h", key("ball"))];
-    let mut ball = FmuComponent::new("ball", fixture_path("BouncingBall"), mapping).expect("build");
+    let mut ball =
+        FmuComponent::new("ball", "", fixture_path("BouncingBall"), mapping).expect("build");
 
     let run = |ball: &mut FmuComponent| -> Vec<f64> {
         (0..50)
@@ -407,7 +428,8 @@ fn an_fmu_handles_its_own_events_when_event_mode_is_off() {
     // back up without the adapter doing anything about it.
     let mut mapping = empty_mapping(10);
     mapping.outputs = vec![OutputBinding::new("h", key("ball"))];
-    let mut ball = FmuComponent::new("ball", fixture_path("BouncingBall"), mapping).expect("build");
+    let mut ball =
+        FmuComponent::new("ball", "", fixture_path("BouncingBall"), mapping).expect("build");
 
     let heights: Vec<f64> = (0..100)
         .map(|tick| {
@@ -484,7 +506,7 @@ fn an_array_sized_by_a_structural_parameter_binds_at_its_declared_start() {
     // three values.
     let mut mapping = state_space(&[], identity(3));
     mapping.inputs = vec![InputBinding::new("u", key("u")).with_pointer("/u/*")];
-    let mut fmu = FmuComponent::new("ss", fixture_path("StateSpace"), mapping).expect("build");
+    let mut fmu = FmuComponent::new("ss", "", fixture_path("StateSpace"), mapping).expect("build");
 
     let published = step(
         &mut fmu,
@@ -507,7 +529,7 @@ fn a_structural_parameter_set_at_construction_resizes_its_arrays() {
     // publish.
     let mut mapping = state_space(&[("m", 2), ("n", 2), ("r", 2)], identity(2));
     mapping.inputs = vec![InputBinding::new("u", key("u")).with_pointer("/u/*")];
-    let mut fmu = FmuComponent::new("ss", fixture_path("StateSpace"), mapping).expect("build");
+    let mut fmu = FmuComponent::new("ss", "", fixture_path("StateSpace"), mapping).expect("build");
 
     let published = step(
         &mut fmu,
@@ -532,7 +554,7 @@ fn a_reset_instance_is_sized_by_its_structural_parameters_again() {
     // late to put it right.
     let mut mapping = state_space(&[("m", 2), ("n", 2), ("r", 2)], identity(2));
     mapping.inputs = vec![InputBinding::new("u", key("u")).with_pointer("/u/*")];
-    let mut fmu = FmuComponent::new("ss", fixture_path("StateSpace"), mapping).expect("build");
+    let mut fmu = FmuComponent::new("ss", "", fixture_path("StateSpace"), mapping).expect("build");
 
     let fed = |fmu: &mut FmuComponent, now| {
         step(fmu, now, vec![message("u", json!({"u": [4.0, 5.0]}))])[0].payload["y"].clone()
@@ -555,7 +577,7 @@ fn an_array_binding_whose_pointer_count_misses_the_dimension_fails_at_constructi
     let mut mapping = state_space(&[], identity(3));
     mapping.inputs = vec![InputBinding::new("u", key("u")).with_pointer(["/u/0", "/u/1"])];
 
-    let reason = match FmuComponent::new("ss", fixture_path("StateSpace"), mapping) {
+    let reason = match FmuComponent::new("ss", "", fixture_path("StateSpace"), mapping) {
         Err(error) => error.to_string(),
         Ok(_) => panic!("two pointers should not bind a three-value variable"),
     };
@@ -572,7 +594,8 @@ fn one_pattern_binds_whatever_size_the_fmu_turns_out_to_be() {
     let bind = |sizes: &[(&str, u64)], size: usize, u: Value| {
         let mut mapping = state_space(sizes, identity(size));
         mapping.inputs = vec![InputBinding::new("u", key("u")).with_pointer("/u/*")];
-        let mut fmu = FmuComponent::new("ss", fixture_path("StateSpace"), mapping).expect("build");
+        let mut fmu =
+            FmuComponent::new("ss", "", fixture_path("StateSpace"), mapping).expect("build");
         step(
             &mut fmu,
             SimTime::ZERO,
@@ -596,7 +619,7 @@ fn a_wildcard_gathers_one_field_out_of_every_element() {
     // be picked out one field at a time.
     let mut mapping = state_space(&[], identity(3));
     mapping.inputs = vec![InputBinding::new("u", key("u")).with_pointer("/detections/*/range")];
-    let mut fmu = FmuComponent::new("ss", fixture_path("StateSpace"), mapping).expect("build");
+    let mut fmu = FmuComponent::new("ss", "", fixture_path("StateSpace"), mapping).expect("build");
 
     let scan = json!({"detections": [{"range": 8.0}, {"range": 20.0}, {"range": 31.0}]});
     let published = step(&mut fmu, SimTime::ZERO, vec![message("u", scan)]);
@@ -610,7 +633,7 @@ fn a_pattern_that_walks_the_wrong_number_of_axes_fails_at_construction() {
     let mut mapping = state_space(&[], identity(3));
     mapping.inputs = vec![InputBinding::new("u", key("u")).with_pointer("/u")];
 
-    let reason = match FmuComponent::new("ss", fixture_path("StateSpace"), mapping) {
+    let reason = match FmuComponent::new("ss", "", fixture_path("StateSpace"), mapping) {
         Err(error) => error.to_string(),
         Ok(_) => panic!("a pattern with no wildcard should not bind an array"),
     };
@@ -627,7 +650,8 @@ fn a_matrix_binds_row_major() {
     let run = |d: Value| {
         let mut mapping = state_space(&[("m", 2), ("n", 2), ("r", 2)], d);
         mapping.inputs = vec![InputBinding::new("u", key("u")).with_pointer("/u/*")];
-        let mut fmu = FmuComponent::new("ss", fixture_path("StateSpace"), mapping).expect("build");
+        let mut fmu =
+            FmuComponent::new("ss", "", fixture_path("StateSpace"), mapping).expect("build");
 
         let published = step(
             &mut fmu,
@@ -652,7 +676,7 @@ fn an_array_output_publishes_as_an_array() {
     // The shape an output takes is the FMU's own, so a vector publishes as a
     // JSON array at the pointer its name derives rather than as N messages.
     let mapping = state_space(&[], identity(3));
-    let mut fmu = FmuComponent::new("ss", fixture_path("StateSpace"), mapping).expect("build");
+    let mut fmu = FmuComponent::new("ss", "", fixture_path("StateSpace"), mapping).expect("build");
 
     let published = step(&mut fmu, SimTime::ZERO, Vec::new());
     assert!(

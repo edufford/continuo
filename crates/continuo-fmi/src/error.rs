@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use continuo_core::{ComponentId, CoreError};
+use continuo_core::CoreError;
 use thiserror::Error;
 
 /// Why an FMU could not be made into a component.
@@ -178,7 +178,7 @@ impl From<FmuConstructionError> for CoreError {
 /// A failed call into the FMU, named so the halt says which instance and
 /// which call.
 pub(crate) fn fmi_call_failure(
-    id: &ComponentId,
+    instance_name: &str,
     variable: &str,
     call: &str,
     source: &dyn std::fmt::Debug,
@@ -191,10 +191,7 @@ pub(crate) fn fmi_call_failure(
 
     // Return a halt naming the instance and the call that refused.
     CoreError::ComponentFailure {
-        reason: format!(
-            "FMU instance {:?} refused {call}{about}: {source:?}",
-            id.as_str()
-        ),
+        reason: format!("FMU instance {instance_name:?} refused {call}{about}: {source:?}",),
     }
 }
 
