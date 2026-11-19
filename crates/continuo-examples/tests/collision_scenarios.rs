@@ -19,13 +19,13 @@ use continuo_transport::{InProcTransport, MonitorTransport};
 
 /// One car heading east: its name, the `x` and `y` it starts at, and its
 /// speed.
-type Car<'a> = (&'a str, f64, f64, f64);
+type TestCar<'a> = (&'a str, f64, f64, f64);
 
 /// A world holding only `cars`, watched by `live_traffic_handler` the way
 /// the examples watch the demo.
 fn watched_world(
     live_traffic_handler: &LiveTrafficHandler,
-    cars: &[Car],
+    cars: &[TestCar],
 ) -> Conductor<MonitorTransport<InProcTransport>> {
     let mut transport = MonitorTransport::new(InProcTransport::new());
     transport.add_message_callback(live_traffic_handler.message_callback());
@@ -135,28 +135,38 @@ fn an_ego_collision_halts_the_scenario_naming_both_cars() {
 }
 
 #[test]
-fn a_retired_cars_last_pose_cannot_collide() {
+fn a_car_that_has_left_cannot_be_hit_where_it_stood() {
     // The ego reaches a car parked 60 m ahead before 2 s, so left in place
     // it is a collision.
-    let parked = [("ego", 0.0, 0.0, 30.0), ("parked", 60.0, 0.0, 0.0)];
+    let ego_and_parked_car = [("ego", 0.0, 0.0, 30.0), ("parked", 60.0, 0.0, 0.0)];
     let end = SimTime::from_secs(5);
 
-    let kept = LiveTrafficHandler::default();
-    let mut conductor = watched_world(&kept, &parked);
+    let handler_keeping_parked_car = LiveTrafficHandler::default();
+    let mut conductor = watched_world(&handler_keeping_parked_car, &ego_and_parked_car);
     assert!(matches!(
-        run_live_traffic_scenario(&mut conductor, &kept, end, None),
+        run_live_traffic_scenario(&mut conductor, &handler_keeping_parked_car, end, None),
         Err(ScenarioError::EgoCollision(_))
     ));
 
     // Removed at 1 s, its last pose goes with it.
-    let removed = LiveTrafficHandler::default();
-    let mut conductor = watched_world(&removed, &parked);
-    run_live_traffic_scenario(&mut conductor, &removed, SimTime::from_secs(1), None)
-        .expect("nothing has met yet");
+    let handler_retiring_parked_car = LiveTrafficHandler::default();
+    let mut conductor = watched_world(&handler_retiring_parked_car, &ego_and_parked_car);
+    run_live_traffic_scenario(
+        &mut conductor,
+        &handler_retiring_parked_car,
+        SimTime::from_secs(1),
+        None,
+    )
+    .expect("nothing has met yet");
     conductor
         .remove_component_now("parked")
         .expect("the parked car is there to remove");
-    run_live_traffic_scenario(&mut conductor, &removed, end, None)
+    run_live_traffic_scenario(&mut conductor, &handler_retiring_parked_car, end, None)
         .expect("a car that has left cannot be hit");
-    assert_eq!(removed.collision_monitor().num_collisions(), 0);
+    assert_eq!(
+        handler_retiring_parked_car
+            .collision_monitor()
+            .num_collisions(),
+        0
+    );
 }
