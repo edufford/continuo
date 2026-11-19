@@ -79,8 +79,8 @@ fn any_events() -> impl Strategy<Value = Vec<Event>> {
 
 proptest! {
     // A failure's seed lands in
-    // `proptest-regressions/collision/collision_properties.txt` under this
-    // crate, and every run replays it before drawing fresh cases. It is
+    // `proptest-regressions/collision/test_collision_properties.txt` under
+    // this crate, and every run replays it before drawing fresh cases. It is
     // committed, the fix lands as a unit test in `collision.rs`, and the
     // file is deleted when proptest moves in the lock or the generator
     // changes, as DECISIONS.md settles for the frenet properties.

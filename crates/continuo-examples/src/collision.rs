@@ -344,7 +344,7 @@ impl ContactTracker {
 }
 
 #[cfg(test)]
-mod collision_properties;
+mod test_collision_properties;
 
 #[cfg(test)]
 mod tests {
