@@ -17,9 +17,9 @@ use crate::traffic_world::ScenarioError;
 /// episode to count as still in contact.
 const CONTACT_MARGIN: f64 = 0.5;
 
-/// Watches every car for contact with another: traffic in contact logs a
-/// warning once per collision episode, and the ego in contact stops the run
-/// with [`ScenarioError::EgoCollision`].
+/// Watches every car for contact with another, reporting each collision
+/// episode once as it starts. The ego in contact stops the run with
+/// [`ScenarioError::EgoCollision`].
 // TODO(M7): each check is a snapshot of every car's latest pose, which holds
 // while every car publishes often and at the same instants. Remote hosts may
 // publish less often or late. Dead reckoning to the check's instant would
@@ -113,16 +113,11 @@ impl CollisionMonitor {
         contact_tracker.changed = false;
         let collisions = contact_tracker.update_contacts();
 
-        for collision in &collisions {
-            if collision.first == self.ego_name || collision.second == self.ego_name {
-                return Err(ScenarioError::EgoCollision(collision.clone()));
-            }
-            tracing::warn!(
-                first = %collision.first,
-                second = %collision.second,
-                sim_time = %collision.sim_time,
-                "traffic cars collide"
-            );
+        if let Some(collision) = collisions
+            .iter()
+            .find(|collision| collision.first == self.ego_name || collision.second == self.ego_name)
+        {
+            return Err(ScenarioError::EgoCollision(collision.clone()));
         }
 
         // Return the traffic's collisions, none of which halt the run.

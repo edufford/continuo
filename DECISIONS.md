@@ -1627,9 +1627,10 @@ it got there, including the roads not taken.
   reports it through callbacks to observers outside the sim, so the
   console output moves outside too. `LiveTrafficHandler`'s callbacks note
   each car's first pose and, when it leaves, its last, and the handler
-  logs them between ticks. The event log and the viewer show every pose
-  at every instant, which a line per car per second duplicated. The
-  logger was a stepped component, so the demo hash moves.
+  logs them between ticks beside the traffic collisions, which the
+  collision monitor now only reports. The event log and the viewer show
+  every pose at every instant, which a line per car per second
+  duplicated. The logger was a stepped component, so the demo hash moves.
   - Rejected: logging from the collision monitor, which would tie the
     console to collision checking; and a logger logging only the cars
     whose poses arrived since its last sample, which guesses at

@@ -758,6 +758,12 @@ impl LiveTrafficHandler {
             Err(error) => return Err(error),
         };
         for collision in collisions {
+            tracing::warn!(
+                first = %collision.first,
+                second = %collision.second,
+                sim_time = %collision.sim_time,
+                "traffic cars collide"
+            );
             conductor.report_observation(RecordedObservation::Collision(collision));
         }
 
