@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::path::Waypoints;
 use crate::physics::CarState;
-use crate::{CAR_LENGTH, MAX_DETECTIONS};
+use crate::{CAR_LENGTH, MAX_DETECTIONS, actor_of_pose_key};
 
 /// What one radar found in one scan.
 ///
@@ -122,7 +122,7 @@ impl RadarSensor {
         for message in ctx.inbox() {
             // A pose that cannot be decoded stops the world.
             let state = message.decode::<CarState>()?;
-            latest.insert(actor_of(message.key.as_str()).to_string(), state);
+            latest.insert(actor_of_pose_key(message.key.as_str()).to_string(), state);
         }
 
         // Return the newest pose per actor.
@@ -204,17 +204,6 @@ impl RadarSensor {
             keep
         });
     }
-}
-
-/// The actor name in a pose key.
-///
-/// The name is the segment after `actor`, wherever that sits in the key.
-fn actor_of(pose_key: &str) -> &str {
-    pose_key
-        .split('/')
-        .skip_while(|segment| *segment != "actor")
-        .nth(1)
-        .expect("a pose key names the actor it belongs to")
 }
 
 impl Component for RadarSensor {

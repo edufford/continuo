@@ -1,5 +1,5 @@
 //! The demo world shared by every traffic example: an ego car driving a
-//! straight highway, with traffic spawning ahead of it in the neighbouring
+//! straight highway, with traffic spawning ahead of it in the neighboring
 //! lanes and retiring once it has gone past.
 //!
 //! Two scenarios, kept side by side so the difference between them is one
@@ -8,15 +8,11 @@
 //! [`setup_playback_traffic_scenario`], whose cars are doubles of a
 //! recorded run.
 //!
-//! Each comes in two halves, a `setup_` and a `run_`, and both halves are
-//! shared so the examples cannot drift apart.
-//! [`run_live_traffic_scenario`] applies the spawner's requests between
-//! ticks; sharing that matters as much as sharing the setup, because an
-//! example that stepped the conductor without applying them would be
-//! running a different world, and `traffic_verify` exists to notice exactly
-//! that kind of difference. [`run_playback_traffic_scenario`] has nothing
-//! to apply, since recorded cars are already a schedule, and the pair
-//! sitting together is what makes that visible.
+//! Each comes in two halves, a `setup_` and a `run_`, shared so the
+//! examples cannot drift apart. [`run_live_traffic_scenario`] applies the
+//! spawner's requests and checks for collisions between ticks.
+//! [`run_playback_traffic_scenario`] has nothing to apply, since recorded
+//! cars are already a schedule.
 //!
 //! Everything is generic over the transport, so an example picks its own:
 //! plain `InProcTransport` for the base demo, wrapped in a
@@ -32,13 +28,15 @@ use continuo_actors::{
 };
 use continuo_conductor::record::LogEvent;
 use continuo_conductor::{
-    Conductor, ConductorConfig, ConductorError, EventLog, JoinMetadata, Pacing, PlaybackComponent,
-    Verifier, WORLD_LEVEL,
+    Conductor, ConductorConfig, ConductorError, EventLog, JoinMetadata, MembershipChange, Pacing,
+    PlaybackComponent, RecordedCollision, RecordedObservation, Verifier, WORLD_LEVEL,
 };
 use continuo_core::{Component, ComponentId, CoreError, Message, SimDuration, SimTime};
 use continuo_fmi::{FmuComponent, FmuConstructionError, FmuMapping, InputBinding, OutputBinding};
 use continuo_transport::Transport;
 use serde_json::json;
+
+use crate::collision::CollisionMonitor;
 
 /// One seed for the whole demo family: record, verify, and resim must all
 /// agree on it.
@@ -123,6 +121,10 @@ pub enum ScenarioError {
         #[source]
         source: FmuConstructionError,
     },
+
+    /// The ego touched another car, which its controller should prevent.
+    #[error("{} and {} collided at sim time {}", .0.first, .0.second, .0.sim_time)]
+    EgoCollision(RecordedCollision),
 }
 
 /// A handle on the one road every car in this world drives, built once and
@@ -559,25 +561,33 @@ fn add_logger<T: Transport>(conductor: &mut Conductor<T>) -> Result<(), Conducto
     Ok(())
 }
 
-/// Carries the spawner's decisions out to the conductor: collects the
-/// requests it publishes, then turns them into membership changes.
-///
-/// Both halves are here because they are one job split by a boundary the
-/// sim cannot cross: a component can decide a car should exist but cannot
-/// build one. [`Self::message_callback`] does the collecting, and
-/// [`run_live_traffic_scenario`] does the building between ticks.
-#[derive(Clone, Default)]
-pub struct TrafficRequestHandler {
-    /// Requests collected since the last [`Self::apply`], in publish order.
+/// What the live scenario needs from outside the sim: the spawner's
+/// requests turned into cars, and every car watched for collisions.
+#[derive(Clone)]
+pub struct LiveTrafficHandler {
+    /// Requests collected since the last [`Self::apply_traffic_requests`],
+    /// in publish order.
     pending_requests: Arc<Mutex<Vec<Request>>>,
-    /// The first request that could not be read, held until [`Self::apply`]
-    /// reports it.
+    /// The first request that could not be read, held until
+    /// [`Self::apply_traffic_requests`] reports it.
     ///
     /// The collecting callback is an `FnMut(&Message)` with nowhere to return
     /// an error to, so a request it cannot decode is put here instead. First
     /// one wins: the run stops at the next tick boundary, and later failures
     /// are consequences of a scenario that is already wrong.
     unreadable_request: Arc<Mutex<Option<CoreError>>>,
+    /// Every car's pose, watched for contact with another car's.
+    collision_monitor: CollisionMonitor,
+}
+
+impl Default for LiveTrafficHandler {
+    fn default() -> Self {
+        LiveTrafficHandler {
+            pending_requests: Arc::default(),
+            unreadable_request: Arc::default(),
+            collision_monitor: CollisionMonitor::new(WORLD_NAME, EGO_NAME),
+        }
+    }
 }
 
 /// One membership change the sim asked for.
@@ -586,10 +596,34 @@ enum Request {
     Despawn(DespawnTrafficRequest),
 }
 
-impl TrafficRequestHandler {
-    /// A `MonitorTransport` callback that picks the spawner's requests out
-    /// of the traffic.
+impl LiveTrafficHandler {
+    /// A `MonitorTransport` callback that picks the spawner's requests and
+    /// every car's pose out of the traffic.
     pub fn message_callback(&self) -> impl FnMut(&Message) + Send + 'static {
+        let mut collect_requests = self.request_callback();
+        let mut collect_poses = self.collision_monitor.message_callback();
+
+        // Return one callback feeding both.
+        move |message: &Message| {
+            collect_requests(message);
+            collect_poses(message);
+        }
+    }
+
+    /// A membership callback that tells the collision monitor when a car
+    /// leaves.
+    pub fn membership_callback(&self) -> impl FnMut(&MembershipChange) + Send + 'static {
+        self.collision_monitor.membership_callback()
+    }
+
+    /// The collision monitor.
+    pub fn collision_monitor(&self) -> &CollisionMonitor {
+        &self.collision_monitor
+    }
+
+    /// The half of [`Self::message_callback`] that collects the spawner's
+    /// requests.
+    fn request_callback(&self) -> impl FnMut(&Message) + Send + 'static {
         let pending_requests = self.pending_requests.clone();
         let unreadable_request = self.unreadable_request.clone();
         let spawn = traffic_spawn_key(WORLD_NAME);
@@ -616,9 +650,9 @@ impl TrafficRequestHandler {
                     .push(request),
                 // A request on one of this handler's own keys that it cannot
                 // read is a car that never arrives or never leaves, changing
-                // the scenario in silence. `apply` reports it at the next tick
-                // boundary, which is the first place with somewhere to return
-                // an error to.
+                // the scenario in silence. `apply_traffic_requests` reports it
+                // at the next tick boundary, which is the first place with
+                // somewhere to return an error to.
                 Err(error) => {
                     let mut slot = unreadable_request
                         .lock()
@@ -631,6 +665,30 @@ impl TrafficRequestHandler {
         }
     }
 
+    /// Records the collisions that began since the last call, failing on
+    /// the ego's.
+    fn process_collisions<T: Transport>(
+        &self,
+        conductor: &mut Conductor<T>,
+    ) -> Result<(), ScenarioError> {
+        let collisions = match self.collision_monitor.check_collisions() {
+            Ok(collisions) => collisions,
+            // The ego's collision halts the run, recorded first so the log
+            // says why.
+            Err(ScenarioError::EgoCollision(collision)) => {
+                conductor.report_observation(RecordedObservation::Collision(collision.clone()));
+                return Err(ScenarioError::EgoCollision(collision));
+            }
+            Err(error) => return Err(error),
+        };
+        for collision in collisions {
+            conductor.report_observation(RecordedObservation::Collision(collision));
+        }
+
+        // Return success; no collision involved the ego.
+        Ok(())
+    }
+
     /// Applies everything the spawner has asked for since the last call,
     /// in the order it asked.
     ///
@@ -638,7 +696,10 @@ impl TrafficRequestHandler {
     /// calling this would run a different world from the recorded one, so
     /// the only way to drive this scenario is
     /// [`run_live_traffic_scenario`], which cannot forget.
-    fn apply<T: Transport>(&self, conductor: &mut Conductor<T>) -> Result<(), ScenarioError> {
+    fn apply_traffic_requests<T: Transport>(
+        &self,
+        conductor: &mut Conductor<T>,
+    ) -> Result<(), ScenarioError> {
         // Before anything is applied, since a request that could not be read
         // means the collected ones are an incomplete account of what the sim
         // asked for.
@@ -686,7 +747,8 @@ impl TrafficRequestHandler {
     }
 }
 
-/// Runs the world to `end`, applying the spawner's requests as they come.
+/// Runs the world to `end`, applying the spawner's requests as they come
+/// and stopping at the first collision involving the ego.
 ///
 /// The sim decides *what* joins and leaves; this turns those decisions into
 /// components, and decides nothing itself. The split is forced, since a
@@ -710,7 +772,7 @@ impl TrafficRequestHandler {
 // milestone 7 a host plays exactly this part for remote components.
 pub fn run_live_traffic_scenario<T: Transport>(
     conductor: &mut Conductor<T>,
-    traffic_request_handler: &TrafficRequestHandler,
+    live_traffic_handler: &LiveTrafficHandler,
     end: SimTime,
     verifier: Option<&Verifier>,
 ) -> Result<(), ScenarioError> {
@@ -723,7 +785,10 @@ pub fn run_live_traffic_scenario<T: Transport>(
             .is_some_and(|instant| instant <= end)
     {
         conductor.step_once()?;
-        traffic_request_handler.apply(conductor)?;
+        // Before the requests, so a collision names the cars it happened
+        // among.
+        live_traffic_handler.process_collisions(conductor)?;
+        live_traffic_handler.apply_traffic_requests(conductor)?;
     }
 
     // Return once nothing remains scheduled at or before `end`.

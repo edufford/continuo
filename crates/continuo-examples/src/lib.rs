@@ -10,6 +10,7 @@
 //! - `traffic_verify`: determinism verification of a recorded log
 //! - `traffic_resim`: a live ego re-run against played-back traffic
 
+pub mod collision;
 pub mod traffic_world;
 
 use tracing_subscriber::filter::LevelFilter;

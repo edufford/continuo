@@ -22,6 +22,8 @@ use continuo_core::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::actor_of_pose_key;
+
 /// A request to put one traffic car on the road.
 ///
 /// Deliberately specific to this scenario: lanes and speeds are what a
@@ -148,16 +150,6 @@ impl TrafficSpawner {
             cars_spawned: 0,
         }
     }
-
-    /// The actor a pose came from: the first segment of the publisher's
-    /// path, since a car publishes from `{actor_name}/physics`.
-    fn actor_name_of(publisher: &continuo_core::ComponentPath) -> Option<String> {
-        // Return the top-level name, which is the actor.
-        publisher
-            .segments()
-            .first()
-            .map(|id| id.as_str().to_string())
-    }
 }
 
 impl Component for TrafficSpawner {
@@ -174,13 +166,9 @@ impl Component for TrafficSpawner {
     fn step(&mut self, ctx: &mut StepCtx) -> Result<SimTime, CoreError> {
         for message in ctx.inbox() {
             // A pose that cannot be read stops the world: a spawner that never
-            // sees a car move never retires it. Failing to name the actor only
-            // skips, since the subscription is a wildcard and a publisher that
-            // is not an actor is someone else's message.
+            // sees a car move never retires it.
             let pose = message.decode::<Pose>()?;
-            let Some(actor_name) = Self::actor_name_of(&message.publisher) else {
-                continue;
-            };
+            let actor_name = actor_of_pose_key(message.key.as_str());
             // Project onto the reference road rather than reading a
             // coordinate: cars sit in different lanes, so only a shared
             // arc length makes "ahead" and "behind" mean the same thing
@@ -188,7 +176,7 @@ impl Component for TrafficSpawner {
             let actor_s = self.road.frenet(pose.position.x, pose.position.y).0;
             if actor_name == self.ego_name {
                 self.ego_s = actor_s;
-            } else if let Some(traffic_s) = self.live_traffic.get_mut(&actor_name) {
+            } else if let Some(traffic_s) = self.live_traffic.get_mut(actor_name) {
                 *traffic_s = actor_s;
             }
         }

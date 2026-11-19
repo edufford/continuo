@@ -80,9 +80,22 @@ pub const MAX_DETECTIONS: usize = 64;
 /// PLAN.md's "World and map" work publishes extents.
 pub const CAR_LENGTH: f64 = 4.5;
 
+/// How wide a car is, side to side, in meters. Must equal `CAR_WIDTH` in
+/// `python/continuo_viz/render.py`, as [`CAR_LENGTH`] explains.
+pub const CAR_WIDTH: f64 = 1.8;
+
 /// Key for an actor's pose in `world`.
 pub fn pose_key(world_name: &str, actor_name: &str) -> KeyExpr {
     KeyExpr::new_rooted(format!("{world_name}/actor/{actor_name}/pose")).expect("valid pose key")
+}
+
+/// The actor a pose key belongs to: the segment after `actor`. Panics on a
+/// key with none, which [`pose_key`] never builds.
+pub fn actor_of_pose_key(key: &str) -> &str {
+    key.split('/')
+        .skip_while(|segment| *segment != "actor")
+        .nth(1)
+        .expect("a pose key names the actor it belongs to")
 }
 
 /// Key for the acceleration commanded to an actor in `world`.

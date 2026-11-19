@@ -395,8 +395,10 @@ dependencies = [
  "continuo-fmu-controller-idm",
  "continuo-transport",
  "continuo-viz-bridge",
+ "proptest",
  "serde_json",
  "thiserror",
+ "tracing",
  "tracing-subscriber",
 ]
 

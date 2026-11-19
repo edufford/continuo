@@ -431,6 +431,8 @@ component in particular.
   ids, optional parent, transform, and an open-ended properties bag, so v1 stays
   basic (frames, geometry, paths) while later growth (semantic tags, spawn
   points, richer geometry) extends nodes instead of reshaping the schema.
+- An actor's **size** belongs in the spec too. The collision monitor gives
+  every actor a car's footprint until an actor can declare its own.
 
 ## Scenario configuration
 
@@ -795,13 +797,13 @@ under "Wire format", rather than churning the fingerprint once apiece.
   projects every pose in the world onto the road and filters, which is
   work proportional to the population for every sensor at every scan. A
   quadtree, or a per-lane sort by arc length, would answer against what
-  is local instead, and the collision monitor's pair scan wants the same
-  structure. It would also bound a scan properly: `MAX_DETECTIONS` is a
-  defensive cap that sorts by range to choose what to drop, where
-  locality would have decided already. Deferred because no world here
-  reaches the cap, and because it belongs with the consolidated scene
-  view above, the other consumer that wants the world rather than every
-  message in it.
+  is local instead, and the collision monitor could share it in place of
+  the uniform grid it keeps for itself. It would also bound a scan
+  properly: `MAX_DETECTIONS` is a defensive cap that sorts by range to
+  choose what to drop, where locality would have decided already.
+  Deferred because no world here reaches the cap, and because it belongs
+  with the consolidated scene view above, the other consumer that wants
+  the world rather than every message in it.
 
 - **A subscriber cannot ask for only the latest message per key.** The
   visibility rule queues every message until the subscriber next runs, so a
@@ -856,7 +858,7 @@ under "Wire format", rather than churning the fingerprint once apiece.
   once loaded, so every following car stalls the run as it joins. Fourteen
   joins cost 1.08 s of a 1.40 s release demo, and leave `traffic_realtime`
   1.25 s behind real time. Other platforms were not measured.
-  - `TrafficRequestHandler` would open the archive during setup and share
+  - `LiveTrafficHandler` would open the archive during setup and share
     it, so no join loads anything. Instances would then share the DLL's
     statics; this FMU and `fmi-export` hold no mutable ones, by reading
     their source, and the pinned world hash would be the test. An FMU
@@ -871,6 +873,14 @@ under "Wire format", rather than churning the fingerprint once apiece.
   - Deferred because the world hash is unaffected and a paced run keeps
     time between joins. Proving a fix wants a churn measurement, since
     `traffic_scale` joins every car before its timer starts.
+
+- **Pacing slips recorded in the event log.** When real-time pacing falls
+  behind past its re-anchor threshold, the slip is counted by
+  `Conductor::overrun_reanchor_count` and warned through `tracing`, and
+  neither reaches the log, so a recorded run cannot say afterwards that it
+  fell behind real time. It belongs as a `RecordedObservation` beside the
+  budget misses, being a fact about the machine that differs between
+  identical runs. Deferred because nothing has needed it yet.
 
 - **Road-network importer**: which format (OpenDRIVE, Lanelet2, other) lowers
   into the world spec; decide when realistic road scenarios are needed.

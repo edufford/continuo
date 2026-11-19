@@ -212,29 +212,26 @@ pub struct RecordedTimeout {
     pub policy: OnTimeout,
 }
 
-/// Something the *machine* did rather than the run: one of the log's
-/// **observations**.
+/// Two actors whose footprints touched, found by a monitor watching the
+/// run.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecordedCollision {
+    pub first: String,
+    pub second: String,
+    pub sim_time: SimTime,
+}
+
+/// Something worth writing down about a run that verification does not
+/// compare: one of the log's **observations**.
 ///
-/// The log holds two kinds of line. Every other kind is an **expectation**,
-/// recording what the run did, and a faithful re-run must produce it again.
-/// An observation is something noticed while the run happened that is worth
-/// writing down, but that says nothing about whether the run was right.
-///
-/// They are noted centrally so they can all be read back from one file
-/// afterwards, rather than from whichever process each step ran in.
-/// Verification never compares them: another machine notices different
-/// things, and treating that as a divergence would report two runs that
-/// behaved identically as different.
-///
-/// Two kinds live here. The wall-clock facts milestones 3 and 4 measure,
-/// which another machine notices differently, and when a membership request
-/// was processed, which delivery decides once requests cross a transport.
-/// Both are the same thing said twice: worth writing down, and never worth
-/// comparing. Anything else of that character belongs here rather than as a
-/// new top-level event: the pacing overruns counted by
-/// [`Conductor::overrun_reanchor_count`](crate::Conductor::overrun_reanchor_count)
-/// are the obvious next one, being a run-level measurement that today exists
-/// only as a counter that dies with the process.
+/// Every other kind of line is an **expectation**, recording what the run
+/// did, which a faithful re-run must produce again. An observation is either
+/// a fact about the machine, such as a missed wall-clock budget, which
+/// differs between identical runs, or a finding derived from the run, such
+/// as a collision, which the expectations already determine.
+// TODO(PLAN "Deferred"): a pacing slip, counted by
+// `Conductor::overrun_reanchor_count`, is a fact about the machine and
+// belongs here, but is not recorded yet.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum RecordedObservation {
     #[serde(rename = "join_request")]
@@ -245,6 +242,8 @@ pub enum RecordedObservation {
     BudgetMissed(RecordedBudgetMiss),
     #[serde(rename = "timeout")]
     TimedOut(RecordedTimeout),
+    #[serde(rename = "collision")]
+    Collision(RecordedCollision),
 }
 
 /// One line of the log body, in emission order (messages of a tick precede
@@ -286,6 +285,7 @@ impl LogEvent {
             LogEvent::Observed(RecordedObservation::LeaveRequested(_)) => "observed/leave_request",
             LogEvent::Observed(RecordedObservation::BudgetMissed(_)) => "observed/budget",
             LogEvent::Observed(RecordedObservation::TimedOut(_)) => "observed/timeout",
+            LogEvent::Observed(RecordedObservation::Collision(_)) => "observed/collision",
         }
     }
 }

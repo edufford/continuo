@@ -189,6 +189,12 @@ impl<T: Transport> Conductor<T> {
         }
     }
 
+    /// Reports an observation made outside the conductor, such as by a
+    /// monitor watching the run, to every observation callback.
+    pub fn report_observation(&mut self, observation: RecordedObservation) {
+        self.emit_observation(observation);
+    }
+
     /// The current running determinism fingerprint (see PLAN.md,
     /// Determinism rules). Two runs of the same seeded scenario must agree
     /// on this value at every tick.
