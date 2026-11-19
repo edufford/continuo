@@ -26,15 +26,16 @@ instant, and repeats.
             ┌──────────────────────────┐
             │        Conductor         │   owns sim time + event schedule
             │ (advance to earliest due │
-            │  time, step, barrier)    │
-            └────────────┬─────────────┘
-             TickStart   │   TickDone { next_due }
-            ┌────────────┴─────────────┐
-            │        Transport         │   pub/sub on key expressions,
-            │   (InProc now, Zenoh     │   e.g. continuo/demo/actor/ego/pose
-            │    later; same trait)    │
-            └────────────┬─────────────┘
-       ┌─────────────┬───┴──────────┐
+            │  time, step, barrier)    │◄────────────┐ adds and removes cars;
+            └────────────┬─────────────┘             │ hears of joins and leaves
+             TickStart   │   TickDone { next_due }   │ through membership callbacks
+            ┌────────────┴─────────────┐   ┌─────────┴──────────┐
+            │        Transport         ├──►│ LiveTrafficHandler │ outside the sim,
+            │   (InProc now, Zenoh     │   │ collision monitor  │ sees every message
+            │    later; same trait)    │   │ console output     │ through the
+            └────────────┬─────────────┘   └────────────────────┘ MonitorTransport
+                         │   pub/sub on key expressions,
+       ┌─────────────┬───┴──────────┐   e.g. continuo/demo/actor/ego/pose
 ┌──────┴─────┐ ┌─────┴──────┐ ┌─────┴─────────┐
 │    ego     │ │  traffic7  │ │traffic_spawner│ world-level
 │ ┌────────┐ │ │ ┌────────┐ │ │    (2 Hz)     │ component
