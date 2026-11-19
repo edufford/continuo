@@ -7,7 +7,7 @@
 
 use std::ffi::CString;
 
-use continuo_core::{ComponentId, CoreError};
+use continuo_core::CoreError;
 use fmi::fmi3::GetSet as _;
 use fmi::fmi3::instance::InstanceCS;
 use fmi::fmi3::schema::VariableType;
@@ -34,11 +34,11 @@ const MAX_BINARY: usize = 1 << 20;
 /// be borrowed at the same time, which `&mut self` does not allow.
 pub(crate) fn set_input_var(
     instance: &mut InstanceCS,
-    id: &ComponentId,
+    instance_name: &str,
     input: &BoundInput,
     values: &[&Value],
 ) -> Result<(), CoreError> {
-    set_values(instance, id, &input.variable, values)
+    set_values(instance, instance_name, &input.variable, values)
 }
 
 /// Writes one variable, whatever its shape.
@@ -47,7 +47,7 @@ pub(crate) fn set_input_var(
 /// all of them at once, so an array is not a special case here.
 pub(crate) fn set_values(
     instance: &mut InstanceCS,
-    id: &ComponentId,
+    instance_name: &str,
     variable: &ResolvedVariable,
     values: &[&Value],
 ) -> Result<(), CoreError> {
@@ -63,7 +63,9 @@ pub(crate) fn set_values(
             instance
                 .$setter(&references, &converted)
                 .map(|_| ())
-                .map_err(|source| fmi_call_failure(id, name, stringify!($setter), &source))
+                .map_err(|source| {
+                    fmi_call_failure(instance_name, name, stringify!($setter), &source)
+                })
         }};
     }
 
@@ -86,7 +88,7 @@ pub(crate) fn set_values(
                 .collect::<Result<Vec<_>, _>>()?;
             instance
                 .set_string(&references, &converted)
-                .map_err(|source| fmi_call_failure(id, name, "set_string", &source))
+                .map_err(|source| fmi_call_failure(instance_name, name, "set_string", &source))
         }
         VariableType::FmiBinary => {
             let converted = values
@@ -96,7 +98,7 @@ pub(crate) fn set_values(
             let borrowed: Vec<&[u8]> = converted.iter().map(Vec::as_slice).collect();
             instance
                 .set_binary(&references, &borrowed)
-                .map_err(|source| fmi_call_failure(id, name, "set_binary", &source))
+                .map_err(|source| fmi_call_failure(instance_name, name, "set_binary", &source))
         }
         VariableType::FmiClock => Err(unbound_clock(name)),
     }
@@ -105,7 +107,7 @@ pub(crate) fn set_values(
 /// Reads one output variable, dispatching on the type the FMU declares.
 pub(crate) fn get_output_var(
     instance: &mut InstanceCS,
-    id: &ComponentId,
+    instance_name: &str,
     output: &BoundOutput,
 ) -> Result<Value, CoreError> {
     let variable = &output.variable;
@@ -121,7 +123,9 @@ pub(crate) fn get_output_var(
             let mut values = vec![$zero; count];
             instance
                 .$getter(&references, &mut values)
-                .map_err(|source| fmi_call_failure(id, name, stringify!($getter), &source))?;
+                .map_err(|source| {
+                    fmi_call_failure(instance_name, name, stringify!($getter), &source)
+                })?;
             let converted = values
                 .into_iter()
                 .map(|value| $convert(value, name))
@@ -152,7 +156,7 @@ pub(crate) fn get_output_var(
             let mut values = vec![CString::default(); count];
             instance
                 .get_string(&references, &mut values)
-                .map_err(|source| fmi_call_failure(id, name, "get_string", &source))?;
+                .map_err(|source| fmi_call_failure(instance_name, name, "get_string", &source))?;
             let converted = values
                 .iter()
                 .map(|value| convert::from_fmi_string(value, name))
@@ -164,7 +168,7 @@ pub(crate) fn get_output_var(
             let mut slices: Vec<&mut [u8]> = buffers.iter_mut().map(Vec::as_mut_slice).collect();
             let sizes = instance
                 .get_binary(&references, &mut slices)
-                .map_err(|source| fmi_call_failure(id, name, "get_binary", &source))?;
+                .map_err(|source| fmi_call_failure(instance_name, name, "get_binary", &source))?;
             // A size of zero is a length rather than a failure: an FMU may
             // hold an empty Binary, which encodes as the empty string and
             // decodes back to no bytes.

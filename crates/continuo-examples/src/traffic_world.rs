@@ -240,6 +240,7 @@ fn fmu_controller_component(
     let mapping = controller_fmu_mapping(world_name, actor_name, lane_offset, initial_state);
     let controller = FmuComponent::new(
         "controller",
+        actor_name,
         continuo_fmu_controller_idm::packaged_fmu_path()?,
         mapping,
     )

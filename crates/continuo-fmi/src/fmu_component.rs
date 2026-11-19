@@ -5,7 +5,8 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use continuo_core::{
-    Component, ComponentId, CoreError, KeyExpr, Message, SimDuration, SimTime, StepCtx,
+    Component, ComponentId, ComponentPath, CoreError, KeyExpr, Message, SimDuration, SimTime,
+    StepCtx,
 };
 use fmi::fmi3::instance::InstanceCS;
 use fmi::fmi3::schema::Fmi3ModelDescription;
@@ -28,6 +29,9 @@ use crate::fmu_variable::{
 /// ships models as binaries exists to avoid.
 pub struct FmuComponent {
     id: ComponentId,
+    /// The path this component will occupy, which names the FMU instance
+    /// in its own log and in every error about it.
+    instance_name: String,
     /// Declared before `import`, which is load-bearing rather than stylistic.
     /// Fields drop in declaration order, the instance holds the loaded shared
     /// library, and the import owns the temporary directory that library came
@@ -80,13 +84,23 @@ impl FmuComponent {
     /// period lands on the FMU's own step size. A mapping is data written
     /// beside a binary built elsewhere, so no compiler ever compares the two,
     /// and construction is the last moment before a run is under way.
+    ///
+    /// `parent_path` is the parent the component will be added under, empty
+    /// for world level, as `Conductor::add_component` takes it. It only names
+    /// the instance, as the path the component will occupy, since FMI fixes
+    /// an instance's name when it is created; the conductor still decides
+    /// where the component goes.
     pub fn new(
         id: &str,
+        parent_path: &str,
         fmu_path: impl AsRef<Path>,
         mapping: FmuMapping,
     ) -> Result<Self, FmuConstructionError> {
         let fmu_path = fmu_path.as_ref();
         let id = ComponentId::new(id)?;
+        let instance_name = ComponentPath::parse(parent_path)?
+            .join(id.clone())
+            .to_string();
 
         let import: Fmi3Import =
             fmi::import::from_path(fmu_path).map_err(|source| FmuConstructionError::Import {
@@ -101,7 +115,7 @@ impl FmuComponent {
             }
         })?;
         if let Some(internal) = co_simulation.fixed_internal_step_size {
-            check_period(mapping.period, internal, &id)?;
+            check_period(mapping.period, internal, &instance_name)?;
         }
 
         let FmuMapping {
@@ -164,7 +178,7 @@ impl FmuComponent {
         subscriptions.dedup();
 
         tracing::debug!(
-            component = id.as_str(),
+            instance = instance_name.as_str(),
             source = %fmu_path.display(),
             extracted_to = %import.archive_path().display(),
             "imported FMU"
@@ -172,7 +186,7 @@ impl FmuComponent {
 
         let instance = import
             .instantiate_cs(
-                id.as_str(),
+                instance_name.as_str(),
                 // `visible`: an FMU here has no user to interact with.
                 false,
                 // `logging_on`: on, since the FMU's log says why it refused a
@@ -189,12 +203,13 @@ impl FmuComponent {
                 &[],
             )
             .map_err(|source| FmuConstructionError::Instantiate {
-                instance_name: id.to_string(),
+                instance_name: instance_name.clone(),
                 source,
             })?;
 
         let mut component = FmuComponent {
             id,
+            instance_name,
             instance,
             import,
             inputs,
@@ -228,14 +243,18 @@ impl FmuComponent {
         }
         self.instance.enter_configuration_mode().map_err(|source| {
             FmuConstructionError::Configure {
-                instance_name: self.id.to_string(),
+                instance_name: self.instance_name.clone(),
                 reason: format!("{source:?}"),
             }
         })?;
-        Self::set_initial_values(&mut self.instance, &self.id, &self.structural_vars)?;
+        Self::set_initial_values(
+            &mut self.instance,
+            &self.instance_name,
+            &self.structural_vars,
+        )?;
         self.instance.exit_configuration_mode().map_err(|source| {
             FmuConstructionError::Configure {
-                instance_name: self.id.to_string(),
+                instance_name: self.instance_name.clone(),
                 reason: format!("{source:?}"),
             }
         })?;
@@ -255,7 +274,7 @@ impl FmuComponent {
         self.instance
             .set_debug_logging(false, &categories)
             .map_err(|source| FmuConstructionError::LogCategories {
-                instance_name: self.id.to_string(),
+                instance_name: self.instance_name.clone(),
                 categories: self.log_categories_off.clone(),
                 reason: format!("{source:?}"),
             })?;
@@ -283,7 +302,7 @@ impl FmuComponent {
     pub fn reset(&mut self) -> Result<(), CoreError> {
         self.instance
             .reset()
-            .map_err(|source| fmi_call_failure(&self.id, "", "fmi3Reset", &source))?;
+            .map_err(|source| fmi_call_failure(&self.instance_name, "", "fmi3Reset", &source))?;
         self.switch_off_log_categories()?;
         self.size_by_structural_parameters()?;
         self.phase = Phase::Uninitialized;
@@ -301,12 +320,12 @@ impl FmuComponent {
     /// parameters during configuration, and everything else during
     /// initialization.
     ///
-    /// Takes the instance and the id rather than the whole component, so a
+    /// Takes the instance and its name rather than the whole component, so a
     /// caller can pass a field of that same component as the values without
     /// borrowing it twice.
     fn set_initial_values(
         instance: &mut InstanceCS,
-        id: &ComponentId,
+        instance_name: &str,
         initial_vals: &[(ResolvedVariable, Value)],
     ) -> Result<(), FmuConstructionError> {
         for (variable, value) in initial_vals {
@@ -319,7 +338,7 @@ impl FmuComponent {
                     dimensions: variable.dimensions.clone(),
                 });
             }
-            set_values(instance, id, variable, &elements).map_err(|source| {
+            set_values(instance, instance_name, variable, &elements).map_err(|source| {
                 FmuConstructionError::InitialValue {
                     variable: variable.name.clone(),
                     reason: source.to_string(),
@@ -365,7 +384,7 @@ impl FmuComponent {
                 continue;
             };
             let values = input.resolve(payload)?;
-            set_input_var(&mut self.instance, &self.id, input, &values)?;
+            set_input_var(&mut self.instance, &self.instance_name, input, &values)?;
         }
 
         Ok(())
@@ -379,7 +398,7 @@ impl FmuComponent {
     fn publish_outputs(&mut self, ctx: &mut StepCtx) -> Result<(), CoreError> {
         let mut payloads: Vec<(KeyExpr, Value)> = Vec::new();
         for output in &self.outputs {
-            let value = get_output_var(&mut self.instance, &self.id, output)?;
+            let value = get_output_var(&mut self.instance, &self.instance_name, output)?;
             let key = &output.binding.published_key;
 
             let slot = match payloads.iter_mut().find(|(existing, _)| existing == key) {
@@ -490,16 +509,25 @@ impl Component for FmuComponent {
                 self.instance
                     .enter_initialization_mode(None, now.as_secs_f64(), None)
                     .map_err(|source| {
-                        fmi_call_failure(&self.id, "", "enter_initialization_mode", &source)
+                        fmi_call_failure(
+                            &self.instance_name,
+                            "",
+                            "enter_initialization_mode",
+                            &source,
+                        )
                     })?;
 
                 // The mapping's values first, then the inbox, so a message
                 // arriving at instant zero wins over a start value written
                 // for the case where none does.
-                Self::set_initial_values(&mut self.instance, &self.id, &self.vars_to_initialize)?;
+                Self::set_initial_values(
+                    &mut self.instance,
+                    &self.instance_name,
+                    &self.vars_to_initialize,
+                )?;
                 self.apply_inbox(ctx.inbox())?;
                 self.instance.exit_initialization_mode().map_err(|source| {
-                    fmi_call_failure(&self.id, "", "exit_initialization_mode", &source)
+                    fmi_call_failure(&self.instance_name, "", "exit_initialization_mode", &source)
                 })?;
             }
             Phase::Stepping { last } => {
@@ -523,7 +551,9 @@ impl Component for FmuComponent {
                         &mut early_return,
                         &mut last_successful_time,
                     )
-                    .map_err(|source| fmi_call_failure(&self.id, "", "do_step", &source))?;
+                    .map_err(|source| {
+                        fmi_call_failure(&self.instance_name, "", "do_step", &source)
+                    })?;
 
                 // An FMU asking to stop is a halt rather than a suggestion.
                 // It happens before any output is read, so a failed step
@@ -533,7 +563,7 @@ impl Component for FmuComponent {
                     return Err(CoreError::ComponentFailure {
                         reason: format!(
                             "FMU instance {:?} asked to terminate the simulation",
-                            self.id.as_str()
+                            self.instance_name
                         ),
                     });
                 }
@@ -552,7 +582,7 @@ impl Component for FmuComponent {
                     return Err(CoreError::ComponentFailure {
                         reason: format!(
                             "FMU instance {:?} stopped early at {last_successful_time} s, not {} s",
-                            self.id.as_str(),
+                            self.instance_name,
                             now.as_secs_f64()
                         ),
                     });
@@ -567,7 +597,7 @@ impl Component for FmuComponent {
                     return Err(CoreError::ComponentFailure {
                         reason: format!(
                             "FMU instance {:?} asked for event mode, which it was instantiated without",
-                            self.id.as_str()
+                            self.instance_name
                         ),
                     });
                 }
@@ -620,7 +650,7 @@ fn check_log_categories(
 fn check_period(
     period: SimDuration,
     fixed_internal_step_size: f64,
-    id: &ComponentId,
+    instance_name: &str,
 ) -> Result<(), FmuConstructionError> {
     // Compared as whole nanoseconds rather than as floats, so "a multiple of"
     // is exact and no tolerance has to be chosen. `modelDescription.xml`
@@ -633,7 +663,7 @@ fn check_period(
         Ok(())
     } else {
         Err(FmuConstructionError::Period {
-            instance_name: id.to_string(),
+            instance_name: instance_name.to_string(),
             period: period.as_secs_f64(),
             fixed_internal_step_size,
         })
