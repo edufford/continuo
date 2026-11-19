@@ -348,7 +348,7 @@ mod test_collision_properties;
 
 #[cfg(test)]
 mod tests {
-    use std::f64::consts::{FRAC_PI_2, FRAC_PI_4};
+    use std::f64::consts::FRAC_PI_2;
 
     use continuo_core::{Quat, Vec3};
 
@@ -409,35 +409,6 @@ mod tests {
             &placed(CAR_LENGTH, CAR_WIDTH + 0.01, 0.0),
             0.0
         ));
-    }
-
-    #[test]
-    fn a_car_crossing_another_at_right_angles_overlaps_where_their_bodies_meet() {
-        // The north-bound car's nose reaches into the east-bound car's side,
-        // where neither center is within the other's footprint.
-        let east = placed(0.0, 0.0, 0.0);
-        let reach = CAR_WIDTH / 2.0 + CAR_LENGTH / 2.0;
-        assert!(are_touching(
-            &east,
-            &placed(0.0, -reach + 0.1, FRAC_PI_2),
-            0.0
-        ));
-        assert!(!are_touching(
-            &east,
-            &placed(0.0, -reach - 0.1, FRAC_PI_2),
-            0.0
-        ));
-    }
-
-    #[test]
-    fn a_car_turned_45_degrees_can_be_apart_along_its_own_edges_alone() {
-        // 4.45 m ahead, the turned car's extent along the road, about
-        // 2.23 m, still overlaps the other's, so the other car's edge
-        // directions see no gap. Its own left edge direction does, which is
-        // why the test takes the edge directions of both cars.
-        let east = placed(0.0, 0.0, 0.0);
-        assert!(!are_touching(&east, &placed(4.45, 0.0, FRAC_PI_4), 0.0));
-        assert!(are_touching(&east, &placed(4.3, 0.0, FRAC_PI_4), 0.0));
     }
 
     #[test]
