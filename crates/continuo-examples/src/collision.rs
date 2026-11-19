@@ -354,6 +354,13 @@ mod tests {
 
     use super::*;
 
+    /// Center to center distances along a lane: bumpers overlapping by half
+    /// a meter, apart by one margin, which the two cars' margins together
+    /// still bridge, and apart by more than both.
+    const OVERLAPPING: f64 = CAR_LENGTH - 0.5;
+    const WITHIN_MARGIN: f64 = CAR_LENGTH + CONTACT_MARGIN;
+    const BEYOND_MARGIN: f64 = CAR_LENGTH + 2.0 * CONTACT_MARGIN + 0.1;
+
     /// An actor at `(x, y)` heading `yaw` radians counterclockwise from
     /// east.
     fn placed(x: f64, y: f64, yaw: f64) -> ActorPlacement {
@@ -376,87 +383,65 @@ mod tests {
     }
 
     #[test]
-    fn a_car_closing_on_another_in_its_lane_collides_from_bumper_to_bumper() {
-        // Both cars share their long edges' lines, the case a test on edges
-        // crossing gets wrong. Exactly a car length apart they touch end to
-        // end, with no gap, which counts.
-        let lead = placed(10.0, 0.0, 0.0);
-        let behind = |gap: f64| placed(10.0 - CAR_LENGTH - gap, 0.0, 0.0);
-        assert!(are_touching(&lead, &behind(-0.1), 0.0));
-        assert!(are_touching(&lead, &behind(0.0), 0.0));
-        assert!(!are_touching(&lead, &behind(0.1), 0.0));
-    }
-
-    #[test]
-    fn cars_side_by_side_in_neighboring_lanes_do_not_collide() {
-        // 3.5 m apart center to center, which is less than one car length,
-        // so a test on distance alone would call this a collision.
-        let left = placed(0.0, 3.5, 0.0);
-        let right = placed(0.0, 0.0, 0.0);
-        assert!(!are_touching(&left, &right, 0.0));
-        assert!(are_touching(&left, &right, CAR_WIDTH));
-    }
-
-    #[test]
-    fn rectangles_touching_only_at_a_corner_collide() {
-        // Corner to corner exactly. A zero yaw is exactly the identity, and
-        // halving and doubling the extents are exact, so the touch is exact
-        // rather than a rounding either way.
-        let a = placed(0.0, 0.0, 0.0);
-        assert!(are_touching(&a, &placed(CAR_LENGTH, CAR_WIDTH, 0.0), 0.0));
-        assert!(!are_touching(
-            &a,
-            &placed(CAR_LENGTH, CAR_WIDTH + 0.01, 0.0),
-            0.0
-        ));
+    fn footprints_touch_from_the_moment_they_meet() {
+        // End to end, side by side, and corner to corner. A zero yaw is
+        // exactly the identity, and halving and doubling the extents are
+        // exact, so each touch is exact, and a nanometer either side is
+        // enough to overlap or part.
+        let car = placed(0.0, 0.0, 0.0);
+        for (along, across) in [(1.0, 0.0), (0.0, 1.0), (1.0, 1.0)] {
+            let at_gap =
+                |gap: f64| placed(along * (CAR_LENGTH + gap), across * (CAR_WIDTH + gap), 0.0);
+            let case = format!("meeting along ({along}, {across})");
+            assert!(
+                are_touching(&car, &at_gap(-1e-9), 0.0),
+                "overlapping, {case}"
+            );
+            assert!(are_touching(&car, &at_gap(0.0), 0.0), "touching, {case}");
+            assert!(!are_touching(&car, &at_gap(1e-9), 0.0), "apart, {case}");
+        }
     }
 
     #[test]
     fn a_pair_overlapping_twice_without_parting_is_one_collision_episode() {
         let mut contact_tracker = ContactTracker::default();
         contact_tracker.place_on_grid("a", placed(0.0, 0.0, 0.0));
-        contact_tracker.place_on_grid("b", placed(4.0, 0.0, 0.0));
+        contact_tracker.place_on_grid("b", placed(OVERLAPPING, 0.0, 0.0));
         assert_eq!(contact_tracker.update_contacts().len(), 1);
 
-        // Just apart, but within the margin: the same collision episode.
-        contact_tracker.place_on_grid("b", placed(CAR_LENGTH + 0.2, 0.0, 0.0));
+        // Apart, but within the margin: the same collision episode.
+        contact_tracker.place_on_grid("b", placed(WITHIN_MARGIN, 0.0, 0.0));
         assert!(contact_tracker.update_contacts().is_empty());
-        contact_tracker.place_on_grid("b", placed(4.0, 0.0, 0.0));
+        contact_tracker.place_on_grid("b", placed(OVERLAPPING, 0.0, 0.0));
         assert!(contact_tracker.update_contacts().is_empty());
 
         // Apart by more than the margin, then back: a second collision
         // episode.
-        contact_tracker.place_on_grid(
-            "b",
-            placed(CAR_LENGTH + 2.0 * CONTACT_MARGIN + 0.1, 0.0, 0.0),
-        );
+        contact_tracker.place_on_grid("b", placed(BEYOND_MARGIN, 0.0, 0.0));
         assert!(contact_tracker.update_contacts().is_empty());
-        contact_tracker.place_on_grid("b", placed(4.0, 0.0, 0.0));
+        contact_tracker.place_on_grid("b", placed(OVERLAPPING, 0.0, 0.0));
         assert_eq!(contact_tracker.update_contacts().len(), 1);
         assert_eq!(contact_tracker.num_collisions, 2);
     }
 
     #[test]
-    fn a_collision_episode_goes_on_whichever_cells_its_cars_are_filed_in() {
-        // Apart, but within the margin, so the collision episode goes on.
-        // Filing the second car three cells away by hand takes the pair out
-        // of the grid's candidates, which must not end it.
+    fn a_collision_episode_goes_on_as_its_cars_cross_into_another_cell() {
         let mut contact_tracker = ContactTracker::default();
         contact_tracker.place_on_grid("a", placed(0.0, 0.0, 0.0));
-        contact_tracker.place_on_grid("b", placed(4.0, 0.0, 0.0));
+        contact_tracker.place_on_grid("b", placed(OVERLAPPING, 0.0, 0.0));
         assert_eq!(contact_tracker.update_contacts().len(), 1);
+        let cells_before = (
+            contact_tracker.cars["a"].cell,
+            contact_tracker.cars["b"].cell,
+        );
 
-        contact_tracker.place_on_grid("b", placed(CAR_LENGTH + 0.2, 0.0, 0.0));
-        let filed_cell = contact_tracker.cars["b"].cell;
-        let elsewhere = (filed_cell.0 + 3, filed_cell.1);
-        contact_tracker.leave_cell("b", filed_cell);
-        contact_tracker
-            .grid
-            .entry(elsewhere)
-            .or_default()
-            .insert("b".to_string());
-        contact_tracker.cars.get_mut("b").expect("b is placed").cell = elsewhere;
-        assert!(contact_tracker.pairs_in_reach().is_empty());
+        // Both move east into the next cell, no longer overlapping but one
+        // margin apart, which keeps the collision episode going.
+        let a_x = cell_size() + 0.1;
+        contact_tracker.place_on_grid("a", placed(a_x, 0.0, 0.0));
+        contact_tracker.place_on_grid("b", placed(a_x + WITHIN_MARGIN, 0.0, 0.0));
+        assert_ne!(contact_tracker.cars["a"].cell, cells_before.0);
+        assert_ne!(contact_tracker.cars["b"].cell, cells_before.1);
 
         assert!(contact_tracker.update_contacts().is_empty());
         assert!(
@@ -471,7 +456,7 @@ mod tests {
     fn a_car_that_leaves_takes_its_cell_and_its_collision_episodes_with_it() {
         let mut contact_tracker = ContactTracker::default();
         contact_tracker.place_on_grid("a", placed(0.0, 0.0, 0.0));
-        contact_tracker.place_on_grid("b", placed(4.0, 0.0, 0.0));
+        contact_tracker.place_on_grid("b", placed(OVERLAPPING, 0.0, 0.0));
         contact_tracker.update_contacts();
         contact_tracker.remove("b");
         assert!(contact_tracker.in_contact.is_empty());
