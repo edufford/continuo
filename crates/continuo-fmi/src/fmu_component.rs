@@ -90,6 +90,8 @@ impl FmuComponent {
     /// the instance, as the path the component will occupy, since FMI fixes
     /// an instance's name when it is created; the conductor still decides
     /// where the component goes.
+    // TODO(PLAN "Scenario configuration"): `parent_path` moves into
+    // `FmuMapping`, with the rest of what configures an instance.
     pub fn new(
         id: &str,
         parent_path: &str,
