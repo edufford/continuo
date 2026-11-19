@@ -51,20 +51,20 @@ pub(crate) fn set_values(
     variable: &ResolvedVariable,
     values: &[&Value],
 ) -> Result<(), CoreError> {
-    let name = variable.name.as_str();
+    let var_name = variable.name.as_str();
     let references = [variable.value_reference];
 
     macro_rules! set_with {
         ($convert:path, $setter:ident) => {{
             let converted = values
                 .iter()
-                .map(|value| $convert(value, name))
+                .map(|value| $convert(value, var_name))
                 .collect::<Result<Vec<_>, _>>()?;
             instance
                 .$setter(&references, &converted)
                 .map(|_| ())
                 .map_err(|source| {
-                    fmi_call_failure(instance_name, name, stringify!($setter), &source)
+                    fmi_call_failure(instance_name, var_name, stringify!($setter), &source)
                 })
         }};
     }
@@ -84,23 +84,23 @@ pub(crate) fn set_values(
         VariableType::FmiString => {
             let converted = values
                 .iter()
-                .map(|value| convert::to_fmi_string(value, name))
+                .map(|value| convert::to_fmi_string(value, var_name))
                 .collect::<Result<Vec<_>, _>>()?;
             instance
                 .set_string(&references, &converted)
-                .map_err(|source| fmi_call_failure(instance_name, name, "set_string", &source))
+                .map_err(|source| fmi_call_failure(instance_name, var_name, "set_string", &source))
         }
         VariableType::FmiBinary => {
             let converted = values
                 .iter()
-                .map(|value| convert::to_fmi_binary(value, name))
+                .map(|value| convert::to_fmi_binary(value, var_name))
                 .collect::<Result<Vec<_>, _>>()?;
             let borrowed: Vec<&[u8]> = converted.iter().map(Vec::as_slice).collect();
             instance
                 .set_binary(&references, &borrowed)
-                .map_err(|source| fmi_call_failure(instance_name, name, "set_binary", &source))
+                .map_err(|source| fmi_call_failure(instance_name, var_name, "set_binary", &source))
         }
-        VariableType::FmiClock => Err(unbound_clock(name)),
+        VariableType::FmiClock => Err(unbound_clock(var_name)),
     }
 }
 
@@ -111,7 +111,7 @@ pub(crate) fn get_output_var(
     output: &BoundOutput,
 ) -> Result<Value, CoreError> {
     let variable = &output.variable;
-    let name = variable.name.as_str();
+    let var_name = variable.name.as_str();
     let references = [variable.value_reference];
     let count = variable.len();
 
@@ -124,11 +124,11 @@ pub(crate) fn get_output_var(
             instance
                 .$getter(&references, &mut values)
                 .map_err(|source| {
-                    fmi_call_failure(instance_name, name, stringify!($getter), &source)
+                    fmi_call_failure(instance_name, var_name, stringify!($getter), &source)
                 })?;
             let converted = values
                 .into_iter()
-                .map(|value| $convert(value, name))
+                .map(|value| $convert(value, var_name))
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(variable.shape(converted))
         }};
@@ -156,10 +156,12 @@ pub(crate) fn get_output_var(
             let mut values = vec![CString::default(); count];
             instance
                 .get_string(&references, &mut values)
-                .map_err(|source| fmi_call_failure(instance_name, name, "get_string", &source))?;
+                .map_err(|source| {
+                    fmi_call_failure(instance_name, var_name, "get_string", &source)
+                })?;
             let converted = values
                 .iter()
-                .map(|value| convert::from_fmi_string(value, name))
+                .map(|value| convert::from_fmi_string(value, var_name))
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(variable.shape(converted))
         }
@@ -168,17 +170,19 @@ pub(crate) fn get_output_var(
             let mut slices: Vec<&mut [u8]> = buffers.iter_mut().map(Vec::as_mut_slice).collect();
             let sizes = instance
                 .get_binary(&references, &mut slices)
-                .map_err(|source| fmi_call_failure(instance_name, name, "get_binary", &source))?;
+                .map_err(|source| {
+                    fmi_call_failure(instance_name, var_name, "get_binary", &source)
+                })?;
             // A size of zero is a length rather than a failure: an FMU may
             // hold an empty Binary, which encodes as the empty string and
             // decodes back to no bytes.
             let converted = buffers
                 .iter()
                 .zip(sizes.iter().chain(std::iter::repeat(&0)))
-                .map(|(buffer, size)| convert::from_fmi_binary(&buffer[..*size], name))
+                .map(|(buffer, size)| convert::from_fmi_binary(&buffer[..*size], var_name))
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(variable.shape(converted))
         }
-        VariableType::FmiClock => Err(unbound_clock(name)),
+        VariableType::FmiClock => Err(unbound_clock(var_name)),
     }
 }
