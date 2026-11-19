@@ -18,20 +18,24 @@
 //! plain `InProcTransport` for the base demo, wrapped in a
 //! `MonitorTransport` when recording or verifying.
 
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use continuo_actors::control_laws::{FREE_ROAD, IdmParams, PurePursuitParams};
 use continuo_actors::{
-    CarState, DespawnTrafficRequest, PathFollowController, PlantLimits, PoseLogger, RadarSensor,
-    SpawnTrafficRequest, TrafficSpawner, UnicyclePhysics, Waypoints, accel_cmd_key, pose_key,
-    radar_key, road_pose, steer_cmd_key, straight_road, traffic_despawn_key, traffic_spawn_key,
+    CarState, DespawnTrafficRequest, PathFollowController, PlantLimits, RadarSensor,
+    SpawnTrafficRequest, TrafficSpawner, UnicyclePhysics, Waypoints, accel_cmd_key,
+    actor_of_pose_key, pose_key, radar_key, road_pose, steer_cmd_key, straight_road,
+    traffic_despawn_key, traffic_spawn_key,
 };
 use continuo_conductor::record::LogEvent;
 use continuo_conductor::{
     Conductor, ConductorConfig, ConductorError, EventLog, JoinMetadata, MembershipChange, Pacing,
     PlaybackComponent, RecordedCollision, RecordedObservation, Verifier, WORLD_LEVEL,
 };
-use continuo_core::{Component, ComponentId, CoreError, Message, SimDuration, SimTime};
+use continuo_core::{
+    Component, ComponentId, ComponentPath, CoreError, KeyExpr, Message, Pose, SimDuration, SimTime,
+};
 use continuo_fmi::{FmuComponent, FmuConstructionError, FmuMapping, InputBinding, OutputBinding};
 use continuo_transport::Transport;
 use serde_json::json;
@@ -406,20 +410,19 @@ fn add_spawner<T: Transport>(conductor: &mut Conductor<T>) -> Result<(), Conduct
     Ok(())
 }
 
-/// Registers the live scenario's fixed cast: the ego, the spawner that
-/// manages traffic around it, and the pose logger. Every car arrives later,
+/// Registers the live scenario's fixed cast: the ego and the spawner that
+/// manages traffic around it. Every car arrives later,
 /// while the run is under way, so this is the whole world only at sim time
 /// zero, and [`run_live_traffic_scenario`] is what builds the rest of it.
 ///
 /// *Live* because the traffic is decided as the run happens. `traffic_resim`
-/// assembles the other kind by hand: the same ego and logger, but no
-/// spawner, and cars played back from a log rather than chosen.
+/// assembles the other kind by hand: the same ego, but no spawner, and
+/// cars played back from a log rather than chosen.
 pub fn setup_live_traffic_scenario<T: Transport>(
     conductor: &mut Conductor<T>,
 ) -> Result<(), ScenarioError> {
     add_ego(conductor, EGO_START, EGO_LANE, EGO_SPEED)?;
     add_spawner(conductor)?;
-    add_logger(conductor)?;
 
     // Return success; the fixed part of the world is registered.
     Ok(())
@@ -443,10 +446,9 @@ pub const BASELINE_DEMO_LANES: usize = TRAFFIC_LANES.len() + 1;
 /// Registers `cars` cars across `lanes` lanes, for measuring what a world
 /// costs as it grows rather than for watching anything happen in it.
 ///
-/// No spawner and no logger, and neither is an oversight. A spawner would
-/// make the population a moving target, which is the one thing a
-/// measurement of population wants held still, and a pose logger at this
-/// size writes more than the run it is reporting on.
+/// No spawner, which is not an oversight: it would make the population a
+/// moving target, which is the one thing a measurement of population wants
+/// held still.
 ///
 /// Cars fill the lanes and then wrap onto another row further along the
 /// road, so `cars` need not divide evenly by `lanes`. Speeds follow a fixed
@@ -515,7 +517,6 @@ pub fn setup_playback_traffic_scenario<T: Transport>(
             Box::new(PlaybackComponent::from_log(id, recorded, actor_name)),
         )?;
     }
-    add_logger(conductor)?;
 
     // Return the size of the scene that was rebuilt.
     Ok(actor_names.len())
@@ -524,8 +525,8 @@ pub fn setup_playback_traffic_scenario<T: Transport>(
 /// The traffic actors a recorded run contained, in the order they joined.
 ///
 /// Cars are composites, so their join paths have a parent
-/// (`traffic7/physics`); the spawner and the logger are world-level leaves
-/// and have none, which separates them here without matching on names.
+/// (`traffic7/physics`); the spawner is a world-level leaf and has none,
+/// which separates it here without matching on names.
 fn recorded_traffic_actor_names(recorded: &EventLog) -> Vec<String> {
     let mut actor_names: Vec<String> = Vec::new();
     for event in &recorded.events {
@@ -544,25 +545,9 @@ fn recorded_traffic_actor_names(recorded: &EventLog) -> Vec<String> {
     actor_names
 }
 
-/// Registers the world-level pose logger, offset 1 ns past each second
-/// boundary: the smallest offset that clears same-instant deferral, so
-/// on-boundary poses are visible, and nothing can be scheduled between a
-/// boundary and its sample.
-fn add_logger<T: Transport>(conductor: &mut Conductor<T>) -> Result<(), ConductorError> {
-    conductor.add_component_at_start(
-        WORLD_LEVEL,
-        Box::new(PoseLogger::new(
-            SimDuration::from_secs(1),
-            SimDuration::from_nanos(1),
-        )),
-    )?;
-
-    // Return success; the logger is registered.
-    Ok(())
-}
-
 /// What the live scenario needs from outside the sim: the spawner's
-/// requests turned into cars, and every car watched for collisions.
+/// requests turned into cars, every car watched for collisions, and each car
+/// logged as it joins and leaves.
 #[derive(Clone)]
 pub struct LiveTrafficHandler {
     /// Requests collected since the last [`Self::apply_traffic_requests`],
@@ -578,6 +563,9 @@ pub struct LiveTrafficHandler {
     unreadable_request: Arc<Mutex<Option<CoreError>>>,
     /// Every car's pose, watched for contact with another car's.
     collision_monitor: CollisionMonitor,
+    /// Each car's latest pose, and the arrivals and departures not yet
+    /// logged.
+    car_log: Arc<Mutex<CarLog>>,
 }
 
 impl Default for LiveTrafficHandler {
@@ -586,8 +574,26 @@ impl Default for LiveTrafficHandler {
             pending_requests: Arc::default(),
             unreadable_request: Arc::default(),
             collision_monitor: CollisionMonitor::new(WORLD_NAME, EGO_NAME),
+            car_log: Arc::default(),
         }
     }
+}
+
+/// Each car's latest pose, and the arrivals and departures not yet logged,
+/// in the order they happened.
+#[derive(Default)]
+struct CarLog {
+    latest_poses: BTreeMap<String, (SimTime, Pose)>,
+    unlogged: Vec<CarChange>,
+}
+
+/// A car joining or leaving, and its pose then: the first one it
+/// published, or the last.
+struct CarChange {
+    verb: &'static str,
+    actor: String,
+    sim_time: SimTime,
+    pose: Pose,
 }
 
 /// One membership change the sim asked for.
@@ -602,18 +608,65 @@ impl LiveTrafficHandler {
     pub fn message_callback(&self) -> impl FnMut(&Message) + Send + 'static {
         let mut collect_requests = self.request_callback();
         let mut collect_poses = self.collision_monitor.message_callback();
+        let car_log = self.car_log.clone();
+        let pose_key_pattern =
+            KeyExpr::new_rooted(format!("{WORLD_NAME}/actor/*/pose")).expect("valid pose key");
 
-        // Return one callback feeding both.
+        // Return one callback feeding the requests, the collision monitor,
+        // and the car log.
         move |message: &Message| {
             collect_requests(message);
             collect_poses(message);
+            // A pose that cannot be read is the collision monitor's to report.
+            if !pose_key_pattern.matches(&message.key) {
+                return;
+            }
+            let Ok(pose) = message.decode::<Pose>() else {
+                return;
+            };
+            let actor = actor_of_pose_key(message.key.as_str()).to_string();
+            let mut car_log = car_log.lock().expect("car log mutex is never poisoned");
+            // A car's first pose is the one it joined with.
+            if !car_log.latest_poses.contains_key(&actor) {
+                car_log.unlogged.push(CarChange {
+                    verb: "joined",
+                    actor: actor.clone(),
+                    sim_time: message.sim_time,
+                    pose,
+                });
+            }
+            car_log.latest_poses.insert(actor, (message.sim_time, pose));
         }
     }
 
-    /// A membership callback that tells the collision monitor when a car
-    /// leaves.
+    /// A membership callback that tells the collision monitor and the car
+    /// log when a car leaves.
     pub fn membership_callback(&self) -> impl FnMut(&MembershipChange) + Send + 'static {
-        self.collision_monitor.membership_callback()
+        let mut remove_from_monitor = self.collision_monitor.membership_callback();
+        let car_log = self.car_log.clone();
+
+        // Return one callback feeding both.
+        move |change: &MembershipChange| {
+            remove_from_monitor(change);
+            let MembershipChange::Left(leave) = change else {
+                return;
+            };
+            let path = ComponentPath::parse(&leave.path).expect("a leave names a valid path");
+            let Some(actor) = path.actor() else {
+                return;
+            };
+            // The first of a car's components to leave removes the car, so
+            // each car is logged leaving once.
+            let mut car_log = car_log.lock().expect("car log mutex is never poisoned");
+            if let Some((sim_time, pose)) = car_log.latest_poses.remove(actor.as_str()) {
+                car_log.unlogged.push(CarChange {
+                    verb: "left",
+                    actor: actor.to_string(),
+                    sim_time,
+                    pose,
+                });
+            }
+        }
     }
 
     /// The collision monitor.
@@ -662,6 +715,29 @@ impl LiveTrafficHandler {
                     }
                 }
             }
+        }
+    }
+
+    /// Logs the cars that joined or left since the last call, in the order
+    /// they did.
+    fn log_car_changes(&self) {
+        let unlogged = std::mem::take(
+            &mut self
+                .car_log
+                .lock()
+                .expect("car log mutex is never poisoned")
+                .unlogged,
+        );
+        for change in unlogged {
+            tracing::info!(
+                sim_time = %change.sim_time,
+                actor = change.actor,
+                x = format_args!("{:.2}", change.pose.position.x),
+                y = format_args!("{:.2}", change.pose.position.y),
+                yaw_deg = format_args!("{:.1}", change.pose.orientation.yaw().to_degrees()),
+                "{}",
+                change.verb
+            );
         }
     }
 
@@ -785,6 +861,7 @@ pub fn run_live_traffic_scenario<T: Transport>(
             .is_some_and(|instant| instant <= end)
     {
         conductor.step_once()?;
+        live_traffic_handler.log_car_changes();
         // Before the requests, so a collision names the cars it happened
         // among.
         live_traffic_handler.process_collisions(conductor)?;
@@ -813,4 +890,58 @@ pub fn run_playback_traffic_scenario<T: Transport>(
 ) -> Result<(), ConductorError> {
     // Return once the recorded schedule has been played out to `end`.
     conductor.run_until(end)
+}
+
+#[cfg(test)]
+mod tests {
+    use continuo_conductor::RecordedLeave;
+    use continuo_core::{Quat, Vec3};
+
+    use super::*;
+
+    /// A pose for `actor` at `x` along the road, published at `sim_secs`.
+    fn pose_message(actor: &str, x: f64, sim_secs: f64) -> Message {
+        Message {
+            key: pose_key(WORLD_NAME, actor),
+            publisher: ComponentPath::parse(&format!("{actor}/physics")).expect("valid path"),
+            seq: 0,
+            sim_time: SimTime::from_secs_f64(sim_secs),
+            payload: serde_json::to_vec(&Pose {
+                position: Vec3::new(x, 0.0, 0.0),
+                orientation: Quat::IDENTITY,
+            })
+            .expect("a pose serializes"),
+        }
+    }
+
+    #[test]
+    fn a_car_is_logged_joining_with_its_first_pose_and_leaving_once_with_its_last() {
+        let live_traffic_handler = LiveTrafficHandler::default();
+        let mut on_message = live_traffic_handler.message_callback();
+        let mut on_membership = live_traffic_handler.membership_callback();
+        on_message(&pose_message("car", 10.0, 1.0));
+        on_message(&pose_message("car", 12.0, 1.1));
+        // Each of the car's components leaves, one after another.
+        for leaf in ["radar", "controller", "physics"] {
+            on_membership(&MembershipChange::Left(RecordedLeave {
+                path: format!("car/{leaf}"),
+                leaves_at: SimTime::from_secs_f64(1.2),
+            }));
+        }
+
+        let car_log = live_traffic_handler.car_log.lock().expect("not poisoned");
+        let logged: Vec<_> = car_log
+            .unlogged
+            .iter()
+            .map(|change| {
+                (
+                    change.verb,
+                    change.sim_time.as_secs_f64(),
+                    change.pose.position.x,
+                )
+            })
+            .collect();
+        assert_eq!(logged, [("joined", 1.0, 10.0), ("left", 1.1, 12.0)]);
+        assert!(car_log.latest_poses.is_empty());
+    }
 }
