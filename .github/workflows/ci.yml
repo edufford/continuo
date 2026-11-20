@@ -9,7 +9,7 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  lint-test-smoke:
+  lint_test_smoke:
     name: Lint, test, and smoke (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     # Two architectures and three libm implementations, chosen so that a
