@@ -36,14 +36,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok_or("usage: traffic_resim <file>")?;
     let log = EventLog::read_file(&file)?;
 
-    // The speed is the only thing this run varies; the setup holds the rest
-    // at the recorded scenario's values, which is what makes the comparison
-    // mean something.
     let traffic_handler = TrafficHandler::default();
     let mut transport = MonitorTransport::new(InProcTransport::new());
     transport.add_message_callback(traffic_handler.message_callback());
     let mut conductor = Conductor::new(traffic_world::config(), transport)?;
     conductor.add_membership_callback(traffic_handler.membership_callback());
+    // The speed is the only thing this run varies; the setup holds the rest
+    // at the recorded scenario's values, which is what makes the comparison
+    // mean something.
     let num_cars =
         traffic_world::setup_playback_traffic_scenario(&mut conductor, &log, WHAT_IF_EGO_SPEED)?;
 

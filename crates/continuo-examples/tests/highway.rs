@@ -7,13 +7,13 @@
 //! come from inside the sim, which is the part that has to stay
 //! deterministic.
 
+use std::collections::BTreeSet;
+
 use continuo_actors::AccelCmd;
 use continuo_conductor::record::LogEvent;
 use continuo_conductor::{
     Conductor, Divergence, EventLog, RecordedObservation, Recorder, Verifier,
 };
-use std::collections::BTreeSet;
-
 use continuo_core::{ComponentPath, SimTime};
 use continuo_examples::traffic_world::{self, TrafficHandler};
 use continuo_transport::{InProcTransport, MonitorTransport};
