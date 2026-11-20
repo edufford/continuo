@@ -9,7 +9,7 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  test:
+  lint_test_smoke:
     name: Lint, test, and smoke (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     # Two architectures and three libm implementations, chosen so that a
@@ -50,13 +50,38 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      # Windows only, for `fmi-sys`, which runs bindgen at build time.
+      #
+      # Bindgen finds libclang through `clang-sys`, which without
+      # `LIBCLANG_PATH` searches every place on its list, one of them a
+      # pattern that walks the whole Visual Studio install. On a runner's
+      # cold disk that walk takes minutes.
+      #
+      # Bindgen also tells cargo to watch the MSVC headers it read, at paths
+      # that carry the toolset version, so a cache built with another
+      # toolset reruns the build script on every run. Keying the cache on
+      # that version means a hit was built with the same headers.
+      - name: "Install: point bindgen at LLVM, key on the MSVC toolset"
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          $msvc = (Get-Content "$vs\VC\Auxiliary\Build\Microsoft.VCToolsVersion.default.txt").Trim()
+          "MSVC toolset: $msvc"
+          "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV
+          "MSVC_TOOLSET=msvc-$msvc" >> $env:GITHUB_ENV
+
       # Saved only from main. Each platform's cache is over a gigabyte and
       # GitHub keeps 10 GB a repository, evicting the least recently used,
       # so a pull request saving its own would push main's out and leave the
       # next run to build from nothing. A pull request restores main's
-      # instead, and one that changes Cargo.lock builds cold until it merges.
+      # instead, and one that changes Cargo.lock, or builds with an MSVC
+      # toolset main has not, builds cold until main saves again. The key is
+      # empty off Windows.
       - uses: Swatinem/rust-cache@v2
         with:
+          key: ${{ env.MSVC_TOOLSET }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # Cargo.lock pins every dependency, and some of them are pinned for a
