@@ -1645,10 +1645,10 @@ it got there, including the roads not taken.
   queued at setup, which the conductor applies at their own instants. The
   playback run loop drives the same handler as the live one, renamed from
   `LiveTrafficHandler` to `TrafficHandler`, so a what-if run checks the
-  ego for collisions with traffic that cannot react to it, and prints the
-  same joining and leaving lines as the live run. A playback world has no
-  spawner, so its handler finds no requests to apply. The world hash does
-  not move.
+  ego for collisions with traffic playing back their behavior, and prints
+  the same joining and leaving lines as the live run. A playback world
+  has no spawner, so its handler finds no requests to apply. The world
+  hash does not move.
   - Rejected: splitting the handler into a `TrafficRequestHandler` that
     acts on the world and a `WorldMonitor` that only watches it. The
     monitoring may need to act on the sim later too, and the split
