@@ -553,7 +553,7 @@ fn recorded_traffic_actor_names(recorded: &EventLog) -> Vec<String> {
 pub struct LiveTrafficHandler {
     /// Requests collected since the last [`Self::apply_traffic_requests`],
     /// in publish order.
-    pending_requests: Arc<Mutex<Vec<Request>>>,
+    pending_requests: Arc<Mutex<Vec<TrafficRequest>>>,
     /// The first request that could not be read, held until
     /// [`Self::apply_traffic_requests`] reports it.
     ///
@@ -598,7 +598,7 @@ struct ActorChange {
 }
 
 /// One membership change the sim asked for.
-enum Request {
+enum TrafficRequest {
     Spawn(SpawnTrafficRequest),
     Despawn(DespawnTrafficRequest),
 }
@@ -647,10 +647,10 @@ impl LiveTrafficHandler {
 
         // Return the noting callback, holding its own handles.
         move |message: &Message| {
-            // A pose that cannot be read is the collision monitor's to report.
             if !pose_key_pattern.matches(&message.key) {
                 return;
             }
+            // A pose that cannot be read is the collision monitor's to report.
             let Ok(pose) = message.decode::<Pose>() else {
                 return;
             };
@@ -716,11 +716,13 @@ impl LiveTrafficHandler {
             // Only these two keys are requests. Anything else on the transport
             // is someone else's traffic and is not this handler's to read.
             let request = if message.key == spawn {
-                message.decode::<SpawnTrafficRequest>().map(Request::Spawn)
+                message
+                    .decode::<SpawnTrafficRequest>()
+                    .map(TrafficRequest::Spawn)
             } else if message.key == despawn {
                 message
                     .decode::<DespawnTrafficRequest>()
-                    .map(Request::Despawn)
+                    .map(TrafficRequest::Despawn)
             } else {
                 return;
             };
@@ -831,7 +833,7 @@ impl LiveTrafficHandler {
         );
         for request in collected {
             match request {
-                Request::Spawn(spawn) => add_car(
+                TrafficRequest::Spawn(spawn) => add_car(
                     conductor,
                     &spawn.actor_name,
                     CarConfiguration::IdmFollowing,
@@ -844,7 +846,7 @@ impl LiveTrafficHandler {
                 // never asks twice, but a scenario that also removed cars
                 // by hand could, and a request for someone already gone has
                 // simply been satisfied early.
-                Request::Despawn(despawn) => {
+                TrafficRequest::Despawn(despawn) => {
                     match conductor.remove_component_now(&despawn.actor_name) {
                         Ok(()) | Err(ConductorError::UnknownPath(_)) => {}
                         Err(other) => return Err(other.into()),
