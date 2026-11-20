@@ -26,19 +26,21 @@ instant, and repeats.
             ┌──────────────────────────┐
             │        Conductor         │   owns sim time + event schedule
             │ (advance to earliest due │
-            │  time, step, barrier)    │◄────────────┐ adds and removes cars;
-            └────────────┬─────────────┘             │ hears of joins and leaves
-             TickStart   │   TickDone { next_due }   │ through membership callbacks
-            ┌────────────┴─────────────┐   ┌─────────┴──────────┐
-            │        Transport         ├──►│ LiveTrafficHandler │ outside the sim,
-            │   (InProc now, Zenoh     │   │ collision monitor  │ sees every message
-            │    later; same trait)    │   │ console output     │ through the
-            └────────────┬─────────────┘   └────────────────────┘ MonitorTransport
+            │  time, step, barrier)    │◄────────────────┐ adds and removes cars,
+            └────────────┬─────────────┘                 │ hears of joins and leaves
+                         │                               │ through membership callbacks
+               TickStart │ TickDone { next_due }         │
+                         │                               │
+            ┌────────────┴─────────────┐       ┌─────────┴──────────┐
+            │        Transport         ├──────►│ LiveTrafficHandler │ outside the sim,
+            │   (InProc now, Zenoh     │       │ (collision monitor,│ sees every message
+            │    later; same trait)    │       │  console output)   │ through the
+            └────────────┬─────────────┘       └────────────────────┘ MonitorTransport
                          │   pub/sub on key expressions,
        ┌─────────────┬───┴──────────┐   e.g. continuo/demo/actor/ego/pose
 ┌──────┴─────┐ ┌─────┴──────┐ ┌─────┴─────────┐
 │    ego     │ │  traffic7  │ │traffic_spawner│ world-level
-│ ┌────────┐ │ │ ┌────────┐ │ │    (2 Hz)     │ component
+│ ┌────────┐ │ │ ┌────────┐ │ │    (2 Hz)     │ actors
 │ │  ctrl  │ │ │ │  ctrl  │ │ └───────┬───────┘
 │ ├────────┤ │ │ ├────────┤ │         │
 │ │physics │ │ │ │physics │ │         │ watches poses, asks for cars
