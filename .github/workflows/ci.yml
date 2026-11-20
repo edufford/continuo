@@ -9,7 +9,7 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  test:
+  lint-test-smoke:
     name: Lint, test, and smoke (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     # Two architectures and three libm implementations, chosen so that a
@@ -78,7 +78,7 @@ jobs:
       # next run to build from nothing. A pull request restores main's
       # instead, and one that changes Cargo.lock, or builds with an MSVC
       # toolset main has not, builds cold until main saves again. The key is
-      # empty off Windows, which leaves those platforms' keys unchanged.
+      # empty off Windows.
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ env.MSVC_TOOLSET }}
