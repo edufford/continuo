@@ -950,10 +950,9 @@ fn record_membership_changes(
 
 #[test]
 fn a_join_and_its_later_leave_queued_before_the_run_each_take_effect_at_their_own_instant() {
-    // Both requested before anything steps, the way a playback double is
-    // scheduled from a recording. The leave names a path whose join is
-    // still pending when it is requested, and must not withdraw that join:
-    // it applies at 50 ms, by when `b` has joined.
+    // Both queued before the run, as playback queues a double. The leave
+    // applies at 50 ms, after `b` has joined, so it must not withdraw the
+    // join.
     let steps: StepLog = Default::default();
     let mut conductor = new_conductor();
     let announced = record_membership_changes(&mut conductor);
@@ -971,6 +970,8 @@ fn a_join_and_its_later_leave_queued_before_the_run_each_take_effect_at_their_ow
         .expect("`b` is a pending join");
     conductor.run_until(t_sim_ms(70)).expect("steps succeed");
 
+    // The announcements give the order but not the instants, so the steps
+    // show `b` ran from its join up to its leave.
     assert_eq!(
         steps_of(&steps, "b"),
         vec![t_sim_ms(20), t_sim_ms(30), t_sim_ms(40)]

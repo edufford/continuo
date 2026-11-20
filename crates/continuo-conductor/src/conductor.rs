@@ -571,10 +571,8 @@ impl<T: Transport> Conductor<T> {
     ///
     /// The component stops being scheduled, stops receiving messages, and
     /// is dropped, though everything it published stays published, because
-    /// departing is not a rollback. The leave takes effect at its instant,
-    /// whenever it was requested: a join still pending then is withdrawn
-    /// instead, and one that has taken effect by then leaves normally, so a
-    /// join and its later leave can both be queued before the run.
+    /// departing is not a rollback. A join still pending at the leave's
+    /// instant is withdrawn instead.
     ///
     /// Survivors keep their declaration indexes, so execution order within
     /// an instant and every "earlier sibling" the visibility rule depends
