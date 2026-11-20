@@ -206,12 +206,12 @@ where it was then, and finishes in a few wall-seconds. Traffic appears as
 it is spawned and retires once the ego has gone past it:
 
 ```
-INFO joined sim_time=0.0 actor="ego" x=0.00 y=0.00 yaw_deg=0.0
-INFO joined sim_time=0.5 actor="traffic1" x=80.36 y=-3.50 yaw_deg=0.0
-INFO joined sim_time=0.5 actor="traffic2" x=120.83 y=-3.50 yaw_deg=0.0
+INFO joined: actor="ego" (x=0.00 y=0.00 yaw_deg=0.0 at 0.0 sec)
+INFO joined: actor="traffic1" (x=80.36 y=-3.50 yaw_deg=0.0 at 0.5 sec)
+INFO joined: actor="traffic2" (x=120.83 y=-3.50 yaw_deg=0.0 at 0.5 sec)
 ...
-INFO left sim_time=11.0 actor="traffic1" x=267.03 y=-3.50 yaw_deg=0.0
-INFO joined sim_time=11.5 actor="traffic7" x=400.47 y=3.50 yaw_deg=0.0
+INFO left: actor="traffic1" (x=267.03 y=-3.50 yaw_deg=0.0 at 11.0 sec)
+INFO joined: actor="traffic7" (x=400.47 y=3.50 yaw_deg=0.0 at 11.5 sec)
 ...
 done: world 'demo' reached sim time 30.0 in 3001 ticks (free-run)
 actual time: 2.693 s (11x real-time), world hash 602c9fead4ec7d98

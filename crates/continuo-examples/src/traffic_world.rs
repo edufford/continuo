@@ -18,7 +18,7 @@
 //! plain `InProcTransport` for the base demo, wrapped in a
 //! `MonitorTransport` when recording or verifying.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use continuo_actors::control_laws::{FREE_ROAD, IdmParams, PurePursuitParams};
@@ -547,8 +547,8 @@ fn recorded_traffic_actor_names(recorded: &EventLog) -> Vec<String> {
 }
 
 /// What the live scenario needs from outside the sim: the spawner's
-/// requests turned into cars, every car watched for collisions, and each car
-/// printed to the console as it joins and leaves.
+/// requests turned into cars, every car watched for collisions, and the
+/// run's console output.
 #[derive(Clone)]
 pub struct LiveTrafficHandler {
     /// Requests collected since the last [`Self::apply_traffic_requests`],
@@ -564,8 +564,8 @@ pub struct LiveTrafficHandler {
     unreadable_request: Arc<Mutex<Option<CoreError>>>,
     /// Every car's pose, watched for contact with another car's.
     collision_monitor: CollisionMonitor,
-    /// Each actor's latest pose, and the arrivals and departures not yet
-    /// printed to the console.
+    /// What the run prints to the console, queued until the handler prints
+    /// it between ticks.
     console_output: Arc<Mutex<ConsoleOutput>>,
 }
 
@@ -580,18 +580,33 @@ impl Default for LiveTrafficHandler {
     }
 }
 
-/// Each actor's latest pose, and the arrivals and departures not yet
-/// printed to the console, in the order they happened.
+/// Lines waiting to be printed to the console, and what the handler keeps
+/// to write them.
 #[derive(Default)]
 struct ConsoleOutput {
+    /// Actors that have joined but not yet published a pose.
+    joining: BTreeSet<String>,
+    /// The latest pose of each actor still in the world.
     latest_poses: BTreeMap<String, (SimTime, Pose)>,
-    unprinted: Vec<ActorChange>,
+    /// Lines not yet printed, in the order they happened.
+    unprinted: Vec<ConsoleLine>,
 }
 
-/// An actor joining or leaving, and its pose then: the first one it
-/// published, or the last.
+/// One line of the run's console output.
+enum ConsoleLine {
+    /// An actor joining or leaving.
+    Actor(ActorChange),
+    /// An actor's first pose arriving before any join was seen for it, a
+    /// warning, since every actor should join before it publishes.
+    PoseBeforeJoin(ActorChange),
+    /// Two traffic cars colliding.
+    Collision(RecordedCollision),
+}
+
+/// What a line about one actor says, and the pose it prints with the
+/// sim time that pose was published at.
 struct ActorChange {
-    verb: &'static str,
+    description: &'static str,
     actor: String,
     sim_time: SimTime,
     pose: Pose,
@@ -604,8 +619,8 @@ enum TrafficRequest {
 }
 
 impl LiveTrafficHandler {
-    /// A `MonitorTransport` callback that picks the spawner's requests and
-    /// every car's pose out of the traffic.
+    /// A `MonitorTransport` callback feeding every message to the traffic
+    /// requests, the collision monitor, and the console output.
     pub fn message_callback(&self) -> impl FnMut(&Message) + Send + 'static {
         let mut traffic_requests_on_message = self.traffic_request_message_callback();
         let mut collision_monitor_on_message = self.collision_monitor.message_callback();
@@ -620,8 +635,8 @@ impl LiveTrafficHandler {
         }
     }
 
-    /// A membership callback that tells the collision monitor and the
-    /// console output when an actor leaves.
+    /// A membership callback feeding every join and leave to the collision
+    /// monitor and the console output.
     pub fn membership_callback(&self) -> impl FnMut(&MembershipChange) + Send + 'static {
         let mut collision_monitor_on_membership = self.collision_monitor.membership_callback();
         let mut console_output_on_membership = self.console_output_membership_callback();
@@ -639,7 +654,7 @@ impl LiveTrafficHandler {
     }
 
     /// The part of [`Self::message_callback`] that notes each actor's
-    /// latest pose, and its first as the one it joined with.
+    /// latest pose, queueing a console output line with the first one.
     fn console_output_message_callback(&self) -> impl FnMut(&Message) + Send + 'static {
         let console_output = self.console_output.clone();
         let pose_key_pattern =
@@ -658,14 +673,22 @@ impl LiveTrafficHandler {
             let mut console_output = console_output
                 .lock()
                 .expect("console output mutex is never poisoned");
-            // An actor's first pose is the one it joined with.
-            if !console_output.latest_poses.contains_key(&actor) {
-                console_output.unprinted.push(ActorChange {
-                    verb: "joined",
-                    actor: actor.clone(),
-                    sim_time: message.sim_time,
-                    pose,
-                });
+            // An actor's first pose is printed with its join, or as a
+            // warning if no join was seen for it, so a missed join still
+            // shows.
+            let first_pose = |description| ActorChange {
+                description,
+                actor: actor.clone(),
+                sim_time: message.sim_time,
+                pose,
+            };
+            if console_output.joining.remove(&actor) {
+                let line = ConsoleLine::Actor(first_pose("joined"));
+                console_output.unprinted.push(line);
+            } else if !console_output.latest_poses.contains_key(&actor) {
+                // This is the first pose for an actor that's not in `joining`.
+                let line = ConsoleLine::PoseBeforeJoin(first_pose("pose before join"));
+                console_output.unprinted.push(line);
             }
             console_output
                 .latest_poses
@@ -674,31 +697,44 @@ impl LiveTrafficHandler {
     }
 
     /// The part of [`Self::membership_callback`] that notes an actor
-    /// leaving, with the last pose it published.
+    /// joining, and queues a console output line when it leaves, with the
+    /// last pose it published.
     fn console_output_membership_callback(&self) -> impl FnMut(&MembershipChange) + Send + 'static {
         let console_output = self.console_output.clone();
 
         // Return the noting callback, holding its own handle.
         move |change: &MembershipChange| {
-            let MembershipChange::Left(leave) = change else {
-                return;
+            let (joined, path) = match change {
+                MembershipChange::Joined(join) => (true, &join.path),
+                MembershipChange::Left(leave) => (false, &leave.path),
             };
-            let path = ComponentPath::parse(&leave.path).expect("a leave names a valid path");
+            let path = ComponentPath::parse(path).expect("a membership change names a valid path");
             let Some(actor) = path.actor() else {
                 return;
             };
-            // The first of an actor's components to leave removes it, so
-            // each actor is printed leaving once.
+            let actor = actor.as_str();
             let mut console_output = console_output
                 .lock()
                 .expect("console output mutex is never poisoned");
-            if let Some((sim_time, pose)) = console_output.latest_poses.remove(actor.as_str()) {
-                console_output.unprinted.push(ActorChange {
-                    verb: "left",
-                    actor: actor.to_string(),
-                    sim_time,
-                    pose,
-                });
+            // An actor's components join and leave one after another, so
+            // only the first of them changes anything here, and each actor is
+            // printed joining and leaving once.
+            if joined {
+                if !console_output.latest_poses.contains_key(actor) {
+                    console_output.joining.insert(actor.to_string());
+                }
+            } else {
+                console_output.joining.remove(actor);
+                if let Some((sim_time, pose)) = console_output.latest_poses.remove(actor) {
+                    console_output
+                        .unprinted
+                        .push(ConsoleLine::Actor(ActorChange {
+                            description: "left",
+                            actor: actor.to_string(),
+                            sim_time,
+                            pose,
+                        }));
+                }
             }
         }
     }
@@ -749,9 +785,9 @@ impl LiveTrafficHandler {
         }
     }
 
-    /// Prints the actors that joined or left since the last call to the
-    /// console, in the order they did.
-    fn print_actor_changes(&self) {
+    /// Prints the console output queued since the last call, in the order
+    /// it happened.
+    fn print_console_output(&self) {
         let unprinted = std::mem::take(
             &mut self
                 .console_output
@@ -759,21 +795,34 @@ impl LiveTrafficHandler {
                 .expect("console output mutex is never poisoned")
                 .unprinted,
         );
-        for change in unprinted {
-            tracing::info!(
-                sim_time = %change.sim_time,
-                actor = change.actor,
-                x = format_args!("{:.2}", change.pose.position.x),
-                y = format_args!("{:.2}", change.pose.position.y),
-                yaw_deg = format_args!("{:.1}", change.pose.orientation.yaw().to_degrees()),
-                "{}",
-                change.verb
-            );
+        let actor_text = |change: &ActorChange| {
+            format!(
+                "{}: actor={:?} (x={:.2} y={:.2} yaw_deg={:.1} at {} sec)",
+                change.description,
+                change.actor,
+                change.pose.position.x,
+                change.pose.position.y,
+                change.pose.orientation.yaw().to_degrees(),
+                change.sim_time,
+            )
+        };
+        for line in unprinted {
+            match line {
+                ConsoleLine::Actor(change) => tracing::info!("{}", actor_text(&change)),
+                ConsoleLine::PoseBeforeJoin(change) => tracing::warn!("{}", actor_text(&change)),
+                ConsoleLine::Collision(collision) => tracing::warn!(
+                    "collision: first={:?} second={:?} (at {} sec)",
+                    collision.first,
+                    collision.second,
+                    collision.sim_time
+                ),
+            }
         }
     }
 
-    /// Records the collisions that began since the last call in the event
-    /// log, and warns of the traffic's on the console, failing on the ego's.
+    /// Records each collision that began since the last call in the event
+    /// log and queues it for the console. A collision involving the ego
+    /// halts the run.
     fn process_collisions<T: Transport>(
         &self,
         conductor: &mut Conductor<T>,
@@ -788,14 +837,15 @@ impl LiveTrafficHandler {
             }
             Err(error) => return Err(error),
         };
+        let mut console_output = self
+            .console_output
+            .lock()
+            .expect("console output mutex is never poisoned");
         for collision in collisions {
-            tracing::warn!(
-                first = %collision.first,
-                second = %collision.second,
-                sim_time = %collision.sim_time,
-                "traffic cars collide"
-            );
-            conductor.report_observation(RecordedObservation::Collision(collision));
+            conductor.report_observation(RecordedObservation::Collision(collision.clone()));
+            console_output
+                .unprinted
+                .push(ConsoleLine::Collision(collision));
         }
 
         // Return success; no collision involved the ego.
@@ -898,10 +948,16 @@ pub fn run_live_traffic_scenario<T: Transport>(
             .is_some_and(|instant| instant <= end)
     {
         conductor.step_once()?;
-        live_traffic_handler.print_actor_changes();
-        // Before the requests, so a collision names the cars it happened
-        // among.
-        live_traffic_handler.process_collisions(conductor)?;
+        // Collisions are checked before printing, which shows the ones this
+        // queues, and before applying the traffic requests, since a car they
+        // retire leaves the collision monitor at once and its collision would
+        // go unchecked.
+        let collision_check = live_traffic_handler.process_collisions(conductor);
+        live_traffic_handler.print_console_output();
+        match collision_check {
+            Ok(()) => {}
+            Err(halt) => return Err(halt),
+        }
         live_traffic_handler.apply_traffic_requests(conductor)?;
     }
 
@@ -931,7 +987,7 @@ pub fn run_playback_traffic_scenario<T: Transport>(
 
 #[cfg(test)]
 mod tests {
-    use continuo_conductor::RecordedLeave;
+    use continuo_conductor::{RecordedJoin, RecordedLeave};
     use continuo_core::{Quat, Vec3};
 
     use super::*;
@@ -951,37 +1007,68 @@ mod tests {
         }
     }
 
+    /// The lines queued for the console, each as its description, its
+    /// position along the road, and its pose's sim time.
+    fn queued_lines(live_traffic_handler: &LiveTrafficHandler) -> Vec<(&'static str, f64, f64)> {
+        let console_output = live_traffic_handler
+            .console_output
+            .lock()
+            .expect("not poisoned");
+
+        // Return the actor lines; nothing here collides.
+        console_output
+            .unprinted
+            .iter()
+            .map(|line| match line {
+                ConsoleLine::Actor(change) | ConsoleLine::PoseBeforeJoin(change) => (
+                    change.description,
+                    change.pose.position.x,
+                    change.sim_time.as_secs_f64(),
+                ),
+                ConsoleLine::Collision(_) => panic!("no car collided"),
+            })
+            .collect()
+    }
+
     #[test]
     fn a_car_is_printed_joining_with_its_first_pose_and_leaving_once_with_its_last() {
         let live_traffic_handler = LiveTrafficHandler::default();
         let mut on_message = live_traffic_handler.message_callback();
         let mut on_membership = live_traffic_handler.membership_callback();
+        // A car's components join and leave one after another.
+        let leaves = ["radar", "controller", "physics"];
+        for leaf in leaves {
+            on_membership(&MembershipChange::Joined(RecordedJoin {
+                path: format!("car/{leaf}"),
+                first_due: SimTime::from_secs_f64(1.0),
+            }));
+        }
         on_message(&pose_message("car", 10.0, 1.0));
         on_message(&pose_message("car", 12.0, 1.1));
-        // Each of the car's components leaves, one after another.
-        for leaf in ["radar", "controller", "physics"] {
+        for leaf in leaves {
             on_membership(&MembershipChange::Left(RecordedLeave {
                 path: format!("car/{leaf}"),
                 leaves_at: SimTime::from_secs_f64(1.2),
             }));
         }
 
-        let console_output = live_traffic_handler
-            .console_output
-            .lock()
-            .expect("not poisoned");
-        let printed: Vec<_> = console_output
-            .unprinted
-            .iter()
-            .map(|change| {
-                (
-                    change.verb,
-                    change.sim_time.as_secs_f64(),
-                    change.pose.position.x,
-                )
-            })
-            .collect();
-        assert_eq!(printed, [("joined", 1.0, 10.0), ("left", 1.1, 12.0)]);
-        assert!(console_output.latest_poses.is_empty());
+        // The leaving line prints its last pose, published at 1.1 s.
+        assert_eq!(
+            queued_lines(&live_traffic_handler),
+            [("joined", 10.0, 1.0), ("left", 12.0, 1.1)]
+        );
+    }
+
+    #[test]
+    fn a_pose_before_any_join_prints_one_warning() {
+        let live_traffic_handler = LiveTrafficHandler::default();
+        let mut on_message = live_traffic_handler.message_callback();
+        on_message(&pose_message("stranger", 5.0, 1.0));
+        on_message(&pose_message("stranger", 6.0, 1.1));
+
+        assert_eq!(
+            queued_lines(&live_traffic_handler),
+            [("pose before join", 5.0, 1.0)]
+        );
     }
 }
