@@ -13,7 +13,7 @@ use continuo_conductor::{
 };
 use continuo_core::{Pose, Quat, SimDuration, SimTime, Vec3};
 use continuo_examples::traffic_world::{
-    self, LiveTrafficHandler, ScenarioError, run_live_traffic_scenario,
+    self, ScenarioError, TrafficRequestHandler, WorldMonitor, run_live_traffic_scenario,
 };
 use continuo_transport::{InProcTransport, MonitorTransport};
 
@@ -21,17 +21,18 @@ use continuo_transport::{InProcTransport, MonitorTransport};
 /// speed.
 type TestCar<'a> = (&'a str, f64, f64, f64);
 
-/// A world holding only `cars`, watched by `live_traffic_handler` the way
-/// the examples watch the demo.
+/// A world holding only `cars`, watched by `world_monitor` the way the
+/// examples watch the demo. With no spawner, there are no traffic requests
+/// to collect.
 fn watched_world(
-    live_traffic_handler: &LiveTrafficHandler,
+    world_monitor: &WorldMonitor,
     cars: &[TestCar],
 ) -> Conductor<MonitorTransport<InProcTransport>> {
     let mut transport = MonitorTransport::new(InProcTransport::new());
-    transport.add_message_callback(live_traffic_handler.message_callback());
+    transport.add_message_callback(world_monitor.message_callback());
     let mut conductor =
         Conductor::new(traffic_world::config(), transport).expect("config is accepted");
-    conductor.add_membership_callback(live_traffic_handler.membership_callback());
+    conductor.add_membership_callback(world_monitor.membership_callback());
     for &(name, x, y, speed) in cars {
         let pose = Pose {
             position: Vec3::new(x, y, 0.0),
@@ -69,16 +70,17 @@ fn recorded_collisions(log: &EventLog) -> Vec<RecordedCollision> {
 fn a_traffic_collision_is_recorded_once_and_does_not_halt() {
     // The fast car reaches the slow one at about 4.5 s and is clear of it by
     // 5.5 s.
-    let live_traffic_handler = LiveTrafficHandler::default();
+    let world_monitor = WorldMonitor::default();
     let mut conductor = watched_world(
-        &live_traffic_handler,
+        &world_monitor,
         &[("slow", 50.0, 3.5, 10.0), ("fast", 0.0, 3.5, 20.0)],
     );
     let recorder = Recorder::new(&traffic_world::config());
     conductor.add_observation_callback(recorder.observation_callback());
     run_live_traffic_scenario(
         &mut conductor,
-        &live_traffic_handler,
+        &TrafficRequestHandler::default(),
+        &world_monitor,
         SimTime::from_secs(10),
         None,
     )
@@ -95,16 +97,17 @@ fn a_traffic_collision_is_recorded_once_and_does_not_halt() {
 #[test]
 fn an_ego_collision_halts_the_scenario_naming_both_cars() {
     // Closing at 20 m/s from 50 m, the bumpers meet at 2.275 s.
-    let live_traffic_handler = LiveTrafficHandler::default();
+    let world_monitor = WorldMonitor::default();
     let mut conductor = watched_world(
-        &live_traffic_handler,
+        &world_monitor,
         &[("ego", 0.0, 0.0, 30.0), ("slow", 50.0, 0.0, 10.0)],
     );
     let recorder = Recorder::new(&traffic_world::config());
     conductor.add_observation_callback(recorder.observation_callback());
     let error = run_live_traffic_scenario(
         &mut conductor,
-        &live_traffic_handler,
+        &TrafficRequestHandler::default(),
+        &world_monitor,
         SimTime::from_secs(10),
         None,
     )
@@ -141,19 +144,28 @@ fn a_car_that_has_left_cannot_be_hit_where_it_stood() {
     let ego_and_parked_car = [("ego", 0.0, 0.0, 30.0), ("parked", 60.0, 0.0, 0.0)];
     let end = SimTime::from_secs(5);
 
-    let handler_keeping_parked_car = LiveTrafficHandler::default();
-    let mut conductor = watched_world(&handler_keeping_parked_car, &ego_and_parked_car);
+    let no_requests = TrafficRequestHandler::default();
+
+    let monitor_keeping_parked_car = WorldMonitor::default();
+    let mut conductor = watched_world(&monitor_keeping_parked_car, &ego_and_parked_car);
     assert!(matches!(
-        run_live_traffic_scenario(&mut conductor, &handler_keeping_parked_car, end, None),
+        run_live_traffic_scenario(
+            &mut conductor,
+            &no_requests,
+            &monitor_keeping_parked_car,
+            end,
+            None
+        ),
         Err(ScenarioError::EgoCollision(_))
     ));
 
     // Removed at 1 s, its last pose goes with it.
-    let handler_retiring_parked_car = LiveTrafficHandler::default();
-    let mut conductor = watched_world(&handler_retiring_parked_car, &ego_and_parked_car);
+    let monitor_retiring_parked_car = WorldMonitor::default();
+    let mut conductor = watched_world(&monitor_retiring_parked_car, &ego_and_parked_car);
     run_live_traffic_scenario(
         &mut conductor,
-        &handler_retiring_parked_car,
+        &no_requests,
+        &monitor_retiring_parked_car,
         SimTime::from_secs(1),
         None,
     )
@@ -161,10 +173,16 @@ fn a_car_that_has_left_cannot_be_hit_where_it_stood() {
     conductor
         .remove_component_now("parked")
         .expect("the parked car is there to remove");
-    run_live_traffic_scenario(&mut conductor, &handler_retiring_parked_car, end, None)
-        .expect("a car that has left cannot be hit");
+    run_live_traffic_scenario(
+        &mut conductor,
+        &no_requests,
+        &monitor_retiring_parked_car,
+        end,
+        None,
+    )
+    .expect("a car that has left cannot be hit");
     assert_eq!(
-        handler_retiring_parked_car
+        monitor_retiring_parked_car
             .collision_monitor()
             .num_collisions(),
         0

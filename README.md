@@ -31,11 +31,11 @@ instant, and repeats.
                          │                               │ through membership callbacks
                TickStart │ TickDone { next_due }         │
                          │                               │
-            ┌────────────┴─────────────┐       ┌─────────┴──────────┐
-            │        Transport         ├──────►│ LiveTrafficHandler │ outside the sim,
-            │   (InProc now, Zenoh     │       │ (collision monitor,│ sees every message
-            │    later; same trait)    │       │  console output)   │ through the
-            └────────────┬─────────────┘       └────────────────────┘ MonitorTransport
+            ┌────────────┴─────────────┐       ┌─────────┴────────────────┐
+            │        Transport         ├──────►│ TrafficRequestHandler    │ outside the sim,
+            │   (InProc now, Zenoh     │       │ WorldMonitor (collision  │ sees every message
+            │    later; same trait)    │       │  monitor, console output)│ through the
+            └────────────┬─────────────┘       └──────────────────────────┘ MonitorTransport
                          │   pub/sub on key expressions,
        ┌─────────────┬───┴──────────┐   e.g. continuo/demo/actor/ego/pose
 ┌──────┴─────┐ ┌─────┴──────┐ ┌─────┴─────────┐

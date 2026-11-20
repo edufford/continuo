@@ -1636,3 +1636,14 @@ it got there, including the roads not taken.
   - Rejected: printing from the collision monitor, which would mix
     console output into collision checking; and inferring joins and
     leaves from which poses arrive, when membership callbacks report them.
+- **2026-11-19**: **The live handler splits into a `TrafficRequestHandler`
+  and a `WorldMonitor`.** `LiveTrafficHandler` did two kinds of work: it
+  turned the spawner's requests into cars, which changes the world, and it
+  checked for collisions and printed the console output, which only
+  watches it. A monitor never feeds anything back, so the watching half is
+  `WorldMonitor` and the acting half is `TrafficRequestHandler`, its name
+  from before the collision monitor joined it. The live run loop takes
+  both, and a run with no spawner, such as a playback, can take the
+  monitor alone. The world hash does not move.
+  - Rejected: one handler holding a `WorldMonitor`, which would keep the
+    live wiring to one value but hide which part acts on the world.

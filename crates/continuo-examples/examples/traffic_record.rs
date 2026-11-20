@@ -9,7 +9,7 @@
 
 use continuo_conductor::{Conductor, Recorder};
 use continuo_core::SimTime;
-use continuo_examples::traffic_world::{self, LiveTrafficHandler};
+use continuo_examples::traffic_world::{self, TrafficRequestHandler, WorldMonitor};
 use continuo_transport::{InProcTransport, MonitorTransport};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -26,14 +26,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // produced it.
     let config = traffic_world::config();
     let recorder = Recorder::new(&config);
-    let live_traffic_handler = LiveTrafficHandler::default();
+    let traffic_request_handler = TrafficRequestHandler::default();
+    let world_monitor = WorldMonitor::default();
     let mut transport = MonitorTransport::new(InProcTransport::new());
     transport.add_message_callback(recorder.message_callback());
-    transport.add_message_callback(live_traffic_handler.message_callback());
+    transport.add_message_callback(traffic_request_handler.message_callback());
+    transport.add_message_callback(world_monitor.message_callback());
     let mut conductor = Conductor::new(config, transport)?;
     conductor.add_tick_callback(recorder.tick_callback());
     conductor.add_membership_callback(recorder.membership_callback());
-    conductor.add_membership_callback(live_traffic_handler.membership_callback());
+    conductor.add_membership_callback(world_monitor.membership_callback());
     // No component in this world declares a budget, so this writes nothing
     // today. It is wired anyway: a recorder that taps only some of what the
     // conductor reports writes a log that quietly omits the rest.
@@ -42,7 +44,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     traffic_world::run_live_traffic_scenario(
         &mut conductor,
-        &live_traffic_handler,
+        &traffic_request_handler,
+        &world_monitor,
         SimTime::from_secs(traffic_world::SIM_SECONDS),
         None,
     )?;

@@ -546,11 +546,10 @@ fn recorded_traffic_actor_names(recorded: &EventLog) -> Vec<String> {
     actor_names
 }
 
-/// What the live scenario needs from outside the sim: the spawner's
-/// requests turned into cars, every car watched for collisions, and the
-/// run's console output.
-#[derive(Clone)]
-pub struct LiveTrafficHandler {
+/// The spawner's requests, collected from the transport and turned into
+/// cars between ticks. Only the live scenario has a spawner to ask.
+#[derive(Clone, Default)]
+pub struct TrafficRequestHandler {
     /// Requests collected since the last [`Self::apply_traffic_requests`],
     /// in publish order.
     pending_requests: Arc<Mutex<Vec<TrafficRequest>>>,
@@ -562,25 +561,140 @@ pub struct LiveTrafficHandler {
     /// one wins: the run stops at the next tick boundary, and later failures
     /// are consequences of a scenario that is already wrong.
     unreadable_request: Arc<Mutex<Option<CoreError>>>,
+}
+
+/// One membership change the sim asked for.
+enum TrafficRequest {
+    Spawn(SpawnTrafficRequest),
+    Despawn(DespawnTrafficRequest),
+}
+
+impl TrafficRequestHandler {
+    /// A `MonitorTransport` callback that collects the spawner's requests.
+    pub fn message_callback(&self) -> impl FnMut(&Message) + Send + 'static {
+        let pending_requests = self.pending_requests.clone();
+        let unreadable_request = self.unreadable_request.clone();
+        let spawn = traffic_spawn_key(WORLD_NAME);
+        let despawn = traffic_despawn_key(WORLD_NAME);
+
+        // Return the collecting callback, holding its own handles.
+        move |message: &Message| {
+            // Only these two keys are requests. Anything else on the transport
+            // is someone else's traffic and is not this handler's to read.
+            let request = if message.key == spawn {
+                message
+                    .decode::<SpawnTrafficRequest>()
+                    .map(TrafficRequest::Spawn)
+            } else if message.key == despawn {
+                message
+                    .decode::<DespawnTrafficRequest>()
+                    .map(TrafficRequest::Despawn)
+            } else {
+                return;
+            };
+
+            match request {
+                Ok(request) => pending_requests
+                    .lock()
+                    .expect("request mutex is never poisoned")
+                    .push(request),
+                // A request on one of this handler's own keys that it cannot
+                // read is a car that never arrives or never leaves, changing
+                // the scenario in silence. `apply_traffic_requests` reports it
+                // at the next tick boundary, which is the first place with
+                // somewhere to return an error to.
+                Err(error) => {
+                    let mut slot = unreadable_request
+                        .lock()
+                        .expect("request mutex is never poisoned");
+                    if slot.is_none() {
+                        *slot = Some(error);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Applies everything the spawner has asked for since the last call,
+    /// in the order it asked.
+    ///
+    /// Private on purpose: a loop that stepped the conductor without
+    /// calling this would run a different world from the recorded one, so
+    /// the only way to drive this scenario is
+    /// [`run_live_traffic_scenario`], which cannot forget.
+    fn apply_traffic_requests<T: Transport>(
+        &self,
+        conductor: &mut Conductor<T>,
+    ) -> Result<(), ScenarioError> {
+        // Before anything is applied, since a request that could not be read
+        // means the collected ones are an incomplete account of what the sim
+        // asked for.
+        if let Some(error) = self
+            .unreadable_request
+            .lock()
+            .expect("request mutex is never poisoned")
+            .take()
+        {
+            return Err(ConductorError::Core(error).into());
+        }
+
+        let collected = std::mem::take(
+            &mut *self
+                .pending_requests
+                .lock()
+                .expect("request mutex is never poisoned"),
+        );
+        for request in collected {
+            match request {
+                TrafficRequest::Spawn(spawn) => add_car(
+                    conductor,
+                    &spawn.actor_name,
+                    CarConfiguration::IdmFollowing,
+                    spawn.start_s,
+                    spawn.lane_offset,
+                    spawn.speed,
+                    spawn.first_due,
+                )?,
+                // The spawner drops a car from its roll when it asks, so it
+                // never asks twice, but a scenario that also removed cars
+                // by hand could, and a request for someone already gone has
+                // simply been satisfied early.
+                TrafficRequest::Despawn(despawn) => {
+                    match conductor.remove_component_now(&despawn.actor_name) {
+                        Ok(()) | Err(ConductorError::UnknownPath(_)) => {}
+                        Err(other) => return Err(other.into()),
+                    }
+                }
+            }
+        }
+
+        // Return once the queue is empty.
+        Ok(())
+    }
+}
+
+/// Watches a run from outside the sim: every car checked for collisions,
+/// and the run's console output. It only watches, so the live and the
+/// playback scenarios both run one.
+#[derive(Clone)]
+pub struct WorldMonitor {
     /// Every car's pose, watched for contact with another car's.
     collision_monitor: CollisionMonitor,
-    /// What the run prints to the console, queued until the handler prints
+    /// What the run prints to the console, queued until the monitor prints
     /// it between ticks.
     console_output: Arc<Mutex<ConsoleOutput>>,
 }
 
-impl Default for LiveTrafficHandler {
+impl Default for WorldMonitor {
     fn default() -> Self {
-        LiveTrafficHandler {
-            pending_requests: Arc::default(),
-            unreadable_request: Arc::default(),
+        WorldMonitor {
             collision_monitor: CollisionMonitor::new(WORLD_NAME, EGO_NAME),
             console_output: Arc::default(),
         }
     }
 }
 
-/// Lines waiting to be printed to the console, and what the handler keeps
+/// Lines waiting to be printed to the console, and what the monitor keeps
 /// to write them.
 #[derive(Default)]
 struct ConsoleOutput {
@@ -612,24 +726,15 @@ struct ActorChange {
     pose: Pose,
 }
 
-/// One membership change the sim asked for.
-enum TrafficRequest {
-    Spawn(SpawnTrafficRequest),
-    Despawn(DespawnTrafficRequest),
-}
-
-impl LiveTrafficHandler {
-    /// A `MonitorTransport` callback feeding every message to the traffic
-    /// requests, the collision monitor, and the console output.
+impl WorldMonitor {
+    /// A `MonitorTransport` callback feeding every message to the collision
+    /// monitor and the console output.
     pub fn message_callback(&self) -> impl FnMut(&Message) + Send + 'static {
-        let mut traffic_requests_on_message = self.traffic_request_message_callback();
         let mut collision_monitor_on_message = self.collision_monitor.message_callback();
         let mut console_output_on_message = self.console_output_message_callback();
 
-        // Return one callback feeding the traffic requests, the collision
-        // monitor, and the console output.
+        // Return one callback feeding both.
         move |message: &Message| {
-            traffic_requests_on_message(message);
             collision_monitor_on_message(message);
             console_output_on_message(message);
         }
@@ -651,6 +756,19 @@ impl LiveTrafficHandler {
     /// The collision monitor.
     pub fn collision_monitor(&self) -> &CollisionMonitor {
         &self.collision_monitor
+    }
+
+    /// Records and prints what the step just taken did, failing on a
+    /// collision involving the ego. Collisions are checked before printing,
+    /// which shows the ones this queues, and the console is printed before
+    /// the result returns, so it shows what led up to an ego collision.
+    fn process_step<T: Transport>(
+        &self,
+        conductor: &mut Conductor<T>,
+    ) -> Result<(), ScenarioError> {
+        let collision_check = self.process_collisions(conductor);
+        self.print_console_output();
+        collision_check
     }
 
     /// The part of [`Self::message_callback`] that notes each actor's
@@ -739,52 +857,6 @@ impl LiveTrafficHandler {
         }
     }
 
-    /// The part of [`Self::message_callback`] that collects the spawner's
-    /// requests.
-    fn traffic_request_message_callback(&self) -> impl FnMut(&Message) + Send + 'static {
-        let pending_requests = self.pending_requests.clone();
-        let unreadable_request = self.unreadable_request.clone();
-        let spawn = traffic_spawn_key(WORLD_NAME);
-        let despawn = traffic_despawn_key(WORLD_NAME);
-
-        // Return the collecting callback, holding its own handles.
-        move |message: &Message| {
-            // Only these two keys are requests. Anything else on the transport
-            // is someone else's traffic and is not this handler's to read.
-            let request = if message.key == spawn {
-                message
-                    .decode::<SpawnTrafficRequest>()
-                    .map(TrafficRequest::Spawn)
-            } else if message.key == despawn {
-                message
-                    .decode::<DespawnTrafficRequest>()
-                    .map(TrafficRequest::Despawn)
-            } else {
-                return;
-            };
-
-            match request {
-                Ok(request) => pending_requests
-                    .lock()
-                    .expect("request mutex is never poisoned")
-                    .push(request),
-                // A request on one of this handler's own keys that it cannot
-                // read is a car that never arrives or never leaves, changing
-                // the scenario in silence. `apply_traffic_requests` reports it
-                // at the next tick boundary, which is the first place with
-                // somewhere to return an error to.
-                Err(error) => {
-                    let mut slot = unreadable_request
-                        .lock()
-                        .expect("request mutex is never poisoned");
-                    if slot.is_none() {
-                        *slot = Some(error);
-                    }
-                }
-            }
-        }
-    }
-
     /// Prints the console output queued since the last call, in the order
     /// it happened.
     fn print_console_output(&self) {
@@ -851,63 +923,6 @@ impl LiveTrafficHandler {
         // Return success; no collision involved the ego.
         Ok(())
     }
-
-    /// Applies everything the spawner has asked for since the last call,
-    /// in the order it asked.
-    ///
-    /// Private on purpose: a loop that stepped the conductor without
-    /// calling this would run a different world from the recorded one, so
-    /// the only way to drive this scenario is
-    /// [`run_live_traffic_scenario`], which cannot forget.
-    fn apply_traffic_requests<T: Transport>(
-        &self,
-        conductor: &mut Conductor<T>,
-    ) -> Result<(), ScenarioError> {
-        // Before anything is applied, since a request that could not be read
-        // means the collected ones are an incomplete account of what the sim
-        // asked for.
-        if let Some(error) = self
-            .unreadable_request
-            .lock()
-            .expect("request mutex is never poisoned")
-            .take()
-        {
-            return Err(ConductorError::Core(error).into());
-        }
-
-        let collected = std::mem::take(
-            &mut *self
-                .pending_requests
-                .lock()
-                .expect("request mutex is never poisoned"),
-        );
-        for request in collected {
-            match request {
-                TrafficRequest::Spawn(spawn) => add_car(
-                    conductor,
-                    &spawn.actor_name,
-                    CarConfiguration::IdmFollowing,
-                    spawn.start_s,
-                    spawn.lane_offset,
-                    spawn.speed,
-                    spawn.first_due,
-                )?,
-                // The spawner drops a car from its roll when it asks, so it
-                // never asks twice, but a scenario that also removed cars
-                // by hand could, and a request for someone already gone has
-                // simply been satisfied early.
-                TrafficRequest::Despawn(despawn) => {
-                    match conductor.remove_component_now(&despawn.actor_name) {
-                        Ok(()) | Err(ConductorError::UnknownPath(_)) => {}
-                        Err(other) => return Err(other.into()),
-                    }
-                }
-            }
-        }
-
-        // Return once the queue is empty.
-        Ok(())
-    }
 }
 
 /// Runs the world to `end`, applying the spawner's requests as they come
@@ -935,7 +950,8 @@ impl LiveTrafficHandler {
 // milestone 7 a host plays exactly this part for remote components.
 pub fn run_live_traffic_scenario<T: Transport>(
     conductor: &mut Conductor<T>,
-    live_traffic_handler: &LiveTrafficHandler,
+    traffic_request_handler: &TrafficRequestHandler,
+    world_monitor: &WorldMonitor,
     end: SimTime,
     verifier: Option<&Verifier>,
 ) -> Result<(), ScenarioError> {
@@ -948,17 +964,14 @@ pub fn run_live_traffic_scenario<T: Transport>(
             .is_some_and(|instant| instant <= end)
     {
         conductor.step_once()?;
-        // Collisions are checked before printing, which shows the ones this
-        // queues, and before applying the traffic requests, since a car they
-        // retire leaves the collision monitor at once and its collision would
-        // go unchecked.
-        let collision_check = live_traffic_handler.process_collisions(conductor);
-        live_traffic_handler.print_console_output();
-        match collision_check {
+        // Before applying the traffic requests, since a car they retire
+        // leaves the collision monitor at once and its collision would go
+        // unchecked.
+        match world_monitor.process_step(conductor) {
             Ok(()) => {}
             Err(halt) => return Err(halt),
         }
-        live_traffic_handler.apply_traffic_requests(conductor)?;
+        traffic_request_handler.apply_traffic_requests(conductor)?;
     }
 
     // Return once nothing remains scheduled at or before `end`.
@@ -1009,11 +1022,8 @@ mod tests {
 
     /// The lines queued for the console, each as its description, its
     /// position along the road, and its pose's sim time.
-    fn queued_lines(live_traffic_handler: &LiveTrafficHandler) -> Vec<(&'static str, f64, f64)> {
-        let console_output = live_traffic_handler
-            .console_output
-            .lock()
-            .expect("not poisoned");
+    fn queued_lines(world_monitor: &WorldMonitor) -> Vec<(&'static str, f64, f64)> {
+        let console_output = world_monitor.console_output.lock().expect("not poisoned");
 
         // Return the actor lines; nothing here collides.
         console_output
@@ -1032,9 +1042,9 @@ mod tests {
 
     #[test]
     fn a_car_is_printed_joining_with_its_first_pose_and_leaving_once_with_its_last() {
-        let live_traffic_handler = LiveTrafficHandler::default();
-        let mut on_message = live_traffic_handler.message_callback();
-        let mut on_membership = live_traffic_handler.membership_callback();
+        let world_monitor = WorldMonitor::default();
+        let mut on_message = world_monitor.message_callback();
+        let mut on_membership = world_monitor.membership_callback();
         // A car's components join and leave one after another.
         let leaves = ["radar", "controller", "physics"];
         for leaf in leaves {
@@ -1054,20 +1064,20 @@ mod tests {
 
         // The leaving line prints its last pose, published at 1.1 s.
         assert_eq!(
-            queued_lines(&live_traffic_handler),
+            queued_lines(&world_monitor),
             [("joined", 10.0, 1.0), ("left", 12.0, 1.1)]
         );
     }
 
     #[test]
     fn a_pose_before_any_join_prints_one_warning() {
-        let live_traffic_handler = LiveTrafficHandler::default();
-        let mut on_message = live_traffic_handler.message_callback();
+        let world_monitor = WorldMonitor::default();
+        let mut on_message = world_monitor.message_callback();
         on_message(&pose_message("stranger", 5.0, 1.0));
         on_message(&pose_message("stranger", 6.0, 1.1));
 
         assert_eq!(
-            queued_lines(&live_traffic_handler),
+            queued_lines(&world_monitor),
             [("pose before join", 5.0, 1.0)]
         );
     }
