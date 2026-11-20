@@ -949,6 +949,43 @@ fn record_membership_changes(
 }
 
 #[test]
+fn a_join_and_its_later_leave_queued_before_the_run_each_take_effect_at_their_own_instant() {
+    // Both requested before anything steps, the way a playback double is
+    // scheduled from a recording. The leave names a path whose join is
+    // still pending when it is requested, and must not withdraw that join:
+    // it applies at 50 ms, by when `b` has joined.
+    let steps: StepLog = Default::default();
+    let mut conductor = new_conductor();
+    let announced = record_membership_changes(&mut conductor);
+    conductor
+        .add_component_at_start(WORLD_LEVEL, ticker("a", &steps))
+        .expect("registration succeeds");
+    conductor
+        .add_component(
+            JoinMetadata::at(WORLD_LEVEL, t_sim_ms(20)),
+            ticker("b", &steps),
+        )
+        .expect("20 ms is still ahead");
+    conductor
+        .remove_component(LeaveMetadata::at("b", t_sim_ms(50)))
+        .expect("`b` is a pending join");
+    conductor.run_until(t_sim_ms(70)).expect("steps succeed");
+
+    assert_eq!(
+        steps_of(&steps, "b"),
+        vec![t_sim_ms(20), t_sim_ms(30), t_sim_ms(40)]
+    );
+    assert_eq!(
+        *announced.lock().expect("membership log mutex"),
+        vec![
+            ("a".to_string(), "joined"),
+            ("b".to_string(), "joined"),
+            ("b".to_string(), "left"),
+        ]
+    );
+}
+
+#[test]
 fn a_leave_retires_the_component_at_a_path_rather_than_the_join_waiting_for_it() {
     // Two components claim `a`: the one registered there, and a join
     // declared for 25 ms. A leave names a path, and the one occupying it is
