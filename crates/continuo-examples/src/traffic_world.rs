@@ -508,8 +508,7 @@ pub fn setup_playback_traffic_scenario<T: Transport>(
     add_ego(conductor, EGO_START, EGO_LANE, ego_speed)?;
 
     // Each double joins and leaves at the instants its original did, both
-    // queued now, so the world's membership matches the recording and
-    // whatever follows membership sees the same cars come and go.
+    // queued now, so the world's membership matches the recording.
     let actors = recorded_traffic_actors(recorded);
     for actor in &actors {
         let id = ComponentId::new(actor.name.as_str()).expect("a recorded path segment is an id");
@@ -534,13 +533,12 @@ struct RecordedActor {
     left_at: Option<SimTime>,
 }
 
-/// The traffic actors a recorded run contained, in the order they joined.
+/// The traffic cars a recorded run contained, in the order they joined.
 ///
-/// Cars are composites, so their join paths have a parent
-/// (`traffic7/physics`); the spawner is a world-level leaf and has none,
-/// which separates it here without matching on names. A car's components
-/// join and leave together, so its first join and first leave are the
-/// car's.
+/// A car is named by the first segment of its components' paths
+/// (`traffic7/physics`). Its components all join and leave together, so
+/// the first of each gives the car's instants. The spawner's path has
+/// no `/`, so it is skipped, and the ego is skipped by name.
 fn recorded_traffic_actors(recorded: &EventLog) -> Vec<RecordedActor> {
     let mut actors: Vec<RecordedActor> = Vec::new();
     for event in &recorded.events {
