@@ -50,13 +50,24 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      # The runner image's compilers and headers are build inputs too.
+      # `fmi-sys` generates its bindings with bindgen, which reruns when any
+      # header it read changes, so a cache saved on an older image rebuilds
+      # it on every run. A restore of an exact key never saves, so nothing
+      # would replace that cache until the lock or toolchain changed.
+      - name: "Cache: key on the runner image"
+        shell: bash
+        run: echo "RUNNER_IMAGE=$ImageVersion" >> "$GITHUB_ENV"
+
       # Saved only from main. Each platform's cache is over a gigabyte and
       # GitHub keeps 10 GB a repository, evicting the least recently used,
       # so a pull request saving its own would push main's out and leave the
       # next run to build from nothing. A pull request restores main's
-      # instead, and one that changes Cargo.lock builds cold until it merges.
+      # instead, and one that changes Cargo.lock, or runs on a runner image
+      # main has not built on yet, builds cold until main saves again.
       - uses: Swatinem/rust-cache@v2
         with:
+          key: image-${{ env.RUNNER_IMAGE }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # Cargo.lock pins every dependency, and some of them are pinned for a
