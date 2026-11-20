@@ -359,7 +359,6 @@ dependencies = [
  "proptest",
  "serde",
  "serde_json",
- "tracing",
 ]
 
 [[package]]

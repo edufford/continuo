@@ -57,10 +57,12 @@ components end up on separate hosts.
   subscriber that can ask for only the latest message per key, and a
   consolidated scene view for consumers that want the world rather than every
   message in it.
-- **Actors come and go.** Join and leave are ordinary rather than an edge
-  case. The conductor publishes each on the world's membership key as status,
-  saying it already happened, and anything holding per-actor state must
-  subscribe there and drop what it kept.
+- **Actors come and go.** Joins and leaves happen all through a run, not
+  just at its start. The conductor reports each one, after it happens, to
+  its membership callbacks. Anything outside the sim that keeps state for
+  each actor must add a membership callback and delete an actor's state
+  when it leaves. Components cannot see joins and leaves until milestone 7
+  puts them on the transport.
 - **One process now, several hosts later.** Milestone 7 puts components on a
   network, so anything assuming shared memory, a shared clock, or that every
   component is reachable in this address space is written to be rewritten.

@@ -1619,3 +1619,20 @@ it got there, including the roads not taken.
     each instant. Leaves come from the conductor's membership callback, as
     the viz bridge's do until membership crosses the transport at
     milestone 7.
+- **2026-11-19**: **The live handler prints cars joining and leaving to
+  the console, and the pose logger is deleted.** `PoseLogger` kept every
+  car it had seen and printed each one's latest pose every sim-second, so
+  a car that had left went on being printed at its last pose, against the
+  rule that per-actor state drops on leave. A component cannot follow
+  membership yet, since the conductor reports it through callbacks to
+  observers outside the sim, so the console output moves outside too.
+  `LiveTrafficHandler` prints each car's first pose when it joins and its
+  last pose when it leaves. Its membership callback tells it when, and
+  its message callback tracks the poses. It also warns of traffic
+  collisions, which the collision monitor now only reports. It queues
+  all these lines and prints them between ticks. They are console output
+  only: the event log already records every join, leave, pose and
+  collision. The logger was a stepped component, so the demo hash moves.
+  - Rejected: printing from the collision monitor, which would mix
+    console output into collision checking; and inferring joins and
+    leaves from which poses arrive, when membership callbacks report them.

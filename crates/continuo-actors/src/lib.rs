@@ -1,6 +1,6 @@
 //! Sample actor components for continuo worlds: a waypoint path, a
 //! path-following controller, unicycle physics, a forward-looking radar,
-//! a pose logger, and a traffic spawner.
+//! and a traffic spawner.
 //!
 //! A controller commands and a plant integrates, and they meet on the
 //! messages in [`commands`]: one per axis, normalized, so different
@@ -37,7 +37,6 @@
 pub mod commands;
 pub mod control_laws;
 mod controller;
-mod logger;
 mod path;
 mod physics;
 mod radar;
@@ -47,7 +46,6 @@ use continuo_core::KeyExpr;
 
 pub use commands::{AccelCmd, SteerCmd};
 pub use controller::PathFollowController;
-pub use logger::PoseLogger;
 pub use path::Waypoints;
 pub use physics::{CarState, PlantLimits, UnicyclePhysics};
 pub use radar::{RadarScan, RadarSensor};

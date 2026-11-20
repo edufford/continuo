@@ -18,20 +18,24 @@
 //! plain `InProcTransport` for the base demo, wrapped in a
 //! `MonitorTransport` when recording or verifying.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use continuo_actors::control_laws::{FREE_ROAD, IdmParams, PurePursuitParams};
 use continuo_actors::{
-    CarState, DespawnTrafficRequest, PathFollowController, PlantLimits, PoseLogger, RadarSensor,
-    SpawnTrafficRequest, TrafficSpawner, UnicyclePhysics, Waypoints, accel_cmd_key, pose_key,
-    radar_key, road_pose, steer_cmd_key, straight_road, traffic_despawn_key, traffic_spawn_key,
+    CarState, DespawnTrafficRequest, PathFollowController, PlantLimits, RadarSensor,
+    SpawnTrafficRequest, TrafficSpawner, UnicyclePhysics, Waypoints, accel_cmd_key,
+    actor_of_pose_key, pose_key, radar_key, road_pose, steer_cmd_key, straight_road,
+    traffic_despawn_key, traffic_spawn_key,
 };
 use continuo_conductor::record::LogEvent;
 use continuo_conductor::{
     Conductor, ConductorConfig, ConductorError, EventLog, JoinMetadata, MembershipChange, Pacing,
     PlaybackComponent, RecordedCollision, RecordedObservation, Verifier, WORLD_LEVEL,
 };
-use continuo_core::{Component, ComponentId, CoreError, Message, SimDuration, SimTime};
+use continuo_core::{
+    Component, ComponentId, ComponentPath, CoreError, KeyExpr, Message, Pose, SimDuration, SimTime,
+};
 use continuo_fmi::{FmuComponent, FmuConstructionError, FmuMapping, InputBinding, OutputBinding};
 use continuo_transport::Transport;
 use serde_json::json;
@@ -407,20 +411,19 @@ fn add_spawner<T: Transport>(conductor: &mut Conductor<T>) -> Result<(), Conduct
     Ok(())
 }
 
-/// Registers the live scenario's fixed cast: the ego, the spawner that
-/// manages traffic around it, and the pose logger. Every car arrives later,
-/// while the run is under way, so this is the whole world only at sim time
-/// zero, and [`run_live_traffic_scenario`] is what builds the rest of it.
+/// Registers the live scenario's fixed cast: the ego and the spawner that
+/// manages traffic around it. Every car arrives later, while the run is
+/// under way, so this is the whole world only at sim time zero, and
+/// [`run_live_traffic_scenario`] is what builds the rest of it.
 ///
 /// *Live* because the traffic is decided as the run happens. `traffic_resim`
-/// assembles the other kind by hand: the same ego and logger, but no
-/// spawner, and cars played back from a log rather than chosen.
+/// assembles the other kind by hand: the same ego, but no spawner, and
+/// cars played back from a log rather than chosen.
 pub fn setup_live_traffic_scenario<T: Transport>(
     conductor: &mut Conductor<T>,
 ) -> Result<(), ScenarioError> {
     add_ego(conductor, EGO_START, EGO_LANE, EGO_SPEED)?;
     add_spawner(conductor)?;
-    add_logger(conductor)?;
 
     // Return success; the fixed part of the world is registered.
     Ok(())
@@ -444,10 +447,9 @@ pub const BASELINE_DEMO_LANES: usize = TRAFFIC_LANES.len() + 1;
 /// Registers `cars` cars across `lanes` lanes, for measuring what a world
 /// costs as it grows rather than for watching anything happen in it.
 ///
-/// No spawner and no logger, and neither is an oversight. A spawner would
-/// make the population a moving target, which is the one thing a
-/// measurement of population wants held still, and a pose logger at this
-/// size writes more than the run it is reporting on.
+/// No spawner, which is not an oversight: it would make the population a
+/// moving target, which is the one thing a measurement of population wants
+/// held still.
 ///
 /// Cars fill the lanes and then wrap onto another row further along the
 /// road, so `cars` need not divide evenly by `lanes`. Speeds follow a fixed
@@ -516,7 +518,6 @@ pub fn setup_playback_traffic_scenario<T: Transport>(
             Box::new(PlaybackComponent::from_log(id, recorded, actor_name)),
         )?;
     }
-    add_logger(conductor)?;
 
     // Return the size of the scene that was rebuilt.
     Ok(actor_names.len())
@@ -525,8 +526,8 @@ pub fn setup_playback_traffic_scenario<T: Transport>(
 /// The traffic actors a recorded run contained, in the order they joined.
 ///
 /// Cars are composites, so their join paths have a parent
-/// (`traffic7/physics`); the spawner and the logger are world-level leaves
-/// and have none, which separates them here without matching on names.
+/// (`traffic7/physics`); the spawner is a world-level leaf and has none,
+/// which separates it here without matching on names.
 fn recorded_traffic_actor_names(recorded: &EventLog) -> Vec<String> {
     let mut actor_names: Vec<String> = Vec::new();
     for event in &recorded.events {
@@ -545,30 +546,14 @@ fn recorded_traffic_actor_names(recorded: &EventLog) -> Vec<String> {
     actor_names
 }
 
-/// Registers the world-level pose logger, offset 1 ns past each second
-/// boundary: the smallest offset that clears same-instant deferral, so
-/// on-boundary poses are visible, and nothing can be scheduled between a
-/// boundary and its sample.
-fn add_logger<T: Transport>(conductor: &mut Conductor<T>) -> Result<(), ConductorError> {
-    conductor.add_component_at_start(
-        WORLD_LEVEL,
-        Box::new(PoseLogger::new(
-            SimDuration::from_secs(1),
-            SimDuration::from_nanos(1),
-        )),
-    )?;
-
-    // Return success; the logger is registered.
-    Ok(())
-}
-
 /// What the live scenario needs from outside the sim: the spawner's
-/// requests turned into cars, and every car watched for collisions.
+/// requests turned into cars, every car watched for collisions, and the
+/// run's console output.
 #[derive(Clone)]
 pub struct LiveTrafficHandler {
     /// Requests collected since the last [`Self::apply_traffic_requests`],
     /// in publish order.
-    pending_requests: Arc<Mutex<Vec<Request>>>,
+    pending_requests: Arc<Mutex<Vec<TrafficRequest>>>,
     /// The first request that could not be read, held until
     /// [`Self::apply_traffic_requests`] reports it.
     ///
@@ -579,6 +564,9 @@ pub struct LiveTrafficHandler {
     unreadable_request: Arc<Mutex<Option<CoreError>>>,
     /// Every car's pose, watched for contact with another car's.
     collision_monitor: CollisionMonitor,
+    /// What the run prints to the console, queued until the handler prints
+    /// it between ticks.
+    console_output: Arc<Mutex<ConsoleOutput>>,
 }
 
 impl Default for LiveTrafficHandler {
@@ -587,34 +575,77 @@ impl Default for LiveTrafficHandler {
             pending_requests: Arc::default(),
             unreadable_request: Arc::default(),
             collision_monitor: CollisionMonitor::new(WORLD_NAME, EGO_NAME),
+            console_output: Arc::default(),
         }
     }
 }
 
+/// Lines waiting to be printed to the console, and what the handler keeps
+/// to write them.
+#[derive(Default)]
+struct ConsoleOutput {
+    /// Actors that have joined but not yet published a pose.
+    joining: BTreeSet<String>,
+    /// The latest pose of each actor still in the world.
+    latest_poses: BTreeMap<String, (SimTime, Pose)>,
+    /// Lines not yet printed, in the order they happened.
+    unprinted: Vec<ConsoleLine>,
+}
+
+/// One line of the run's console output.
+enum ConsoleLine {
+    /// An actor joining or leaving.
+    Actor(ActorChange),
+    /// An actor's first pose arriving before any join was seen for it, a
+    /// warning, since every actor should join before it publishes.
+    PoseBeforeJoin(ActorChange),
+    /// Two traffic cars colliding.
+    Collision(RecordedCollision),
+}
+
+/// What a line about one actor says, and the pose it prints with the
+/// sim time that pose was published at.
+struct ActorChange {
+    description: &'static str,
+    actor: String,
+    sim_time: SimTime,
+    pose: Pose,
+}
+
 /// One membership change the sim asked for.
-enum Request {
+enum TrafficRequest {
     Spawn(SpawnTrafficRequest),
     Despawn(DespawnTrafficRequest),
 }
 
 impl LiveTrafficHandler {
-    /// A `MonitorTransport` callback that picks the spawner's requests and
-    /// every car's pose out of the traffic.
+    /// A `MonitorTransport` callback feeding every message to the traffic
+    /// requests, the collision monitor, and the console output.
     pub fn message_callback(&self) -> impl FnMut(&Message) + Send + 'static {
-        let mut collect_requests = self.request_callback();
-        let mut collect_poses = self.collision_monitor.message_callback();
+        let mut traffic_requests_on_message = self.traffic_request_message_callback();
+        let mut collision_monitor_on_message = self.collision_monitor.message_callback();
+        let mut console_output_on_message = self.console_output_message_callback();
 
-        // Return one callback feeding both.
+        // Return one callback feeding the traffic requests, the collision
+        // monitor, and the console output.
         move |message: &Message| {
-            collect_requests(message);
-            collect_poses(message);
+            traffic_requests_on_message(message);
+            collision_monitor_on_message(message);
+            console_output_on_message(message);
         }
     }
 
-    /// A membership callback that tells the collision monitor when a car
-    /// leaves.
+    /// A membership callback feeding every join and leave to the collision
+    /// monitor and the console output.
     pub fn membership_callback(&self) -> impl FnMut(&MembershipChange) + Send + 'static {
-        self.collision_monitor.membership_callback()
+        let mut collision_monitor_on_membership = self.collision_monitor.membership_callback();
+        let mut console_output_on_membership = self.console_output_membership_callback();
+
+        // Return one callback feeding both.
+        move |change: &MembershipChange| {
+            collision_monitor_on_membership(change);
+            console_output_on_membership(change);
+        }
     }
 
     /// The collision monitor.
@@ -622,9 +653,95 @@ impl LiveTrafficHandler {
         &self.collision_monitor
     }
 
-    /// The half of [`Self::message_callback`] that collects the spawner's
+    /// The part of [`Self::message_callback`] that notes each actor's
+    /// latest pose, queueing a console output line with the first one.
+    fn console_output_message_callback(&self) -> impl FnMut(&Message) + Send + 'static {
+        let console_output = self.console_output.clone();
+        let pose_key_pattern =
+            KeyExpr::new_rooted(format!("{WORLD_NAME}/actor/*/pose")).expect("valid pose key");
+
+        // Return the noting callback, holding its own handles.
+        move |message: &Message| {
+            if !pose_key_pattern.matches(&message.key) {
+                return;
+            }
+            // A pose that cannot be read is the collision monitor's to report.
+            let Ok(pose) = message.decode::<Pose>() else {
+                return;
+            };
+            let actor = actor_of_pose_key(message.key.as_str()).to_string();
+            let mut console_output = console_output
+                .lock()
+                .expect("console output mutex is never poisoned");
+            // An actor's first pose is printed with its join, or as a
+            // warning if no join was seen for it, so a missed join still
+            // shows.
+            let first_pose = |description| ActorChange {
+                description,
+                actor: actor.clone(),
+                sim_time: message.sim_time,
+                pose,
+            };
+            if console_output.joining.remove(&actor) {
+                let line = ConsoleLine::Actor(first_pose("joined"));
+                console_output.unprinted.push(line);
+            } else if !console_output.latest_poses.contains_key(&actor) {
+                // This is the first pose for an actor that's not in `joining`.
+                let line = ConsoleLine::PoseBeforeJoin(first_pose("pose before join"));
+                console_output.unprinted.push(line);
+            }
+            console_output
+                .latest_poses
+                .insert(actor, (message.sim_time, pose));
+        }
+    }
+
+    /// The part of [`Self::membership_callback`] that notes an actor
+    /// joining, and queues a console output line when it leaves, with the
+    /// last pose it published.
+    fn console_output_membership_callback(&self) -> impl FnMut(&MembershipChange) + Send + 'static {
+        let console_output = self.console_output.clone();
+
+        // Return the noting callback, holding its own handle.
+        move |change: &MembershipChange| {
+            let (joined, path) = match change {
+                MembershipChange::Joined(join) => (true, &join.path),
+                MembershipChange::Left(leave) => (false, &leave.path),
+            };
+            let path = ComponentPath::parse(path).expect("a membership change names a valid path");
+            let Some(actor) = path.actor() else {
+                return;
+            };
+            let actor = actor.as_str();
+            let mut console_output = console_output
+                .lock()
+                .expect("console output mutex is never poisoned");
+            // An actor's components join and leave one after another, so
+            // only the first of them changes anything here, and each actor is
+            // printed joining and leaving once.
+            if joined {
+                if !console_output.latest_poses.contains_key(actor) {
+                    console_output.joining.insert(actor.to_string());
+                }
+            } else {
+                console_output.joining.remove(actor);
+                if let Some((sim_time, pose)) = console_output.latest_poses.remove(actor) {
+                    console_output
+                        .unprinted
+                        .push(ConsoleLine::Actor(ActorChange {
+                            description: "left",
+                            actor: actor.to_string(),
+                            sim_time,
+                            pose,
+                        }));
+                }
+            }
+        }
+    }
+
+    /// The part of [`Self::message_callback`] that collects the spawner's
     /// requests.
-    fn request_callback(&self) -> impl FnMut(&Message) + Send + 'static {
+    fn traffic_request_message_callback(&self) -> impl FnMut(&Message) + Send + 'static {
         let pending_requests = self.pending_requests.clone();
         let unreadable_request = self.unreadable_request.clone();
         let spawn = traffic_spawn_key(WORLD_NAME);
@@ -635,11 +752,13 @@ impl LiveTrafficHandler {
             // Only these two keys are requests. Anything else on the transport
             // is someone else's traffic and is not this handler's to read.
             let request = if message.key == spawn {
-                message.decode::<SpawnTrafficRequest>().map(Request::Spawn)
+                message
+                    .decode::<SpawnTrafficRequest>()
+                    .map(TrafficRequest::Spawn)
             } else if message.key == despawn {
                 message
                     .decode::<DespawnTrafficRequest>()
-                    .map(Request::Despawn)
+                    .map(TrafficRequest::Despawn)
             } else {
                 return;
             };
@@ -666,24 +785,67 @@ impl LiveTrafficHandler {
         }
     }
 
-    /// Records the collisions that began since the last call, failing on
-    /// the ego's.
+    /// Prints the console output queued since the last call, in the order
+    /// it happened.
+    fn print_console_output(&self) {
+        let unprinted = std::mem::take(
+            &mut self
+                .console_output
+                .lock()
+                .expect("console output mutex is never poisoned")
+                .unprinted,
+        );
+        let actor_text = |change: &ActorChange| {
+            format!(
+                "{}: actor={:?} (x={:.2} y={:.2} yaw_deg={:.1} at {} sec)",
+                change.description,
+                change.actor,
+                change.pose.position.x,
+                change.pose.position.y,
+                change.pose.orientation.yaw().to_degrees(),
+                change.sim_time,
+            )
+        };
+        for line in unprinted {
+            match line {
+                ConsoleLine::Actor(change) => tracing::info!("{}", actor_text(&change)),
+                ConsoleLine::PoseBeforeJoin(change) => tracing::warn!("{}", actor_text(&change)),
+                ConsoleLine::Collision(collision) => tracing::warn!(
+                    "collision: first={:?} second={:?} (at {} sec)",
+                    collision.first,
+                    collision.second,
+                    collision.sim_time
+                ),
+            }
+        }
+    }
+
+    /// Records each collision that began since the last call in the event
+    /// log and queues it for the console. A collision involving the ego
+    /// halts the run.
     fn process_collisions<T: Transport>(
         &self,
         conductor: &mut Conductor<T>,
     ) -> Result<(), ScenarioError> {
         let collisions = match self.collision_monitor.check_collisions() {
             Ok(collisions) => collisions,
-            // The ego's collision halts the run, recorded first so the log
-            // says why.
+            // The ego's collision halts the run, recorded first so the event
+            // log says why.
             Err(ScenarioError::EgoCollision(collision)) => {
                 conductor.report_observation(RecordedObservation::Collision(collision.clone()));
                 return Err(ScenarioError::EgoCollision(collision));
             }
             Err(error) => return Err(error),
         };
+        let mut console_output = self
+            .console_output
+            .lock()
+            .expect("console output mutex is never poisoned");
         for collision in collisions {
-            conductor.report_observation(RecordedObservation::Collision(collision));
+            conductor.report_observation(RecordedObservation::Collision(collision.clone()));
+            console_output
+                .unprinted
+                .push(ConsoleLine::Collision(collision));
         }
 
         // Return success; no collision involved the ego.
@@ -721,7 +883,7 @@ impl LiveTrafficHandler {
         );
         for request in collected {
             match request {
-                Request::Spawn(spawn) => add_car(
+                TrafficRequest::Spawn(spawn) => add_car(
                     conductor,
                     &spawn.actor_name,
                     CarConfiguration::IdmFollowing,
@@ -734,7 +896,7 @@ impl LiveTrafficHandler {
                 // never asks twice, but a scenario that also removed cars
                 // by hand could, and a request for someone already gone has
                 // simply been satisfied early.
-                Request::Despawn(despawn) => {
+                TrafficRequest::Despawn(despawn) => {
                     match conductor.remove_component_now(&despawn.actor_name) {
                         Ok(()) | Err(ConductorError::UnknownPath(_)) => {}
                         Err(other) => return Err(other.into()),
@@ -786,9 +948,16 @@ pub fn run_live_traffic_scenario<T: Transport>(
             .is_some_and(|instant| instant <= end)
     {
         conductor.step_once()?;
-        // Before the requests, so a collision names the cars it happened
-        // among.
-        live_traffic_handler.process_collisions(conductor)?;
+        // Collisions are checked before printing, which shows the ones this
+        // queues, and before applying the traffic requests, since a car they
+        // retire leaves the collision monitor at once and its collision would
+        // go unchecked.
+        let collision_check = live_traffic_handler.process_collisions(conductor);
+        live_traffic_handler.print_console_output();
+        match collision_check {
+            Ok(()) => {}
+            Err(halt) => return Err(halt),
+        }
         live_traffic_handler.apply_traffic_requests(conductor)?;
     }
 
@@ -814,4 +983,92 @@ pub fn run_playback_traffic_scenario<T: Transport>(
 ) -> Result<(), ConductorError> {
     // Return once the recorded schedule has been played out to `end`.
     conductor.run_until(end)
+}
+
+#[cfg(test)]
+mod tests {
+    use continuo_conductor::{RecordedJoin, RecordedLeave};
+    use continuo_core::{Quat, Vec3};
+
+    use super::*;
+
+    /// A pose for `actor` at `x` along the road, published at `sim_secs`.
+    fn pose_message(actor: &str, x: f64, sim_secs: f64) -> Message {
+        Message {
+            key: pose_key(WORLD_NAME, actor),
+            publisher: ComponentPath::parse(&format!("{actor}/physics")).expect("valid path"),
+            seq: 0,
+            sim_time: SimTime::from_secs_f64(sim_secs),
+            payload: serde_json::to_vec(&Pose {
+                position: Vec3::new(x, 0.0, 0.0),
+                orientation: Quat::IDENTITY,
+            })
+            .expect("a pose serializes"),
+        }
+    }
+
+    /// The lines queued for the console, each as its description, its
+    /// position along the road, and its pose's sim time.
+    fn queued_lines(live_traffic_handler: &LiveTrafficHandler) -> Vec<(&'static str, f64, f64)> {
+        let console_output = live_traffic_handler
+            .console_output
+            .lock()
+            .expect("not poisoned");
+
+        // Return the actor lines; nothing here collides.
+        console_output
+            .unprinted
+            .iter()
+            .map(|line| match line {
+                ConsoleLine::Actor(change) | ConsoleLine::PoseBeforeJoin(change) => (
+                    change.description,
+                    change.pose.position.x,
+                    change.sim_time.as_secs_f64(),
+                ),
+                ConsoleLine::Collision(_) => panic!("no car collided"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_car_is_printed_joining_with_its_first_pose_and_leaving_once_with_its_last() {
+        let live_traffic_handler = LiveTrafficHandler::default();
+        let mut on_message = live_traffic_handler.message_callback();
+        let mut on_membership = live_traffic_handler.membership_callback();
+        // A car's components join and leave one after another.
+        let leaves = ["radar", "controller", "physics"];
+        for leaf in leaves {
+            on_membership(&MembershipChange::Joined(RecordedJoin {
+                path: format!("car/{leaf}"),
+                first_due: SimTime::from_secs_f64(1.0),
+            }));
+        }
+        on_message(&pose_message("car", 10.0, 1.0));
+        on_message(&pose_message("car", 12.0, 1.1));
+        for leaf in leaves {
+            on_membership(&MembershipChange::Left(RecordedLeave {
+                path: format!("car/{leaf}"),
+                leaves_at: SimTime::from_secs_f64(1.2),
+            }));
+        }
+
+        // The leaving line prints its last pose, published at 1.1 s.
+        assert_eq!(
+            queued_lines(&live_traffic_handler),
+            [("joined", 10.0, 1.0), ("left", 12.0, 1.1)]
+        );
+    }
+
+    #[test]
+    fn a_pose_before_any_join_prints_one_warning() {
+        let live_traffic_handler = LiveTrafficHandler::default();
+        let mut on_message = live_traffic_handler.message_callback();
+        on_message(&pose_message("stranger", 5.0, 1.0));
+        on_message(&pose_message("stranger", 6.0, 1.1));
+
+        assert_eq!(
+            queued_lines(&live_traffic_handler),
+            [("pose before join", 5.0, 1.0)]
+        );
+    }
 }

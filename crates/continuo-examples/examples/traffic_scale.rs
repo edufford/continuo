@@ -2,10 +2,9 @@
 //! a scaled one, both built the same way and free-run for thirty sim-seconds,
 //! so the only thing that differs between the two runs is the population.
 //!
-//! Neither run has a spawner or a logger. A spawner would make the
-//! population a moving target, which is the one thing this holds still, and a
-//! pose logger at the larger size writes more than the run it reports on. See
-//! `traffic` for the watchable demo.
+//! Neither run has a spawner, which would make the population a moving
+//! target, the one thing this holds still. See `traffic` for the watchable
+//! demo.
 //!
 //! The number to read is component steps per second of wall time. It is the
 //! one that stays flat when cost is linear in the population, so a scaled run

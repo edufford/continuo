@@ -812,10 +812,11 @@ under "Wire format", rather than churning the fingerprint once apiece.
   an ordinary thing to want, and the work is proportional to the rate it is
   trying not to watch.
 
-  Measured on the demo's pose logger, which sees a sim-second of poses at once:
-  `drain` costs ~155 us for that batch and the logger's step ~231 us, against
-  ~14 us if it decoded only the last message per key. Sixteen times less work
-  for the same result, since it keeps only the latest anyway.
+  Measured on a pose logger the demo used to run, which saw a sim-second of
+  poses at once: `drain` cost ~155 us for that batch and the logger's step
+  ~231 us, against ~14 us if it decoded only the last message per key.
+  Sixteen times less work for the same result, since it kept only the latest
+  anyway.
 
   A `Transport` question rather than a component one, and it interacts with
   `drain` taking a per-subscriber release condition. Note it changes what a
@@ -918,12 +919,12 @@ under "Wire format", rather than churning the fingerprint once apiece.
   summary prints `joins / leaves` directly above `actors seen`, and the two
   count different things: membership is published per component, so a
   traffic car joining raises three events, one each for its radar, its
-  controller and its physics. A demo run reports 46 joins and 24 leaves
+  controller and its physics. A demo run reports 45 joins and 24 leaves
   against 15 actors, which reads as a discrepancy and is not one: fourteen
-  traffic cars at three components each and the ego at two, plus the logger
-  and the spawner at one, and eight cars retiring. Saying "component
-  joins / leaves" would settle it. The CI smoke asserts those exact labels, so
-  the two move together.
+  traffic cars at three components each and the ego at two, plus the spawner
+  at one, and eight cars retiring. Saying "component joins / leaves" would
+  settle it. The CI smoke asserts those exact labels, so the two move
+  together.
 
 - **A native component that follows, so both control laws have a caller on
   each side of the FMI boundary.** The laws live in `continuo-actors` so that

@@ -70,8 +70,8 @@ fn traffic_arrives_and_retires_while_the_run_is_under_way() {
     let joined = joined(&log);
     let left = left(&log);
 
-    // The ego, the spawner, and the logger are there from the start; every
-    // traffic car arrived mid-run.
+    // The ego and the spawner are there from the start; every traffic car
+    // arrived mid-run.
     assert!(joined.contains(&"ego/controller"));
     assert!(joined.contains(&"traffic_spawner"));
     let traffic_joins = joined.iter().filter(|p| p.starts_with("traffic")).count();
@@ -190,7 +190,7 @@ fn the_dynamic_world_reproduces_exactly() {
 /// deliberate act. Update it and README.md's sample output together. A
 /// stale controller FMU moves it too, which `cargo xtask package-fmus`
 /// fixes.
-const DEMO_WORLD_HASH: u64 = 0x580e_8d37_b14c_6abd;
+const DEMO_WORLD_HASH: u64 = 0x602c_9fea_d4ec_7d98;
 
 #[test]
 fn the_demo_world_hashes_to_the_same_value_on_every_platform() {

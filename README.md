@@ -26,19 +26,22 @@ instant, and repeats.
             ┌──────────────────────────┐
             │        Conductor         │   owns sim time + event schedule
             │ (advance to earliest due │
-            │  time, step, barrier)    │
-            └────────────┬─────────────┘
-             TickStart   │   TickDone { next_due }
-            ┌────────────┴─────────────┐
-            │        Transport         │   pub/sub on key expressions,
-            │   (InProc now, Zenoh     │   e.g. continuo/demo/actor/ego/pose
-            │    later; same trait)    │
-            └────────────┬─────────────┘
-       ┌─────────────┬───┴──────────┬──────────────────┐
-┌──────┴─────┐ ┌─────┴──────┐ ┌─────┴─────────┐ ┌──────┴─────┐
-│    ego     │ │  traffic7  │ │traffic_spawner│ │   logger   │ world-level
-│ ┌────────┐ │ │ ┌────────┐ │ │    (2 Hz)     │ │   (1 Hz)   │ actors
-│ │  ctrl  │ │ │ │  ctrl  │ │ └───────┬───────┘ └────────────┘
+            │  time, step, barrier)    │◄────────────────┐ adds and removes cars,
+            └────────────┬─────────────┘                 │ hears of joins and leaves
+                         │                               │ through membership callbacks
+               TickStart │ TickDone { next_due }         │
+                         │                               │
+            ┌────────────┴─────────────┐       ┌─────────┴──────────┐
+            │        Transport         ├──────►│ LiveTrafficHandler │ outside the sim,
+            │   (InProc now, Zenoh     │       │ (collision monitor,│ sees every message
+            │    later; same trait)    │       │  console output)   │ through the
+            └────────────┬─────────────┘       └────────────────────┘ MonitorTransport
+                         │   pub/sub on key expressions,
+       ┌─────────────┬───┴──────────┐   e.g. continuo/demo/actor/ego/pose
+┌──────┴─────┐ ┌─────┴──────┐ ┌─────┴─────────┐
+│    ego     │ │  traffic7  │ │traffic_spawner│ world-level
+│ ┌────────┐ │ │ ┌────────┐ │ │    (2 Hz)     │ actors
+│ │  ctrl  │ │ │ │  ctrl  │ │ └───────┬───────┘
 │ ├────────┤ │ │ ├────────┤ │         │
 │ │physics │ │ │ │physics │ │         │ watches poses, asks for cars
 │ └────────┘ │ │ └────────┘ │         │ to be added and removed
@@ -98,7 +101,7 @@ instant, and repeats.
 | [`continuo-core`](crates/continuo-core/) | `SimTime`/`SimDuration`, ids and paths, key expressions, `Vec3`/`Quat`/Euler (canonical Z-Y-X conversions), wire messages, the `Component` trait, owned hash/random/seed derivation |
 | [`continuo-transport`](crates/continuo-transport/) | `Transport` trait, deterministic `InProcTransport`, `MonitorTransport` for out-of-band message recording |
 | [`continuo-conductor`](crates/continuo-conductor/) | Registry (component tree as data), event schedule, the conductor loop, tick fingerprints, and the event log: `record`, `verify`, `playback` |
-| [`continuo-actors`](crates/continuo-actors/) | Sample components: waypoint path, path-follow controller, unicycle physics, forward-looking radar, pose logger, traffic spawner. Also the control laws they steer and follow by, IDM and pure pursuit, which the exported FMU compiles in rather than reimplements |
+| [`continuo-actors`](crates/continuo-actors/) | Sample components: waypoint path, path-follow controller, unicycle physics, forward-looking radar, traffic spawner. Also the control laws they steer and follow by, IDM and pure pursuit, which the exported FMU compiles in rather than reimplements |
 | [`continuo-viz-bridge`](crates/continuo-viz-bridge/) | Relays a run's published messages and membership changes to a live viewer, as a transport monitor rather than a component |
 | [`continuo-fmi`](crates/continuo-fmi/) | Runs an imported FMI 3.0 Co-Simulation FMU as a component, wired to the world by a mapping rather than by code |
 | [`continuo-fmu-controller-idm`](crates/continuo-fmu-controller-idm/) | The car controller as an exported FMU: the FMI interface declaration, delegating every answer to the laws in `continuo-actors` |
@@ -200,20 +203,20 @@ cargo xtask verify-fmus
 cargo xtask package-fmus
 ```
 
-The demo logs every live car's pose once per sim-second and finishes in a
-few wall-seconds. Traffic appears as it is spawned, so the roll
-changes as the run goes on:
+The demo prints each car to the console as it joins and leaves, with
+where it was then, and finishes in a few wall-seconds. Traffic appears as
+it is spawned and retires once the ego has gone past it:
 
 ```
-INFO initial pose sim_time=0.0 key="continuo/demo/actor/ego/pose" x=0.00 y=0.00 yaw_deg=0.0
-INFO initial pose sim_time=0.5 key="continuo/demo/actor/traffic1/pose" x=80.36 y=-3.50 yaw_deg=0.0
+INFO joined: actor="ego" (x=0.00 y=0.00 yaw_deg=0.0 at 0.0 sec)
+INFO joined: actor="traffic1" (x=80.36 y=-3.50 yaw_deg=0.0 at 0.5 sec)
+INFO joined: actor="traffic2" (x=120.83 y=-3.50 yaw_deg=0.0 at 0.5 sec)
 ...
-INFO pose sim_time=4.0 key="continuo/demo/actor/ego/pose" x=120.00 y=0.00 yaw_deg=0.0
-INFO pose sim_time=4.0 key="continuo/demo/actor/traffic1/pose" x=143.47 y=-3.50 yaw_deg=0.0
-INFO pose sim_time=4.0 key="continuo/demo/actor/traffic2/pose" x=189.79 y=-3.50 yaw_deg=0.0
+INFO left: actor="traffic1" (x=267.03 y=-3.50 yaw_deg=0.0 at 11.0 sec)
+INFO joined: actor="traffic7" (x=400.47 y=3.50 yaw_deg=0.0 at 11.5 sec)
 ...
-done: world 'demo' reached sim time 30.0 in 3031 ticks (free-run)
-actual time: 2.295 s (13x real-time), world hash 580e8d37b14c6abd
+done: world 'demo' reached sim time 30.0 in 3001 ticks (free-run)
+actual time: 2.693 s (11x real-time), world hash 602c9fead4ec7d98
 ```
 
 The ego holds the centre lane at 30 m/s; traffic spawns at 16-22 m/s in the
@@ -239,12 +242,9 @@ correct rounding for the trigonometry a pose depends on, so every `sin`,
 port of MUSL's, and a `disallowed-methods` entry keeps the platform's own
 out. DECISIONS.md records what that was measured against.
 
-Two observer details worth knowing: log lines carry the *message's* sim time
-(an observer is a world-level actor, so it receives time-T poses strictly
-after T, which is next-step visibility), and the logger schedules its samples
-**1 ns after** each second boundary, the smallest offset that clears same-instant
-deferral, so on-boundary poses are visible and nothing can be scheduled
-between a boundary and its sample.
+One observer detail worth knowing: an observer inside the world, such as
+the spawner, is a world-level actor, so it receives time-T poses strictly
+after T, which is next-step visibility.
 
 ### Installing libclang
 
@@ -325,7 +325,7 @@ component. `--verbose` reports anything it could not read.
 
 There are two distinct ways to watch a world, and the demo uses both:
 
-- **In-simulation observers** (like `PoseLogger`) are ordinary components:
+- **In-simulation observers** (like `TrafficSpawner`) are ordinary components:
   they subscribe, they step, and they see messages under the visibility rule
   like any participant. Use these when the observation is part of the world.
 - **Transport monitors** (`MonitorTransport`) wrap the transport and invoke
@@ -341,7 +341,7 @@ period) that reads the car's pose and publishes how hard to steer, and a
 (sample-and-hold) and publishes where that has put the car. The controller
 is declared first, so when both are due at the same instant its command
 reaches the physics in that same step; everything crossing actor boundaries
-(e.g. poses to the logger) is seen next step.
+(e.g. poses to the spawner) is seen next step.
 
 Steering and acceleration arrive as separate messages, each normalized to
 [-1, 1] and carrying no unit: the rates behind them belong to the physics, so
