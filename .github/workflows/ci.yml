@@ -131,9 +131,7 @@ jobs:
       - name: "Lint: format"
         run: cargo fmt --all --check
 
-      # rustfmt keeps code within 100 columns but leaves comments as written,
-      # so a scripted edit that joins two comment lines formats and compiles
-      # clean. This holds comment lines to the same width.
+      # rustfmt does not wrap comments, so this holds them to its 100 columns.
       - name: "Lint: comment width"
         shell: bash
         run: |

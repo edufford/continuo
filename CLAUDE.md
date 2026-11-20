@@ -153,9 +153,8 @@ still valid Rust, and `rustfmt` does not reformat what is inside a string, so
 it accepts the over-wide line as well. Ruff's `ISC` rules are the same
 barrier on the viewer, where the mistake takes Python's own shape: a comma
 missing from a collection joins two of its entries rather than separating
-them. CI holds comment lines in Rust to rustfmt's 100 columns, because
-`rustfmt` leaves comments as written, so a scripted edit that joins two
-comment lines formats and compiles clean.
+them. CI fails a Rust comment line past 100 columns, since `rustfmt` does
+not wrap comments.
 
 `string-literals.yml` is a heuristic where the rest are exact, so it is a
 workflow of its own and stays out of the required checks: a rule that can be
