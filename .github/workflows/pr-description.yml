@@ -2,9 +2,9 @@ name: PR description
 
 # This repository squash-merges using the PR title and description, so the
 # description is the commit message that lands on main. This holds a PR that
-# is out of draft to what such a message needs: no review notes still
-# attached, no line wider than the commit will keep, and no code span the
-# wrap has broken.
+# is out of draft to what such a message needs: a title that fits the
+# subject line, no review notes still attached, no line wider than the
+# commit will keep, and no code span the wrap has broken.
 #
 # Its own workflow rather than a job in CI, because the events that matter
 # here are `edited` and `ready_for_review`, which fire on every touch of a
@@ -106,6 +106,32 @@ jobs:
             exit 1
           fi
           echo "Every code span survives the wrap."
+
+      # GitHub makes the squash commit's subject from the title and appends
+      # " (#NN)", so that whole subject is what has to fit. It is measured
+      # with this PR's own number, so the limit on the title shrinks by one
+      # as the numbers gain a digit. The title reaches the script through
+      # the environment, like the description.
+      - name: "Check: the title fits the commit's subject line"
+        if: github.event.pull_request.draft == false
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+          NUMBER: ${{ github.event.pull_request.number }}
+        shell: bash
+        run: |
+          # Measure the subject the squash merge will write.
+          subject="$TITLE (#$NUMBER)"
+          width=$(printf '%s' "$subject" | awk '{ print length }')
+          if [ "$width" -gt 72 ]; then
+            echo "ERROR: the squash commit's subject would be $width columns:"
+            echo "  $subject"
+            echo
+            echo "GitHub appends the PR number to the title, and some views"
+            echo "cut a subject past 72 columns, hiding that number. Shorten"
+            echo "the title to $((72 - ${#NUMBER} - 4)) characters or fewer."
+            exit 1
+          fi
+          echo "The subject fits in $width columns."
 
       - name: "Deferred: this PR is still a draft"
         if: github.event.pull_request.draft
