@@ -30,8 +30,9 @@ use continuo_actors::{
 };
 use continuo_conductor::record::LogEvent;
 use continuo_conductor::{
-    Conductor, ConductorConfig, ConductorError, EventLog, JoinMetadata, MembershipChange, Pacing,
-    PlaybackComponent, RecordedCollision, RecordedObservation, Verifier, WORLD_LEVEL,
+    Conductor, ConductorConfig, ConductorError, EventLog, JoinMetadata, LeaveMetadata,
+    MembershipChange, Pacing, PlaybackComponent, RecordedCollision, RecordedObservation, Verifier,
+    WORLD_LEVEL,
 };
 use continuo_core::{
     Component, ComponentId, ComponentPath, CoreError, KeyExpr, Message, Pose, SimDuration, SimTime,
@@ -506,44 +507,70 @@ pub fn setup_playback_traffic_scenario<T: Transport>(
 ) -> Result<usize, ScenarioError> {
     add_ego(conductor, EGO_START, EGO_LANE, ego_speed)?;
 
-    // Every playback double is registered now, even though most of their
-    // originals joined mid-run: a double with nothing recorded yet
-    // publishes nothing and reports its first recorded message as its next
-    // due time, so it idles until the instant it first appeared.
-    let actor_names = recorded_traffic_actor_names(recorded);
-    for actor_name in &actor_names {
-        let id = ComponentId::new(actor_name.as_str()).expect("a recorded path segment is an id");
-        conductor.add_component_at_start(
-            WORLD_LEVEL,
-            Box::new(PlaybackComponent::from_log(id, recorded, actor_name)),
+    // Each double joins and leaves at the instants its original did, both
+    // queued now, so the world's membership matches the recording and
+    // whatever follows membership sees the same cars come and go.
+    let actors = recorded_traffic_actors(recorded);
+    for actor in &actors {
+        let id = ComponentId::new(actor.name.as_str()).expect("a recorded path segment is an id");
+        conductor.add_component(
+            JoinMetadata::at(WORLD_LEVEL, actor.joined_at),
+            Box::new(PlaybackComponent::from_log(id, recorded, &actor.name)),
         )?;
+        if let Some(left_at) = actor.left_at {
+            conductor.remove_component(LeaveMetadata::at(actor.name.as_str(), left_at))?;
+        }
     }
 
     // Return the size of the scene that was rebuilt.
-    Ok(actor_names.len())
+    Ok(actors.len())
+}
+
+/// A traffic actor a recorded run contained, and when it joined and left.
+struct RecordedActor {
+    name: String,
+    joined_at: SimTime,
+    /// When it left, or `None` if it was still there when the run ended.
+    left_at: Option<SimTime>,
 }
 
 /// The traffic actors a recorded run contained, in the order they joined.
 ///
 /// Cars are composites, so their join paths have a parent
 /// (`traffic7/physics`); the spawner is a world-level leaf and has none,
-/// which separates it here without matching on names.
-fn recorded_traffic_actor_names(recorded: &EventLog) -> Vec<String> {
-    let mut actor_names: Vec<String> = Vec::new();
+/// which separates it here without matching on names. A car's components
+/// join and leave together, so its first join and first leave are the
+/// car's.
+fn recorded_traffic_actors(recorded: &EventLog) -> Vec<RecordedActor> {
+    let mut actors: Vec<RecordedActor> = Vec::new();
     for event in &recorded.events {
-        let LogEvent::Join(join) = event else {
-            continue;
-        };
-        let Some((actor_name, _)) = join.path.split_once('/') else {
-            continue;
-        };
-        if actor_name != EGO_NAME && !actor_names.iter().any(|seen| seen == actor_name) {
-            actor_names.push(actor_name.to_string());
+        match event {
+            LogEvent::Join(join) => {
+                let Some((name, _)) = join.path.split_once('/') else {
+                    continue;
+                };
+                if name != EGO_NAME && !actors.iter().any(|actor| actor.name == name) {
+                    actors.push(RecordedActor {
+                        name: name.to_string(),
+                        joined_at: join.first_due,
+                        left_at: None,
+                    });
+                }
+            }
+            LogEvent::Leave(leave) => {
+                let Some((name, _)) = leave.path.split_once('/') else {
+                    continue;
+                };
+                if let Some(actor) = actors.iter_mut().find(|actor| actor.name == name) {
+                    actor.left_at.get_or_insert(leave.leaves_at);
+                }
+            }
+            _ => {}
         }
     }
 
     // Return each car once, first join first.
-    actor_names
+    actors
 }
 
 /// The spawner's requests, collected from the transport and turned into
@@ -978,24 +1005,39 @@ pub fn run_live_traffic_scenario<T: Transport>(
     Ok(())
 }
 
-/// Runs a playback world to `end`.
+/// Runs a playback world to `end`, watched by `world_monitor`, and
+/// stopping at the first collision involving the ego.
 ///
 /// The counterpart to [`run_live_traffic_scenario`], and the contrast is
-/// the whole content of it: there is nothing to apply between ticks,
-/// because nothing in this world asks for anything. Recorded cars are
-/// already a schedule, since each double knows every instant it publishes
-/// at before the run starts, so the conductor only has to follow it.
+/// the whole content of it: there are no traffic requests to apply between
+/// ticks, because nothing in this world asks for anything. Recorded cars
+/// are already a schedule, joining, publishing and leaving at instants
+/// known before the run starts, so the conductor only has to follow it.
 ///
 /// Which is why this needs no request handler and no verifier: with no
 /// decisions being made there is nothing that could be made differently,
 /// and a divergence would have to come from the ego alone. Comparing that
-/// against the log is the *opposite* of what a what-if wants.
+/// against the log is the *opposite* of what a what-if wants. Watching for
+/// collisions is what a what-if does want, since the replayed traffic
+/// cannot react to a changed ego.
 pub fn run_playback_traffic_scenario<T: Transport>(
     conductor: &mut Conductor<T>,
+    world_monitor: &WorldMonitor,
     end: SimTime,
-) -> Result<(), ConductorError> {
+) -> Result<(), ScenarioError> {
+    while conductor
+        .next_due_instant()
+        .is_some_and(|instant| instant <= end)
+    {
+        conductor.step_once()?;
+        match world_monitor.process_step(conductor) {
+            Ok(()) => {}
+            Err(halt) => return Err(halt),
+        }
+    }
+
     // Return once the recorded schedule has been played out to `end`.
-    conductor.run_until(end)
+    Ok(())
 }
 
 #[cfg(test)]

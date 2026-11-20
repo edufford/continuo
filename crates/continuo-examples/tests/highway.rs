@@ -12,6 +12,8 @@ use continuo_conductor::record::LogEvent;
 use continuo_conductor::{
     Conductor, Divergence, EventLog, RecordedObservation, Recorder, Verifier,
 };
+use std::collections::BTreeMap;
+
 use continuo_core::{ComponentPath, SimTime};
 use continuo_examples::traffic_world::{self, TrafficRequestHandler, WorldMonitor};
 use continuo_transport::{InProcTransport, MonitorTransport};
@@ -136,6 +138,67 @@ fn following_actually_engages_somewhere() {
         hardest_braking < -0.1,
         "no traffic car braked harder than a tenth of its limit: {hardest_braking}"
     );
+}
+
+/// When each traffic car in a log first joined and first left, keyed by
+/// the actor its components belong to.
+fn traffic_membership(log: &EventLog) -> BTreeMap<String, (SimTime, Option<SimTime>)> {
+    let mut membership: BTreeMap<String, (SimTime, Option<SimTime>)> = BTreeMap::new();
+    let actor_of = |path: &str| {
+        let path = ComponentPath::parse(path).expect("a recorded path is valid");
+        path.actor()
+            .expect("a recorded path has an actor")
+            .to_string()
+    };
+    for event in &log.events {
+        match event {
+            LogEvent::Join(join) => {
+                let actor = actor_of(&join.path);
+                if actor.starts_with("traffic") && actor != "traffic_spawner" {
+                    membership.entry(actor).or_insert((join.first_due, None));
+                }
+            }
+            LogEvent::Leave(leave) => {
+                if let Some((_, left_at)) = membership.get_mut(&actor_of(&leave.path)) {
+                    left_at.get_or_insert(leave.leaves_at);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // Return each car's first join and first leave.
+    membership
+}
+
+#[test]
+fn playback_doubles_join_and_leave_when_their_originals_did() {
+    let recorded = record_highway(traffic_world::SIM_SECONDS);
+
+    let config = traffic_world::config();
+    let recorder = Recorder::new(&config);
+    let world_monitor = WorldMonitor::default();
+    let mut transport = MonitorTransport::new(InProcTransport::new());
+    transport.add_message_callback(world_monitor.message_callback());
+    let mut conductor =
+        Conductor::new(config, transport).expect("free-run config is always accepted");
+    conductor.add_membership_callback(recorder.membership_callback());
+    conductor.add_membership_callback(world_monitor.membership_callback());
+    traffic_world::setup_playback_traffic_scenario(&mut conductor, &recorded, 30.0)
+        .expect("the playback world builds");
+    traffic_world::run_playback_traffic_scenario(
+        &mut conductor,
+        &world_monitor,
+        SimTime::from_secs(traffic_world::SIM_SECONDS),
+    )
+    .expect("the playback run completes");
+
+    let original = traffic_membership(&recorded);
+    assert!(
+        original.values().any(|(_, left_at)| left_at.is_some()),
+        "some traffic left during the recorded run"
+    );
+    assert_eq!(traffic_membership(&recorder.finish()), original);
 }
 
 #[test]

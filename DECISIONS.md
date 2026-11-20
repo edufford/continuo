@@ -1647,3 +1647,13 @@ it got there, including the roads not taken.
   monitor alone. The world hash does not move.
   - Rejected: one handler holding a `WorldMonitor`, which would keep the
     live wiring to one value but hide which part acts on the world.
+- **2026-11-19**: **Playback doubles join and leave when their originals
+  did, and a resim run is watched by a `WorldMonitor`.** Every double was
+  registered at the start and none ever left, so a resim world's
+  membership did not match its recording, and nothing following
+  membership could follow the cars. Each double now joins at its
+  original's first logged join and leaves at its first logged leave, both
+  queued at setup, which the conductor applies at their own instants. The
+  playback run loop drives a `WorldMonitor`, so a what-if run checks the
+  ego for collisions with traffic that cannot react to it, and prints the
+  same joining and leaving lines as the live run.
