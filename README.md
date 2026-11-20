@@ -32,7 +32,7 @@ instant, and repeats.
                TickStart │ TickDone { next_due }         │
                          │                               │
             ┌────────────┴─────────────┐       ┌─────────┴──────────┐
-            │        Transport         ├──────►│ LiveTrafficHandler │ outside the sim,
+            │        Transport         ├──────►│   TrafficHandler   │ outside the sim,
             │   (InProc now, Zenoh     │       │ (collision monitor,│ sees every message
             │    later; same trait)    │       │  console output)   │ through the
             └────────────┬─────────────┘       └────────────────────┘ MonitorTransport

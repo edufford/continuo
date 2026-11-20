@@ -7,33 +7,35 @@
 //! come from inside the sim, which is the part that has to stay
 //! deterministic.
 
+use std::collections::BTreeSet;
+
 use continuo_actors::AccelCmd;
 use continuo_conductor::record::LogEvent;
 use continuo_conductor::{
     Conductor, Divergence, EventLog, RecordedObservation, Recorder, Verifier,
 };
 use continuo_core::{ComponentPath, SimTime};
-use continuo_examples::traffic_world::{self, LiveTrafficHandler};
+use continuo_examples::traffic_world::{self, TrafficHandler};
 use continuo_transport::{InProcTransport, MonitorTransport};
 
 /// Runs the demo world for `seconds`, returning its recorded log.
 fn record_highway(seconds: i64) -> EventLog {
     let config = traffic_world::config();
     let recorder = Recorder::new(&config);
-    let live_traffic_handler = LiveTrafficHandler::default();
+    let traffic_handler = TrafficHandler::default();
     let mut transport = MonitorTransport::new(InProcTransport::new());
     transport.add_message_callback(recorder.message_callback());
-    transport.add_message_callback(live_traffic_handler.message_callback());
+    transport.add_message_callback(traffic_handler.message_callback());
     let mut conductor =
         Conductor::new(config, transport).expect("free-run config is always accepted");
     conductor.add_tick_callback(recorder.tick_callback());
     conductor.add_membership_callback(recorder.membership_callback());
-    conductor.add_membership_callback(live_traffic_handler.membership_callback());
+    conductor.add_membership_callback(traffic_handler.membership_callback());
     conductor.add_observation_callback(recorder.observation_callback());
     traffic_world::setup_live_traffic_scenario(&mut conductor).expect("the world builds");
     traffic_world::run_live_traffic_scenario(
         &mut conductor,
-        &live_traffic_handler,
+        &traffic_handler,
         SimTime::from_secs(seconds),
         None,
     )
@@ -135,6 +137,65 @@ fn following_actually_engages_somewhere() {
     );
 }
 
+/// Every traffic car's joins and leaves in a log, with their instants. A
+/// car's components join and leave together, so the set holds one of each
+/// per car.
+fn traffic_membership(log: &EventLog) -> BTreeSet<(String, &'static str, SimTime)> {
+    let actor_of = |path: &str| {
+        let path = ComponentPath::parse(path).expect("a recorded path is valid");
+        path.actor()
+            .expect("a recorded path has an actor")
+            .to_string()
+    };
+    log.events
+        .iter()
+        .filter_map(|event| match event {
+            LogEvent::Join(join) => Some((actor_of(&join.path), "joined", join.first_due)),
+            LogEvent::Leave(leave) => Some((actor_of(&leave.path), "left", leave.leaves_at)),
+            _ => None,
+        })
+        .filter(|(actor, _, _)| actor.starts_with("traffic") && actor != "traffic_spawner")
+        .collect()
+}
+
+#[test]
+fn playback_doubles_join_and_leave_when_their_originals_did() {
+    let live_run_log = record_highway(traffic_world::SIM_SECONDS);
+    // Without a leave in the live run, the comparison could not catch a
+    // double that never leaves. A car leaves only after joining, so there
+    // are joins to compare too.
+    assert!(
+        traffic_membership(&live_run_log)
+            .iter()
+            .any(|(_, change, _)| *change == "left"),
+        "some traffic left during the live run"
+    );
+
+    let config = traffic_world::config();
+    let playback_recorder = Recorder::new(&config);
+    let traffic_handler = TrafficHandler::default();
+    let mut transport = MonitorTransport::new(InProcTransport::new());
+    transport.add_message_callback(traffic_handler.message_callback());
+    let mut conductor =
+        Conductor::new(config, transport).expect("free-run config is always accepted");
+    conductor.add_membership_callback(playback_recorder.membership_callback());
+    conductor.add_membership_callback(traffic_handler.membership_callback());
+    traffic_world::setup_playback_traffic_scenario(&mut conductor, &live_run_log, 30.0)
+        .expect("the playback world builds");
+    traffic_world::run_playback_traffic_scenario(
+        &mut conductor,
+        &traffic_handler,
+        SimTime::from_secs(traffic_world::SIM_SECONDS),
+    )
+    .expect("the playback run completes");
+
+    let playback_log = playback_recorder.finish();
+    assert_eq!(
+        traffic_membership(&playback_log),
+        traffic_membership(&live_run_log)
+    );
+}
+
 #[test]
 fn a_car_leaves_as_a_whole_actor() {
     // Every part of a composite goes together, adjacent in the log, because
@@ -219,20 +280,20 @@ fn the_demo_world_hashes_to_the_same_value_on_every_platform() {
 fn verify_highway(recorded: EventLog, seconds: i64) -> (SimTime, Result<usize, Divergence>) {
     let config = traffic_world::config();
     let verifier = Verifier::new(recorded, &config);
-    let live_traffic_handler = LiveTrafficHandler::default();
+    let traffic_handler = TrafficHandler::default();
     let mut transport = MonitorTransport::new(InProcTransport::new());
     transport.add_message_callback(verifier.message_callback());
-    transport.add_message_callback(live_traffic_handler.message_callback());
+    transport.add_message_callback(traffic_handler.message_callback());
     let mut conductor =
         Conductor::new(config, transport).expect("free-run config is always accepted");
     conductor.add_tick_callback(verifier.tick_callback());
     conductor.add_membership_callback(verifier.membership_callback());
-    conductor.add_membership_callback(live_traffic_handler.membership_callback());
+    conductor.add_membership_callback(traffic_handler.membership_callback());
     traffic_world::setup_live_traffic_scenario(&mut conductor).expect("the world builds");
 
     traffic_world::run_live_traffic_scenario(
         &mut conductor,
-        &live_traffic_handler,
+        &traffic_handler,
         SimTime::from_secs(seconds),
         Some(&verifier),
     )

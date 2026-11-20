@@ -22,7 +22,7 @@
 
 use continuo_conductor::{Conductor, Pacing};
 use continuo_core::SimTime;
-use continuo_examples::traffic_world::{self, LiveTrafficHandler};
+use continuo_examples::traffic_world::{self, TrafficHandler};
 use continuo_transport::{InProcTransport, MonitorTransport};
 use continuo_viz_bridge::{VizBridge, ZenohSink};
 
@@ -39,14 +39,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let zenoh_sink = ZenohSink::new()?;
     let viz_bridge = VizBridge::new(&config, zenoh_sink);
 
-    let live_traffic_handler = LiveTrafficHandler::default();
+    let traffic_handler = TrafficHandler::default();
     let mut transport = MonitorTransport::new(InProcTransport::new());
     transport.add_message_callback(viz_bridge.message_callback());
-    transport.add_message_callback(live_traffic_handler.message_callback());
+    transport.add_message_callback(traffic_handler.message_callback());
 
     let mut conductor = Conductor::new(config, transport)?;
     conductor.add_membership_callback(viz_bridge.membership_callback());
-    conductor.add_membership_callback(live_traffic_handler.membership_callback());
+    conductor.add_membership_callback(traffic_handler.membership_callback());
     traffic_world::setup_live_traffic_scenario(&mut conductor)?;
 
     println!(
@@ -59,7 +59,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let started = std::time::Instant::now();
     traffic_world::run_live_traffic_scenario(
         &mut conductor,
-        &live_traffic_handler,
+        &traffic_handler,
         SimTime::from_secs(seconds),
         None,
     )?;

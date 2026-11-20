@@ -1636,3 +1636,21 @@ it got there, including the roads not taken.
   - Rejected: printing from the collision monitor, which would mix
     console output into collision checking; and inferring joins and
     leaves from which poses arrive, when membership callbacks report them.
+- **2026-11-19**: **Playback doubles join and leave when their originals
+  did, and a resim run is watched by the live run's handler.** Every
+  double was registered at the start and none ever left, so a resim
+  world's membership did not match its recording, and nothing following
+  membership could follow the cars. Each double now joins at its
+  original's first logged join and leaves at its first logged leave, both
+  queued at setup, which the conductor applies at their own instants. The
+  playback run loop drives the same handler as the live one, renamed from
+  `LiveTrafficHandler` to `TrafficHandler`, so a what-if run checks the
+  ego for collisions with traffic playing back their behavior, and prints
+  the same joining and leaving lines as the live run. A playback world
+  has no spawner, so its handler finds no requests to apply. The world
+  hash does not move.
+  - Rejected: splitting the handler into a `TrafficRequestHandler` that
+    acts on the world and a `WorldMonitor` that only watches it. The
+    monitoring may need to act on the sim later too, and the split
+    redesigned more than resim needs, where a rename lets the one handler
+    serve both scenarios.

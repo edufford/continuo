@@ -30,8 +30,9 @@ use continuo_actors::{
 };
 use continuo_conductor::record::LogEvent;
 use continuo_conductor::{
-    Conductor, ConductorConfig, ConductorError, EventLog, JoinMetadata, MembershipChange, Pacing,
-    PlaybackComponent, RecordedCollision, RecordedObservation, Verifier, WORLD_LEVEL,
+    Conductor, ConductorConfig, ConductorError, EventLog, JoinMetadata, LeaveMetadata,
+    MembershipChange, Pacing, PlaybackComponent, RecordedCollision, RecordedObservation, Verifier,
+    WORLD_LEVEL,
 };
 use continuo_core::{
     Component, ComponentId, ComponentPath, CoreError, KeyExpr, Message, Pose, SimDuration, SimTime,
@@ -506,51 +507,76 @@ pub fn setup_playback_traffic_scenario<T: Transport>(
 ) -> Result<usize, ScenarioError> {
     add_ego(conductor, EGO_START, EGO_LANE, ego_speed)?;
 
-    // Every playback double is registered now, even though most of their
-    // originals joined mid-run: a double with nothing recorded yet
-    // publishes nothing and reports its first recorded message as its next
-    // due time, so it idles until the instant it first appeared.
-    let actor_names = recorded_traffic_actor_names(recorded);
-    for actor_name in &actor_names {
-        let id = ComponentId::new(actor_name.as_str()).expect("a recorded path segment is an id");
-        conductor.add_component_at_start(
-            WORLD_LEVEL,
-            Box::new(PlaybackComponent::from_log(id, recorded, actor_name)),
+    // Each double joins and leaves at the instants its original did, both
+    // queued now, so the world's membership matches the recording.
+    let cars = recorded_traffic_cars(recorded);
+    for car in &cars {
+        let id = ComponentId::new(car.name.as_str()).expect("a recorded path segment is an id");
+        conductor.add_component(
+            JoinMetadata::at(WORLD_LEVEL, car.joined_at),
+            Box::new(PlaybackComponent::from_log(id, recorded, &car.name)),
         )?;
+        if let Some(left_at) = car.left_at {
+            conductor.remove_component(LeaveMetadata::at(car.name.as_str(), left_at))?;
+        }
     }
 
     // Return the size of the scene that was rebuilt.
-    Ok(actor_names.len())
+    Ok(cars.len())
 }
 
-/// The traffic actors a recorded run contained, in the order they joined.
+/// A traffic car a recorded run contained, and when it joined and left.
+struct RecordedCar {
+    name: String,
+    joined_at: SimTime,
+    /// When it left, or `None` if it was still there when the run ended.
+    left_at: Option<SimTime>,
+}
+
+/// The traffic cars a recorded run contained, in the order they joined.
 ///
-/// Cars are composites, so their join paths have a parent
-/// (`traffic7/physics`); the spawner is a world-level leaf and has none,
-/// which separates it here without matching on names.
-fn recorded_traffic_actor_names(recorded: &EventLog) -> Vec<String> {
-    let mut actor_names: Vec<String> = Vec::new();
+/// A car is named by the first segment of its components' paths
+/// (`traffic7/physics`). Its components all join and leave together, so
+/// the first of each gives the car's instants. The spawner's path has
+/// no `/`, so it is skipped, and the ego is skipped by name.
+fn recorded_traffic_cars(recorded: &EventLog) -> Vec<RecordedCar> {
+    let mut cars: Vec<RecordedCar> = Vec::new();
     for event in &recorded.events {
-        let LogEvent::Join(join) = event else {
-            continue;
-        };
-        let Some((actor_name, _)) = join.path.split_once('/') else {
-            continue;
-        };
-        if actor_name != EGO_NAME && !actor_names.iter().any(|seen| seen == actor_name) {
-            actor_names.push(actor_name.to_string());
+        match event {
+            LogEvent::Join(join) => {
+                let Some((name, _)) = join.path.split_once('/') else {
+                    continue;
+                };
+                if name != EGO_NAME && !cars.iter().any(|car| car.name == name) {
+                    cars.push(RecordedCar {
+                        name: name.to_string(),
+                        joined_at: join.first_due,
+                        left_at: None,
+                    });
+                }
+            }
+            LogEvent::Leave(leave) => {
+                let Some((name, _)) = leave.path.split_once('/') else {
+                    continue;
+                };
+                if let Some(car) = cars.iter_mut().find(|car| car.name == name) {
+                    car.left_at.get_or_insert(leave.leaves_at);
+                }
+            }
+            _ => {}
         }
     }
 
     // Return each car once, first join first.
-    actor_names
+    cars
 }
 
-/// What the live scenario needs from outside the sim: the spawner's
-/// requests turned into cars, every car watched for collisions, and the
-/// run's console output.
+/// Handles a traffic scenario from outside the sim: turns the spawner's
+/// requests into cars, watches every car for collisions, and prints the
+/// run's console output. A playback scenario has no spawner, so it has no
+/// requests.
 #[derive(Clone)]
-pub struct LiveTrafficHandler {
+pub struct TrafficHandler {
     /// Requests collected since the last [`Self::apply_traffic_requests`],
     /// in publish order.
     pending_requests: Arc<Mutex<Vec<TrafficRequest>>>,
@@ -569,9 +595,9 @@ pub struct LiveTrafficHandler {
     console_output: Arc<Mutex<ConsoleOutput>>,
 }
 
-impl Default for LiveTrafficHandler {
+impl Default for TrafficHandler {
     fn default() -> Self {
-        LiveTrafficHandler {
+        TrafficHandler {
             pending_requests: Arc::default(),
             unreadable_request: Arc::default(),
             collision_monitor: CollisionMonitor::new(WORLD_NAME, EGO_NAME),
@@ -618,7 +644,7 @@ enum TrafficRequest {
     Despawn(DespawnTrafficRequest),
 }
 
-impl LiveTrafficHandler {
+impl TrafficHandler {
     /// A `MonitorTransport` callback feeding every message to the traffic
     /// requests, the collision monitor, and the console output.
     pub fn message_callback(&self) -> impl FnMut(&Message) + Send + 'static {
@@ -651,6 +677,27 @@ impl LiveTrafficHandler {
     /// The collision monitor.
     pub fn collision_monitor(&self) -> &CollisionMonitor {
         &self.collision_monitor
+    }
+
+    /// Handles the step just taken: its collisions, its console output and
+    /// its traffic requests. Fails on a collision involving the ego.
+    fn process_step<T: Transport>(
+        &self,
+        conductor: &mut Conductor<T>,
+    ) -> Result<(), ScenarioError> {
+        // Before printing, so the output includes the collisions.
+        let collision_check = self.process_collisions(conductor);
+        // Before halting, so the output shows what led up to it.
+        self.print_console_output();
+        match collision_check {
+            Ok(()) => {}
+            Err(halt) => return Err(halt),
+        }
+
+        // Return the result of applying the traffic requests. They go last,
+        // since a car they remove leaves the collision monitor at once and
+        // its collision would go unchecked.
+        self.apply_traffic_requests(conductor)
     }
 
     /// The part of [`Self::message_callback`] that notes each actor's
@@ -857,8 +904,8 @@ impl LiveTrafficHandler {
     ///
     /// Private on purpose: a loop that stepped the conductor without
     /// calling this would run a different world from the recorded one, so
-    /// the only way to drive this scenario is
-    /// [`run_live_traffic_scenario`], which cannot forget.
+    /// the only way to drive a traffic scenario is
+    /// [`run_live_traffic_scenario`] or [`run_playback_traffic_scenario`].
     fn apply_traffic_requests<T: Transport>(
         &self,
         conductor: &mut Conductor<T>,
@@ -935,7 +982,7 @@ impl LiveTrafficHandler {
 // milestone 7 a host plays exactly this part for remote components.
 pub fn run_live_traffic_scenario<T: Transport>(
     conductor: &mut Conductor<T>,
-    live_traffic_handler: &LiveTrafficHandler,
+    traffic_handler: &TrafficHandler,
     end: SimTime,
     verifier: Option<&Verifier>,
 ) -> Result<(), ScenarioError> {
@@ -948,41 +995,35 @@ pub fn run_live_traffic_scenario<T: Transport>(
             .is_some_and(|instant| instant <= end)
     {
         conductor.step_once()?;
-        // Collisions are checked before printing, which shows the ones this
-        // queues, and before applying the traffic requests, since a car they
-        // retire leaves the collision monitor at once and its collision would
-        // go unchecked.
-        let collision_check = live_traffic_handler.process_collisions(conductor);
-        live_traffic_handler.print_console_output();
-        match collision_check {
-            Ok(()) => {}
-            Err(halt) => return Err(halt),
-        }
-        live_traffic_handler.apply_traffic_requests(conductor)?;
+        traffic_handler.process_step(conductor)?;
     }
 
     // Return once nothing remains scheduled at or before `end`.
     Ok(())
 }
 
-/// Runs a playback world to `end`.
+/// Runs a playback world to `end`, stopping at the first collision
+/// involving the ego. The playback counterpart to
+/// [`run_live_traffic_scenario`].
 ///
-/// The counterpart to [`run_live_traffic_scenario`], and the contrast is
-/// the whole content of it: there is nothing to apply between ticks,
-/// because nothing in this world asks for anything. Recorded cars are
-/// already a schedule, since each double knows every instant it publishes
-/// at before the run starts, so the conductor only has to follow it.
-///
-/// Which is why this needs no request handler and no verifier: with no
-/// decisions being made there is nothing that could be made differently,
-/// and a divergence would have to come from the ego alone. Comparing that
-/// against the log is the *opposite* of what a what-if wants.
+/// The recorded cars cannot react to the ego, so a what-if varies the ego
+/// alone and watches for its collisions. It takes no verifier, since a
+/// what-if is meant to differ from the recording.
 pub fn run_playback_traffic_scenario<T: Transport>(
     conductor: &mut Conductor<T>,
+    traffic_handler: &TrafficHandler,
     end: SimTime,
-) -> Result<(), ConductorError> {
+) -> Result<(), ScenarioError> {
+    while conductor
+        .next_due_instant()
+        .is_some_and(|instant| instant <= end)
+    {
+        conductor.step_once()?;
+        traffic_handler.process_step(conductor)?;
+    }
+
     // Return once the recorded schedule has been played out to `end`.
-    conductor.run_until(end)
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1009,11 +1050,8 @@ mod tests {
 
     /// The lines queued for the console, each as its description, its
     /// position along the road, and its pose's sim time.
-    fn queued_lines(live_traffic_handler: &LiveTrafficHandler) -> Vec<(&'static str, f64, f64)> {
-        let console_output = live_traffic_handler
-            .console_output
-            .lock()
-            .expect("not poisoned");
+    fn queued_lines(traffic_handler: &TrafficHandler) -> Vec<(&'static str, f64, f64)> {
+        let console_output = traffic_handler.console_output.lock().expect("not poisoned");
 
         // Return the actor lines; nothing here collides.
         console_output
@@ -1032,9 +1070,9 @@ mod tests {
 
     #[test]
     fn a_car_is_printed_joining_with_its_first_pose_and_leaving_once_with_its_last() {
-        let live_traffic_handler = LiveTrafficHandler::default();
-        let mut on_message = live_traffic_handler.message_callback();
-        let mut on_membership = live_traffic_handler.membership_callback();
+        let traffic_handler = TrafficHandler::default();
+        let mut on_message = traffic_handler.message_callback();
+        let mut on_membership = traffic_handler.membership_callback();
         // A car's components join and leave one after another.
         let leaves = ["radar", "controller", "physics"];
         for leaf in leaves {
@@ -1054,20 +1092,20 @@ mod tests {
 
         // The leaving line prints its last pose, published at 1.1 s.
         assert_eq!(
-            queued_lines(&live_traffic_handler),
+            queued_lines(&traffic_handler),
             [("joined", 10.0, 1.0), ("left", 12.0, 1.1)]
         );
     }
 
     #[test]
     fn a_pose_before_any_join_prints_one_warning() {
-        let live_traffic_handler = LiveTrafficHandler::default();
-        let mut on_message = live_traffic_handler.message_callback();
+        let traffic_handler = TrafficHandler::default();
+        let mut on_message = traffic_handler.message_callback();
         on_message(&pose_message("stranger", 5.0, 1.0));
         on_message(&pose_message("stranger", 6.0, 1.1));
 
         assert_eq!(
-            queued_lines(&live_traffic_handler),
+            queued_lines(&traffic_handler),
             [("pose before join", 5.0, 1.0)]
         );
     }

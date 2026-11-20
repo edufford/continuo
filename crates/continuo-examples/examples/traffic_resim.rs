@@ -21,8 +21,8 @@
 
 use continuo_conductor::{Conductor, EventLog};
 use continuo_core::SimTime;
-use continuo_examples::traffic_world;
-use continuo_transport::InProcTransport;
+use continuo_examples::traffic_world::{self, TrafficHandler};
+use continuo_transport::{InProcTransport, MonitorTransport};
 
 /// The what-if: an ego holding 36 m/s against traffic recorded while it held
 /// 30, so it reaches the same cars sooner and overtakes more of them.
@@ -36,15 +36,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok_or("usage: traffic_resim <file>")?;
     let log = EventLog::read_file(&file)?;
 
+    let traffic_handler = TrafficHandler::default();
+    let mut transport = MonitorTransport::new(InProcTransport::new());
+    transport.add_message_callback(traffic_handler.message_callback());
+    let mut conductor = Conductor::new(traffic_world::config(), transport)?;
+    conductor.add_membership_callback(traffic_handler.membership_callback());
     // The speed is the only thing this run varies; the setup holds the rest
     // at the recorded scenario's values, which is what makes the comparison
     // mean something.
-    let mut conductor = Conductor::new(traffic_world::config(), InProcTransport::new())?;
     let num_cars =
         traffic_world::setup_playback_traffic_scenario(&mut conductor, &log, WHAT_IF_EGO_SPEED)?;
 
     traffic_world::run_playback_traffic_scenario(
         &mut conductor,
+        &traffic_handler,
         SimTime::from_secs(traffic_world::SIM_SECONDS),
     )?;
 
