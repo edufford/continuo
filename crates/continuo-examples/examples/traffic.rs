@@ -8,19 +8,17 @@
 
 use continuo_conductor::Conductor;
 use continuo_core::SimTime;
-use continuo_examples::traffic_world::{self, TrafficRequestHandler, WorldMonitor};
+use continuo_examples::traffic_world::{self, TrafficHandler};
 use continuo_transport::{InProcTransport, MonitorTransport};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     continuo_examples::init_logging();
 
-    let traffic_request_handler = TrafficRequestHandler::default();
-    let world_monitor = WorldMonitor::default();
+    let traffic_handler = TrafficHandler::default();
     let mut transport = MonitorTransport::new(InProcTransport::new());
-    transport.add_message_callback(traffic_request_handler.message_callback());
-    transport.add_message_callback(world_monitor.message_callback());
+    transport.add_message_callback(traffic_handler.message_callback());
     let mut conductor = Conductor::new(traffic_world::config(), transport)?;
-    conductor.add_membership_callback(world_monitor.membership_callback());
+    conductor.add_membership_callback(traffic_handler.membership_callback());
     traffic_world::setup_live_traffic_scenario(&mut conductor)?;
 
     // Wall time is fine to read here: the example's main is outside the
@@ -28,8 +26,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let started = std::time::Instant::now();
     traffic_world::run_live_traffic_scenario(
         &mut conductor,
-        &traffic_request_handler,
-        &world_monitor,
+        &traffic_handler,
         SimTime::from_secs(traffic_world::SIM_SECONDS),
         None,
     )?;

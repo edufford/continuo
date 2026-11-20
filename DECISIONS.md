@@ -1636,24 +1636,21 @@ it got there, including the roads not taken.
   - Rejected: printing from the collision monitor, which would mix
     console output into collision checking; and inferring joins and
     leaves from which poses arrive, when membership callbacks report them.
-- **2026-11-19**: **The live handler splits into a `TrafficRequestHandler`
-  and a `WorldMonitor`.** `LiveTrafficHandler` did two kinds of work: it
-  turned the spawner's requests into cars, which changes the world, and it
-  checked for collisions and printed the console output, which only
-  watches it. A monitor never feeds anything back, so the watching half is
-  `WorldMonitor` and the acting half is `TrafficRequestHandler`, its name
-  from before the collision monitor joined it. The live run loop takes
-  both, and a run with no spawner, such as a playback, can take the
-  monitor alone. The world hash does not move.
-  - Rejected: one handler holding a `WorldMonitor`, which would keep the
-    live wiring to one value but hide which part acts on the world.
 - **2026-11-19**: **Playback doubles join and leave when their originals
-  did, and a resim run is watched by a `WorldMonitor`.** Every double was
-  registered at the start and none ever left, so a resim world's
-  membership did not match its recording, and nothing following
+  did, and a resim run is watched by the live run's handler.** Every
+  double was registered at the start and none ever left, so a resim
+  world's membership did not match its recording, and nothing following
   membership could follow the cars. Each double now joins at its
   original's first logged join and leaves at its first logged leave, both
   queued at setup, which the conductor applies at their own instants. The
-  playback run loop drives a `WorldMonitor`, so a what-if run checks the
+  playback run loop drives the same handler as the live one, renamed from
+  `LiveTrafficHandler` to `TrafficHandler`, so a what-if run checks the
   ego for collisions with traffic that cannot react to it, and prints the
-  same joining and leaving lines as the live run.
+  same joining and leaving lines as the live run. A playback world has no
+  spawner, so its handler finds no requests to apply. The world hash does
+  not move.
+  - Rejected: splitting the handler into a `TrafficRequestHandler` that
+    acts on the world and a `WorldMonitor` that only watches it. The
+    monitoring may need to act on the sim later too, and the split
+    redesigned more than resim needs, where a rename lets the one handler
+    serve both scenarios.

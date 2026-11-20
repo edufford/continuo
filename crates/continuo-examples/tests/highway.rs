@@ -15,30 +15,27 @@ use continuo_conductor::{
 use std::collections::BTreeMap;
 
 use continuo_core::{ComponentPath, SimTime};
-use continuo_examples::traffic_world::{self, TrafficRequestHandler, WorldMonitor};
+use continuo_examples::traffic_world::{self, TrafficHandler};
 use continuo_transport::{InProcTransport, MonitorTransport};
 
 /// Runs the demo world for `seconds`, returning its recorded log.
 fn record_highway(seconds: i64) -> EventLog {
     let config = traffic_world::config();
     let recorder = Recorder::new(&config);
-    let traffic_request_handler = TrafficRequestHandler::default();
-    let world_monitor = WorldMonitor::default();
+    let traffic_handler = TrafficHandler::default();
     let mut transport = MonitorTransport::new(InProcTransport::new());
     transport.add_message_callback(recorder.message_callback());
-    transport.add_message_callback(traffic_request_handler.message_callback());
-    transport.add_message_callback(world_monitor.message_callback());
+    transport.add_message_callback(traffic_handler.message_callback());
     let mut conductor =
         Conductor::new(config, transport).expect("free-run config is always accepted");
     conductor.add_tick_callback(recorder.tick_callback());
     conductor.add_membership_callback(recorder.membership_callback());
-    conductor.add_membership_callback(world_monitor.membership_callback());
+    conductor.add_membership_callback(traffic_handler.membership_callback());
     conductor.add_observation_callback(recorder.observation_callback());
     traffic_world::setup_live_traffic_scenario(&mut conductor).expect("the world builds");
     traffic_world::run_live_traffic_scenario(
         &mut conductor,
-        &traffic_request_handler,
-        &world_monitor,
+        &traffic_handler,
         SimTime::from_secs(seconds),
         None,
     )
@@ -177,18 +174,18 @@ fn playback_doubles_join_and_leave_when_their_originals_did() {
 
     let config = traffic_world::config();
     let recorder = Recorder::new(&config);
-    let world_monitor = WorldMonitor::default();
+    let traffic_handler = TrafficHandler::default();
     let mut transport = MonitorTransport::new(InProcTransport::new());
-    transport.add_message_callback(world_monitor.message_callback());
+    transport.add_message_callback(traffic_handler.message_callback());
     let mut conductor =
         Conductor::new(config, transport).expect("free-run config is always accepted");
     conductor.add_membership_callback(recorder.membership_callback());
-    conductor.add_membership_callback(world_monitor.membership_callback());
+    conductor.add_membership_callback(traffic_handler.membership_callback());
     traffic_world::setup_playback_traffic_scenario(&mut conductor, &recorded, 30.0)
         .expect("the playback world builds");
     traffic_world::run_playback_traffic_scenario(
         &mut conductor,
-        &world_monitor,
+        &traffic_handler,
         SimTime::from_secs(traffic_world::SIM_SECONDS),
     )
     .expect("the playback run completes");
@@ -285,23 +282,20 @@ fn the_demo_world_hashes_to_the_same_value_on_every_platform() {
 fn verify_highway(recorded: EventLog, seconds: i64) -> (SimTime, Result<usize, Divergence>) {
     let config = traffic_world::config();
     let verifier = Verifier::new(recorded, &config);
-    let traffic_request_handler = TrafficRequestHandler::default();
-    let world_monitor = WorldMonitor::default();
+    let traffic_handler = TrafficHandler::default();
     let mut transport = MonitorTransport::new(InProcTransport::new());
     transport.add_message_callback(verifier.message_callback());
-    transport.add_message_callback(traffic_request_handler.message_callback());
-    transport.add_message_callback(world_monitor.message_callback());
+    transport.add_message_callback(traffic_handler.message_callback());
     let mut conductor =
         Conductor::new(config, transport).expect("free-run config is always accepted");
     conductor.add_tick_callback(verifier.tick_callback());
     conductor.add_membership_callback(verifier.membership_callback());
-    conductor.add_membership_callback(world_monitor.membership_callback());
+    conductor.add_membership_callback(traffic_handler.membership_callback());
     traffic_world::setup_live_traffic_scenario(&mut conductor).expect("the world builds");
 
     traffic_world::run_live_traffic_scenario(
         &mut conductor,
-        &traffic_request_handler,
-        &world_monitor,
+        &traffic_handler,
         SimTime::from_secs(seconds),
         Some(&verifier),
     )

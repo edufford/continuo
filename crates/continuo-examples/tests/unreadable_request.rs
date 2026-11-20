@@ -5,15 +5,15 @@
 //! error to, so the `?` that covers every other site cannot reach them.
 //!
 //! What they get instead is the next place that *does* have somewhere to
-//! return to: `TrafficRequestHandler::apply_traffic_requests` runs between
-//! ticks and already reports to the scenario loop. A request that cannot be
-//! read is a car that never arrives or never leaves, which changes the run in
-//! silence, so it is worth the same halt as any other unreadable payload.
+//! return to: `TrafficHandler::apply_traffic_requests` runs between ticks and
+//! already reports to the scenario loop. A request that cannot be read is a
+//! car that never arrives or never leaves, which changes the run in silence,
+//! so it is worth the same halt as any other unreadable payload.
 
 use continuo_actors::traffic_spawn_key;
 use continuo_conductor::{Conductor, WORLD_LEVEL};
 use continuo_core::{Component, ComponentId, CoreError, KeyExpr, SimDuration, SimTime, StepCtx};
-use continuo_examples::traffic_world::{self, TrafficRequestHandler, WorldMonitor};
+use continuo_examples::traffic_world::{self, TrafficHandler};
 use continuo_transport::{InProcTransport, MonitorTransport};
 
 /// Publishes one request the handler cannot decode, on a key it does read.
@@ -51,14 +51,12 @@ impl Component for Saboteur {
 
 /// Runs two seconds of the demo, with or without the saboteur in the world.
 fn run_demo(sabotaged: bool) -> Result<(), traffic_world::ScenarioError> {
-    let traffic_request_handler = TrafficRequestHandler::default();
-    let world_monitor = WorldMonitor::default();
+    let traffic_handler = TrafficHandler::default();
     let mut transport = MonitorTransport::new(InProcTransport::new());
-    transport.add_message_callback(traffic_request_handler.message_callback());
-    transport.add_message_callback(world_monitor.message_callback());
+    transport.add_message_callback(traffic_handler.message_callback());
     let mut conductor = Conductor::new(traffic_world::config(), transport)
         .expect("free-run config is always accepted");
-    conductor.add_membership_callback(world_monitor.membership_callback());
+    conductor.add_membership_callback(traffic_handler.membership_callback());
     traffic_world::setup_live_traffic_scenario(&mut conductor).expect("the world builds");
     if sabotaged {
         conductor
@@ -69,8 +67,7 @@ fn run_demo(sabotaged: bool) -> Result<(), traffic_world::ScenarioError> {
     // Return whether the scenario ran its course.
     traffic_world::run_live_traffic_scenario(
         &mut conductor,
-        &traffic_request_handler,
-        &world_monitor,
+        &traffic_handler,
         SimTime::from_secs(2),
         None,
     )
