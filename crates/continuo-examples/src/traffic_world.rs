@@ -571,10 +571,10 @@ fn recorded_traffic_actors(recorded: &EventLog) -> Vec<RecordedActor> {
     actors
 }
 
-/// What a traffic scenario needs from outside the sim: the spawner's
-/// requests turned into cars, every car watched for collisions, and the
-/// run's console output. A playback scenario has no spawner, so its
-/// handler finds no requests to apply.
+/// Handles a traffic scenario from outside the sim: turns the spawner's
+/// requests into cars, watches every car for collisions, and prints the
+/// run's console output. A playback scenario has no spawner, so it has no
+/// requests.
 #[derive(Clone)]
 pub struct TrafficHandler {
     /// Requests collected since the last [`Self::apply_traffic_requests`],
@@ -679,26 +679,24 @@ impl TrafficHandler {
         &self.collision_monitor
     }
 
-    /// Handles what the step just taken did: records and prints its
-    /// collisions, halting on one involving the ego, then applies its
-    /// traffic requests.
-    ///
-    /// Collisions are checked before printing, which shows the ones this
-    /// queues, and before applying the traffic requests, since a car they
-    /// retire leaves the collision monitor at once and its collision would
-    /// go unchecked.
+    /// Handles the step just taken: its collisions, its console output and
+    /// its traffic requests. Fails on a collision involving the ego.
     fn process_step<T: Transport>(
         &self,
         conductor: &mut Conductor<T>,
     ) -> Result<(), ScenarioError> {
+        // Before printing, so the output includes the collisions.
         let collision_check = self.process_collisions(conductor);
+        // Before halting, so the output shows what led up to it.
         self.print_console_output();
         match collision_check {
             Ok(()) => {}
             Err(halt) => return Err(halt),
         }
 
-        // Return once the traffic requests are applied.
+        // Return the result of applying the traffic requests. They go last,
+        // since a car they remove leaves the collision monitor at once and
+        // its collision would go unchecked.
         self.apply_traffic_requests(conductor)
     }
 
@@ -907,8 +905,7 @@ impl TrafficHandler {
     /// Private on purpose: a loop that stepped the conductor without
     /// calling this would run a different world from the recorded one, so
     /// the only way to drive a traffic scenario is
-    /// [`run_live_traffic_scenario`] or [`run_playback_traffic_scenario`],
-    /// which cannot forget.
+    /// [`run_live_traffic_scenario`] or [`run_playback_traffic_scenario`].
     fn apply_traffic_requests<T: Transport>(
         &self,
         conductor: &mut Conductor<T>,
