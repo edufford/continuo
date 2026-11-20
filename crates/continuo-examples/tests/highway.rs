@@ -12,7 +12,7 @@ use continuo_conductor::record::LogEvent;
 use continuo_conductor::{
     Conductor, Divergence, EventLog, RecordedObservation, Recorder, Verifier,
 };
-use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 
 use continuo_core::{ComponentPath, SimTime};
 use continuo_examples::traffic_world::{self, TrafficHandler};
@@ -137,51 +137,50 @@ fn following_actually_engages_somewhere() {
     );
 }
 
-/// When each traffic car in a log first joined and first left, keyed by
-/// the actor its components belong to.
-fn traffic_membership(log: &EventLog) -> BTreeMap<String, (SimTime, Option<SimTime>)> {
-    let mut membership: BTreeMap<String, (SimTime, Option<SimTime>)> = BTreeMap::new();
+/// Every traffic car's joins and leaves in a log, with their instants. A
+/// car's components join and leave together, so the set holds one of each
+/// per car.
+fn traffic_membership(log: &EventLog) -> BTreeSet<(String, &'static str, SimTime)> {
     let actor_of = |path: &str| {
         let path = ComponentPath::parse(path).expect("a recorded path is valid");
         path.actor()
             .expect("a recorded path has an actor")
             .to_string()
     };
-    for event in &log.events {
-        match event {
-            LogEvent::Join(join) => {
-                let actor = actor_of(&join.path);
-                if actor.starts_with("traffic") && actor != "traffic_spawner" {
-                    membership.entry(actor).or_insert((join.first_due, None));
-                }
-            }
-            LogEvent::Leave(leave) => {
-                if let Some((_, left_at)) = membership.get_mut(&actor_of(&leave.path)) {
-                    left_at.get_or_insert(leave.leaves_at);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    // Return each car's first join and first leave.
-    membership
+    log.events
+        .iter()
+        .filter_map(|event| match event {
+            LogEvent::Join(join) => Some((actor_of(&join.path), "joined", join.first_due)),
+            LogEvent::Leave(leave) => Some((actor_of(&leave.path), "left", leave.leaves_at)),
+            _ => None,
+        })
+        .filter(|(actor, _, _)| actor.starts_with("traffic") && actor != "traffic_spawner")
+        .collect()
 }
 
 #[test]
 fn playback_doubles_join_and_leave_when_their_originals_did() {
-    let recorded = record_highway(traffic_world::SIM_SECONDS);
+    let live_run_log = record_highway(traffic_world::SIM_SECONDS);
+    // Without a leave in the live run, the comparison could not catch a
+    // double that never leaves. A car leaves only after joining, so there
+    // are joins to compare too.
+    assert!(
+        traffic_membership(&live_run_log)
+            .iter()
+            .any(|(_, change, _)| *change == "left"),
+        "some traffic left during the live run"
+    );
 
     let config = traffic_world::config();
-    let recorder = Recorder::new(&config);
+    let playback_recorder = Recorder::new(&config);
     let traffic_handler = TrafficHandler::default();
     let mut transport = MonitorTransport::new(InProcTransport::new());
     transport.add_message_callback(traffic_handler.message_callback());
     let mut conductor =
         Conductor::new(config, transport).expect("free-run config is always accepted");
-    conductor.add_membership_callback(recorder.membership_callback());
+    conductor.add_membership_callback(playback_recorder.membership_callback());
     conductor.add_membership_callback(traffic_handler.membership_callback());
-    traffic_world::setup_playback_traffic_scenario(&mut conductor, &recorded, 30.0)
+    traffic_world::setup_playback_traffic_scenario(&mut conductor, &live_run_log, 30.0)
         .expect("the playback world builds");
     traffic_world::run_playback_traffic_scenario(
         &mut conductor,
@@ -190,12 +189,11 @@ fn playback_doubles_join_and_leave_when_their_originals_did() {
     )
     .expect("the playback run completes");
 
-    let original = traffic_membership(&recorded);
-    assert!(
-        original.values().any(|(_, left_at)| left_at.is_some()),
-        "some traffic left during the recorded run"
+    let playback_log = playback_recorder.finish();
+    assert_eq!(
+        traffic_membership(&playback_log),
+        traffic_membership(&live_run_log)
     );
-    assert_eq!(traffic_membership(&recorder.finish()), original);
 }
 
 #[test]
