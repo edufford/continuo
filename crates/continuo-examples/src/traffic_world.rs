@@ -1002,20 +1002,13 @@ pub fn run_live_traffic_scenario<T: Transport>(
     Ok(())
 }
 
-/// Runs a playback world to `end`, watched by `traffic_handler`, and
-/// stopping at the first collision involving the ego.
+/// Runs a playback world to `end`, stopping at the first collision
+/// involving the ego. The playback counterpart to
+/// [`run_live_traffic_scenario`].
 ///
-/// The counterpart to [`run_live_traffic_scenario`], and the contrast is
-/// the whole content of it: the handler finds no traffic requests to apply
-/// between ticks, because nothing in this world asks for anything. Recorded
-/// cars are already a schedule, joining, publishing and leaving at instants
-/// known before the run starts, so the conductor only has to follow it.
-///
-/// Which is why this needs no verifier: with no decisions being made there is nothing that could be made differently,
-/// and a divergence would have to come from the ego alone. Comparing that
-/// against the log is the *opposite* of what a what-if wants. Watching for
-/// collisions is what a what-if does want, since the replayed traffic
-/// cannot react to a changed ego.
+/// The recorded cars cannot react to the ego, so a what-if varies the ego
+/// alone and watches for its collisions. It takes no verifier, since a
+/// what-if is meant to differ from the recording.
 pub fn run_playback_traffic_scenario<T: Transport>(
     conductor: &mut Conductor<T>,
     traffic_handler: &TrafficHandler,
