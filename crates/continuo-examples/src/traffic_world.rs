@@ -509,24 +509,24 @@ pub fn setup_playback_traffic_scenario<T: Transport>(
 
     // Each double joins and leaves at the instants its original did, both
     // queued now, so the world's membership matches the recording.
-    let actors = recorded_traffic_actors(recorded);
-    for actor in &actors {
-        let id = ComponentId::new(actor.name.as_str()).expect("a recorded path segment is an id");
+    let cars = recorded_traffic_cars(recorded);
+    for car in &cars {
+        let id = ComponentId::new(car.name.as_str()).expect("a recorded path segment is an id");
         conductor.add_component(
-            JoinMetadata::at(WORLD_LEVEL, actor.joined_at),
-            Box::new(PlaybackComponent::from_log(id, recorded, &actor.name)),
+            JoinMetadata::at(WORLD_LEVEL, car.joined_at),
+            Box::new(PlaybackComponent::from_log(id, recorded, &car.name)),
         )?;
-        if let Some(left_at) = actor.left_at {
-            conductor.remove_component(LeaveMetadata::at(actor.name.as_str(), left_at))?;
+        if let Some(left_at) = car.left_at {
+            conductor.remove_component(LeaveMetadata::at(car.name.as_str(), left_at))?;
         }
     }
 
     // Return the size of the scene that was rebuilt.
-    Ok(actors.len())
+    Ok(cars.len())
 }
 
-/// A traffic actor a recorded run contained, and when it joined and left.
-struct RecordedActor {
+/// A traffic car a recorded run contained, and when it joined and left.
+struct RecordedCar {
     name: String,
     joined_at: SimTime,
     /// When it left, or `None` if it was still there when the run ended.
@@ -539,16 +539,16 @@ struct RecordedActor {
 /// (`traffic7/physics`). Its components all join and leave together, so
 /// the first of each gives the car's instants. The spawner's path has
 /// no `/`, so it is skipped, and the ego is skipped by name.
-fn recorded_traffic_actors(recorded: &EventLog) -> Vec<RecordedActor> {
-    let mut actors: Vec<RecordedActor> = Vec::new();
+fn recorded_traffic_cars(recorded: &EventLog) -> Vec<RecordedCar> {
+    let mut cars: Vec<RecordedCar> = Vec::new();
     for event in &recorded.events {
         match event {
             LogEvent::Join(join) => {
                 let Some((name, _)) = join.path.split_once('/') else {
                     continue;
                 };
-                if name != EGO_NAME && !actors.iter().any(|actor| actor.name == name) {
-                    actors.push(RecordedActor {
+                if name != EGO_NAME && !cars.iter().any(|car| car.name == name) {
+                    cars.push(RecordedCar {
                         name: name.to_string(),
                         joined_at: join.first_due,
                         left_at: None,
@@ -559,8 +559,8 @@ fn recorded_traffic_actors(recorded: &EventLog) -> Vec<RecordedActor> {
                 let Some((name, _)) = leave.path.split_once('/') else {
                     continue;
                 };
-                if let Some(actor) = actors.iter_mut().find(|actor| actor.name == name) {
-                    actor.left_at.get_or_insert(leave.leaves_at);
+                if let Some(car) = cars.iter_mut().find(|car| car.name == name) {
+                    car.left_at.get_or_insert(leave.leaves_at);
                 }
             }
             _ => {}
@@ -568,7 +568,7 @@ fn recorded_traffic_actors(recorded: &EventLog) -> Vec<RecordedActor> {
     }
 
     // Return each car once, first join first.
-    actors
+    cars
 }
 
 /// Handles a traffic scenario from outside the sim: turns the spawner's
