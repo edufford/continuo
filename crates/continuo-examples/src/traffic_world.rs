@@ -412,9 +412,9 @@ fn add_spawner<T: Transport>(conductor: &mut Conductor<T>) -> Result<(), Conduct
 }
 
 /// Registers the live scenario's fixed cast: the ego and the spawner that
-/// manages traffic around it. Every car arrives later,
-/// while the run is under way, so this is the whole world only at sim time
-/// zero, and [`run_live_traffic_scenario`] is what builds the rest of it.
+/// manages traffic around it. Every car arrives later, while the run is
+/// under way, so this is the whole world only at sim time zero, and
+/// [`run_live_traffic_scenario`] is what builds the rest of it.
 ///
 /// *Live* because the traffic is decided as the run happens. `traffic_resim`
 /// assembles the other kind by hand: the same ego, but no spawner, and

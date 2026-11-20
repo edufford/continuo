@@ -243,8 +243,8 @@ port of MUSL's, and a `disallowed-methods` entry keeps the platform's own
 out. DECISIONS.md records what that was measured against.
 
 One observer detail worth knowing: an observer inside the world, such as
-the spawner, is a world-level component, so it receives time-T poses
-strictly after T, which is next-step visibility.
+the spawner, is a world-level actor, so it receives time-T poses strictly
+after T, which is next-step visibility.
 
 ### Installing libclang
 

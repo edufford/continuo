@@ -922,9 +922,9 @@ under "Wire format", rather than churning the fingerprint once apiece.
   controller and its physics. A demo run reports 45 joins and 24 leaves
   against 15 actors, which reads as a discrepancy and is not one: fourteen
   traffic cars at three components each and the ego at two, plus the spawner
-  at one, and eight cars retiring. Saying "component
-  joins / leaves" would settle it. The CI smoke asserts those exact labels, so
-  the two move together.
+  at one, and eight cars retiring. Saying "component joins / leaves" would
+  settle it. The CI smoke asserts those exact labels, so the two move
+  together.
 
 - **A native component that follows, so both control laws have a caller on
   each side of the FMI boundary.** The laws live in `continuo-actors` so that
