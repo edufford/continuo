@@ -564,9 +564,9 @@ pub struct LiveTrafficHandler {
     unreadable_request: Arc<Mutex<Option<CoreError>>>,
     /// Every car's pose, watched for contact with another car's.
     collision_monitor: CollisionMonitor,
-    /// Each car's latest pose, and the arrivals and departures not yet
-    /// printed.
-    car_console: Arc<Mutex<CarConsole>>,
+    /// Each actor's latest pose, and the arrivals and departures not yet
+    /// printed to the console.
+    console_output: Arc<Mutex<ConsoleOutput>>,
 }
 
 impl Default for LiveTrafficHandler {
@@ -575,22 +575,22 @@ impl Default for LiveTrafficHandler {
             pending_requests: Arc::default(),
             unreadable_request: Arc::default(),
             collision_monitor: CollisionMonitor::new(WORLD_NAME, EGO_NAME),
-            car_console: Arc::default(),
+            console_output: Arc::default(),
         }
     }
 }
 
-/// Each car's latest pose, and the arrivals and departures not yet printed
-/// to the console, in the order they happened.
+/// Each actor's latest pose, and the arrivals and departures not yet
+/// printed to the console, in the order they happened.
 #[derive(Default)]
-struct CarConsole {
+struct ConsoleOutput {
     latest_poses: BTreeMap<String, (SimTime, Pose)>,
-    unprinted: Vec<CarChange>,
+    unprinted: Vec<ActorChange>,
 }
 
-/// A car joining or leaving, and its pose then: the first one it
+/// An actor joining or leaving, and its pose then: the first one it
 /// published, or the last.
-struct CarChange {
+struct ActorChange {
     verb: &'static str,
     actor: String,
     sim_time: SimTime,
@@ -607,17 +607,46 @@ impl LiveTrafficHandler {
     /// A `MonitorTransport` callback that picks the spawner's requests and
     /// every car's pose out of the traffic.
     pub fn message_callback(&self) -> impl FnMut(&Message) + Send + 'static {
-        let mut collect_requests = self.request_callback();
-        let mut collect_poses = self.collision_monitor.message_callback();
-        let car_console = self.car_console.clone();
+        let mut traffic_requests_on_message = self.traffic_request_message_callback();
+        let mut collision_monitor_on_message = self.collision_monitor.message_callback();
+        let mut console_output_on_message = self.console_output_message_callback();
+
+        // Return one callback feeding the traffic requests, the collision
+        // monitor, and the console output.
+        move |message: &Message| {
+            traffic_requests_on_message(message);
+            collision_monitor_on_message(message);
+            console_output_on_message(message);
+        }
+    }
+
+    /// A membership callback that tells the collision monitor and the
+    /// console output when an actor leaves.
+    pub fn membership_callback(&self) -> impl FnMut(&MembershipChange) + Send + 'static {
+        let mut collision_monitor_on_membership = self.collision_monitor.membership_callback();
+        let mut console_output_on_membership = self.console_output_membership_callback();
+
+        // Return one callback feeding both.
+        move |change: &MembershipChange| {
+            collision_monitor_on_membership(change);
+            console_output_on_membership(change);
+        }
+    }
+
+    /// The collision monitor.
+    pub fn collision_monitor(&self) -> &CollisionMonitor {
+        &self.collision_monitor
+    }
+
+    /// The part of [`Self::message_callback`] that notes each actor's
+    /// latest pose, and its first as the one it joined with.
+    fn console_output_message_callback(&self) -> impl FnMut(&Message) + Send + 'static {
+        let console_output = self.console_output.clone();
         let pose_key_pattern =
             KeyExpr::new_rooted(format!("{WORLD_NAME}/actor/*/pose")).expect("valid pose key");
 
-        // Return one callback feeding the requests, the collision monitor,
-        // and the car console.
+        // Return the noting callback, holding its own handles.
         move |message: &Message| {
-            collect_requests(message);
-            collect_poses(message);
             // A pose that cannot be read is the collision monitor's to report.
             if !pose_key_pattern.matches(&message.key) {
                 return;
@@ -626,33 +655,31 @@ impl LiveTrafficHandler {
                 return;
             };
             let actor = actor_of_pose_key(message.key.as_str()).to_string();
-            let mut car_console = car_console
+            let mut console_output = console_output
                 .lock()
-                .expect("car console mutex is never poisoned");
-            // A car's first pose is the one it joined with.
-            if !car_console.latest_poses.contains_key(&actor) {
-                car_console.unprinted.push(CarChange {
+                .expect("console output mutex is never poisoned");
+            // An actor's first pose is the one it joined with.
+            if !console_output.latest_poses.contains_key(&actor) {
+                console_output.unprinted.push(ActorChange {
                     verb: "joined",
                     actor: actor.clone(),
                     sim_time: message.sim_time,
                     pose,
                 });
             }
-            car_console
+            console_output
                 .latest_poses
                 .insert(actor, (message.sim_time, pose));
         }
     }
 
-    /// A membership callback that tells the collision monitor and the car
-    /// console when a car leaves.
-    pub fn membership_callback(&self) -> impl FnMut(&MembershipChange) + Send + 'static {
-        let mut remove_from_monitor = self.collision_monitor.membership_callback();
-        let car_console = self.car_console.clone();
+    /// The part of [`Self::membership_callback`] that notes an actor
+    /// leaving, with the last pose it published.
+    fn console_output_membership_callback(&self) -> impl FnMut(&MembershipChange) + Send + 'static {
+        let console_output = self.console_output.clone();
 
-        // Return one callback feeding both.
+        // Return the noting callback, holding its own handle.
         move |change: &MembershipChange| {
-            remove_from_monitor(change);
             let MembershipChange::Left(leave) = change else {
                 return;
             };
@@ -660,13 +687,13 @@ impl LiveTrafficHandler {
             let Some(actor) = path.actor() else {
                 return;
             };
-            // The first of a car's components to leave removes the car, so
-            // each car is printed leaving once.
-            let mut car_console = car_console
+            // The first of an actor's components to leave removes it, so
+            // each actor is printed leaving once.
+            let mut console_output = console_output
                 .lock()
-                .expect("car console mutex is never poisoned");
-            if let Some((sim_time, pose)) = car_console.latest_poses.remove(actor.as_str()) {
-                car_console.unprinted.push(CarChange {
+                .expect("console output mutex is never poisoned");
+            if let Some((sim_time, pose)) = console_output.latest_poses.remove(actor.as_str()) {
+                console_output.unprinted.push(ActorChange {
                     verb: "left",
                     actor: actor.to_string(),
                     sim_time,
@@ -676,14 +703,9 @@ impl LiveTrafficHandler {
         }
     }
 
-    /// The collision monitor.
-    pub fn collision_monitor(&self) -> &CollisionMonitor {
-        &self.collision_monitor
-    }
-
-    /// The half of [`Self::message_callback`] that collects the spawner's
+    /// The part of [`Self::message_callback`] that collects the spawner's
     /// requests.
-    fn request_callback(&self) -> impl FnMut(&Message) + Send + 'static {
+    fn traffic_request_message_callback(&self) -> impl FnMut(&Message) + Send + 'static {
         let pending_requests = self.pending_requests.clone();
         let unreadable_request = self.unreadable_request.clone();
         let spawn = traffic_spawn_key(WORLD_NAME);
@@ -725,14 +747,14 @@ impl LiveTrafficHandler {
         }
     }
 
-    /// Prints the cars that joined or left since the last call to the
+    /// Prints the actors that joined or left since the last call to the
     /// console, in the order they did.
-    fn print_car_changes(&self) {
+    fn print_actor_changes(&self) {
         let unprinted = std::mem::take(
             &mut self
-                .car_console
+                .console_output
                 .lock()
-                .expect("car console mutex is never poisoned")
+                .expect("console output mutex is never poisoned")
                 .unprinted,
         );
         for change in unprinted {
@@ -874,7 +896,7 @@ pub fn run_live_traffic_scenario<T: Transport>(
             .is_some_and(|instant| instant <= end)
     {
         conductor.step_once()?;
-        live_traffic_handler.print_car_changes();
+        live_traffic_handler.print_actor_changes();
         // Before the requests, so a collision names the cars it happened
         // among.
         live_traffic_handler.process_collisions(conductor)?;
@@ -942,11 +964,11 @@ mod tests {
             }));
         }
 
-        let car_console = live_traffic_handler
-            .car_console
+        let console_output = live_traffic_handler
+            .console_output
             .lock()
             .expect("not poisoned");
-        let printed: Vec<_> = car_console
+        let printed: Vec<_> = console_output
             .unprinted
             .iter()
             .map(|change| {
@@ -958,6 +980,6 @@ mod tests {
             })
             .collect();
         assert_eq!(printed, [("joined", 1.0, 10.0), ("left", 1.1, 12.0)]);
-        assert!(car_console.latest_poses.is_empty());
+        assert!(console_output.latest_poses.is_empty());
     }
 }
