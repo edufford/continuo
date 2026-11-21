@@ -278,17 +278,14 @@ messages, PR titles and descriptions, console strings.
   heading reading `## Draft notes (deleted before merge)`. Everything above
   that marker is the commit message throughout, and the marker and all
   beneath it are deleted when the PR is marked ready.
-- `pr-description.yml` holds a PR that is out of draft to all three of those,
-  and to a title that fits: no `## Draft notes` heading, no line past 72
-  columns, no code span the wrap has broken, and no title too long for the
-  squash subject. GitHub appends the PR number to the title, so the limit
-  is 72 less the ` (#NN)` for that number, 66 characters for a two-digit
-  one and 65 for a three-digit one. The heading match is anchored to the
-  start of a line, so a description explaining this convention can still
-  name the marker in prose, as this one does. A draft reports under a name
-  of its own and defers, so the required check reads as not yet reported
-  rather than as a stale pass, and a draft's commits carry an outstanding
-  check until it is marked ready.
+- `pr-description.yml` holds a PR out of draft to those three: no
+  `## Draft notes` heading, no line past 72 columns, no broken code span.
+  It also holds the title to 72 columns once GitHub appends the number:
+  66 characters for a two-digit number, 65 for three. The heading match is
+  anchored to the start of a line, so a description explaining this
+  convention can still name the marker in prose, as this one does. A
+  draft reports under a name of its own and defers, so the required check
+  reads as not yet reported rather than as a stale pass.
 - Comments posted through `gh` authenticate as the repository owner. Every one
   Claude writes is italicized throughout and ends with a footer line reading
   "Posted by Claude Code" behind a robot-face emoji, italic like the rest, so
