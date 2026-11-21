@@ -156,6 +156,24 @@ jobs:
       - name: "Lint: format"
         run: cargo fmt --all --check
 
+      # rustfmt does not wrap comments, so this holds them to its 100 columns.
+      - name: "Lint: comment width"
+        shell: bash
+        run: |
+          # List every comment line in a Rust file past 100 columns.
+          too_wide=$(git ls-files '*.rs' | xargs awk '
+              /^[[:space:]]*\/\// && length > 100 {
+                print "  " FILENAME ":" FNR ": " length " columns"
+              }')
+          if [ -n "$too_wide" ]; then
+            echo "ERROR: comment lines past 100 columns:"
+            printf '%s\n' "$too_wide"
+            echo
+            echo "rustfmt does not wrap comments, so rewrap these by hand."
+            exit 1
+          fi
+          echo "Every comment line fits 100 columns."
+
       # `--all-features` so a target held behind one is still linted. The
       # packaged-FMU comparison is such a target, and it would otherwise be
       # the one file in the workspace nothing here reads.
