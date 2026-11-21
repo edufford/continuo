@@ -153,14 +153,13 @@ impl TrafficSpawner {
     }
 }
 
-/// Where the spawner last saw one car it asked for.
+/// Where the spawner last saw one of the traffic cars it spawned.
 #[derive(Serialize)]
 struct LiveCar {
     /// Arc length along the road.
     s: f64,
-    /// Lateral offset from the road, positive to the left. Read from every
-    /// pose rather than kept from the spawn, so a car counts in the lane it
-    /// is in now.
+    /// Lateral offset from the road, positive to the left, which says what
+    /// lane the car is in.
     lateral: f64,
 }
 
@@ -214,23 +213,25 @@ impl Component for TrafficSpawner {
         }
 
         // Top the road back up. Each car goes a gap beyond the furthest car
-        // in its lane, judged by where the cars were last seen rather than
-        // where they were spawned, since they have driven on since. A lane
-        // with nothing that far ahead starts at `spawn_ahead` in front of
-        // the ego, so a stretch that has all been passed starts fresh ahead
-        // rather than filling in behind.
+        // seen in its lane, or a gap beyond `spawn_ahead` in front of the
+        // ego if that is further, so cars always spawn ahead of it.
         let mut random = ctx.step_random();
         while self.live_traffic.len() < self.target_population {
             self.cars_spawned += 1;
             let gap = random.range_f64(self.gap_range.0, self.gap_range.1);
             let lane_offset =
                 self.lane_offsets[random.next_u64() as usize % self.lane_offsets.len()];
-            let lane_front = self
+            let furthest_in_lane = self
                 .live_traffic
                 .values()
                 .filter(|car| (car.lateral - lane_offset).abs() <= self.lane_tolerance)
                 .map(|car| car.s)
-                .fold(self.ego_s + self.spawn_ahead, f64::max);
+                .max_by(f64::total_cmp);
+            let ahead_of_ego = self.ego_s + self.spawn_ahead;
+            let lane_front = match furthest_in_lane {
+                Some(car_s) => car_s.max(ahead_of_ego),
+                None => ahead_of_ego,
+            };
             let spawn = SpawnTrafficRequest {
                 actor_name: format!("traffic{}", self.cars_spawned),
                 lane_offset,
