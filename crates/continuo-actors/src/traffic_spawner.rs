@@ -96,19 +96,20 @@ pub struct TrafficSpawner {
     lane_tolerance: f64,
     /// How many cars to keep on the road at once.
     target_population: usize,
-    /// Meters ahead of the ego the first car of a fresh stretch appears.
+    /// Meters ahead of the ego that every new car spawns beyond.
     spawn_ahead: f64,
     /// Meters behind the ego at which a car is retired.
     retire_behind: f64,
-    /// Gap range between consecutive spawns, in meters.
+    /// How far beyond the furthest car in its lane a new car spawns, as a
+    /// range in meters.
     gap_range: (f64, f64),
     /// Speed range for a new car, m/s. Slower than the ego, or it would
     /// never pass anything.
     speed_range: (f64, f64),
-    /// Each live car's latest known position, by actor name. Holds what
-    /// this spawner has *asked for*, which is why a car is struck off when
-    /// its removal is requested rather than when it is processed: otherwise
-    /// it would ask twice while the first request was still in flight.
+    /// The cars this spawner has spawned and not yet asked to remove, by
+    /// actor name, with where each was last seen. A car leaves as soon as
+    /// its removal is requested, so the spawner does not ask twice while
+    /// the first request is in flight.
     live_traffic: BTreeMap<String, LiveCar>,
     /// Latest known position of the ego, the reference every decision here
     /// is measured against.
@@ -163,9 +164,8 @@ struct LiveCar {
     lateral: f64,
 }
 
-/// The front of the lane at `lane_offset`: the furthest car seen in that
-/// lane, or `spawn_ahead` in front of the ego at `ego_s` if that is
-/// further.
+/// The front of the lane at `lane_offset`: the furthest of `cars` in that
+/// lane, or `spawn_ahead` ahead of the ego at `ego_s` if that is further.
 fn lane_front<'a>(
     cars: impl IntoIterator<Item = &'a LiveCar>,
     lane_offset: f64,
@@ -237,9 +237,9 @@ impl Component for TrafficSpawner {
             )?;
         }
 
-        // Top the road back up. Each car goes a gap beyond the furthest car
-        // seen in its lane, or a gap beyond `spawn_ahead` in front of the
-        // ego if that is further, so cars always spawn ahead of it.
+        // Top the road back up. Each new car spawns a gap beyond the
+        // furthest car in its lane, and always more than `spawn_ahead`
+        // ahead of the ego.
         let mut random = ctx.step_random();
         while self.live_traffic.len() < self.target_population {
             self.cars_spawned += 1;
@@ -275,9 +275,9 @@ impl Component for TrafficSpawner {
     }
 
     fn state_bytes(&self) -> Option<Vec<u8>> {
-        // The roll decides every future request, and none of it is
-        // published, so state-hash mode is what catches a divergence here
-        // at the tick it happens.
+        // The cars it tracks decide every future request, and none of that
+        // is published, so state-hash mode is what catches a divergence
+        // here at the tick it happens.
         Some(
             serde_json::to_vec(&(&self.live_traffic, self.ego_s, self.cars_spawned))
                 .expect("spawner state serializes"),
