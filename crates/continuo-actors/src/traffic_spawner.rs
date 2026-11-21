@@ -91,28 +91,29 @@ pub struct TrafficSpawner {
     /// nothing here models a collision, so traffic stays beside the ego
     /// rather than in front of it.
     lane_offsets: Vec<f64>,
+    /// How near a car's lateral offset must be to a lane's for the car to
+    /// count as in that lane, in meters.
+    lane_tolerance: f64,
     /// How many cars to keep on the road at once.
     target_population: usize,
-    /// Meters ahead of the ego the first car of a fresh stretch appears.
+    /// Meters ahead of the ego that every new car spawns beyond.
     spawn_ahead: f64,
     /// Meters behind the ego at which a car is retired.
     retire_behind: f64,
-    /// Gap range between consecutive spawns, in meters.
+    /// How far beyond the furthest car in its lane a new car spawns, as a
+    /// range in meters.
     gap_range: (f64, f64),
     /// Speed range for a new car, m/s. Slower than the ego, or it would
     /// never pass anything.
     speed_range: (f64, f64),
-    /// Latest known position of each live car, by actor name. Holds what
-    /// this spawner has *asked for*, which is why a car is struck off when
-    /// its removal is requested rather than when it is processed: otherwise
-    /// it would ask twice while the first request was still in flight.
-    live_traffic: BTreeMap<String, f64>,
+    /// The cars this spawner has spawned and not yet asked to remove, by
+    /// actor name, with where each was last seen. A car leaves as soon as
+    /// its removal is requested, so the spawner does not ask twice while
+    /// the first request is in flight.
+    live_traffic: BTreeMap<String, LiveCar>,
     /// Latest known position of the ego, the reference every decision here
     /// is measured against.
     ego_s: f64,
-    /// How far along the road the last spawn was placed, so a stream of
-    /// cars comes out spread rather than stacked at one point.
-    frontier_s: f64,
     /// How many cars have been created, ever, which is what makes their
     /// names unique. Never decremented, so a retired `traffic3` never
     /// returns as `traffic3`. Reoccupying a path is legal but arrives as a
@@ -127,6 +128,7 @@ impl TrafficSpawner {
         road: Arc<crate::Waypoints>,
         ego_name: impl Into<String>,
         lane_offsets: Vec<f64>,
+        lane_tolerance: f64,
         target_population: usize,
         spawn_ahead: f64,
         retire_behind: f64,
@@ -139,6 +141,7 @@ impl TrafficSpawner {
             road,
             ego_name: ego_name.into(),
             lane_offsets,
+            lane_tolerance,
             target_population,
             spawn_ahead,
             retire_behind,
@@ -146,9 +149,42 @@ impl TrafficSpawner {
             speed_range,
             live_traffic: BTreeMap::new(),
             ego_s: 0.0,
-            frontier_s: 0.0,
             cars_spawned: 0,
         }
+    }
+}
+
+/// Where the spawner last saw one of the traffic cars it spawned.
+#[derive(Serialize)]
+struct LiveCar {
+    /// Arc length along the road.
+    s: f64,
+    /// Lateral offset from the road, positive to the left, which says what
+    /// lane the car is in.
+    lateral: f64,
+}
+
+/// The front of the lane at `lane_offset`: the furthest of `cars` in that
+/// lane, or `spawn_ahead` ahead of the ego at `ego_s` if that is further.
+fn lane_front<'a>(
+    cars: impl IntoIterator<Item = &'a LiveCar>,
+    lane_offset: f64,
+    lane_tolerance: f64,
+    ego_s: f64,
+    spawn_ahead: f64,
+) -> f64 {
+    let ahead_of_ego = ego_s + spawn_ahead;
+    let furthest_in_lane = cars
+        .into_iter()
+        .filter(|car| (car.lateral - lane_offset).abs() <= lane_tolerance)
+        .map(|car| car.s)
+        .max_by(f64::total_cmp);
+
+    // Return the further of the two, or the point ahead of the ego when
+    // the lane is empty.
+    match furthest_in_lane {
+        Some(car_s) => car_s.max(ahead_of_ego),
+        None => ahead_of_ego,
     }
 }
 
@@ -172,23 +208,24 @@ impl Component for TrafficSpawner {
             // Project onto the reference road rather than reading a
             // coordinate: cars sit in different lanes, so only a shared
             // arc length makes "ahead" and "behind" mean the same thing
-            // for all of them, whatever shape the road is.
-            let actor_s = self.road.frenet(pose.position.x, pose.position.y).0;
+            // for all of them, whatever shape the road is. The lateral
+            // offset says which lane a car is in.
+            let (actor_s, actor_lateral) = self.road.frenet(pose.position.x, pose.position.y);
             if actor_name == self.ego_name {
                 self.ego_s = actor_s;
-            } else if let Some(traffic_s) = self.live_traffic.get_mut(actor_name) {
-                *traffic_s = actor_s;
+            } else if let Some(car) = self.live_traffic.get_mut(actor_name) {
+                car.s = actor_s;
+                car.lateral = actor_lateral;
             }
         }
 
-        // Retire what the ego has gone past. The car is dropped from the
-        // roll here, when the request goes out, not when the driver acts on
-        // it: the spawner is tracking what it has *asked for*, so it does
-        // not ask twice while a request is in flight.
+        // Retire the cars the ego has gone past. Each leaves `live_traffic`
+        // as soon as its removal is requested, so the spawner does not ask
+        // twice while the request is in flight.
         let passed: Vec<String> = self
             .live_traffic
             .iter()
-            .filter(|&(_, &traffic_s)| traffic_s < self.ego_s - self.retire_behind)
+            .filter(|&(_, car)| car.s < self.ego_s - self.retire_behind)
             .map(|(actor_name, _)| actor_name.clone())
             .collect();
         for actor_name in passed {
@@ -199,26 +236,36 @@ impl Component for TrafficSpawner {
             )?;
         }
 
-        // Top the road back up. Placing each car a gap beyond the last
-        // keeps them spread out; the frontier is pulled forward to the ego
-        // first, so a stretch that has all been passed starts fresh ahead
-        // rather than filling in behind.
+        // Top the road back up. Each new car spawns a gap beyond the
+        // furthest car in its lane, and always more than `spawn_ahead`
+        // ahead of the ego.
         let mut random = ctx.step_random();
         while self.live_traffic.len() < self.target_population {
             self.cars_spawned += 1;
             let gap = random.range_f64(self.gap_range.0, self.gap_range.1);
-            self.frontier_s = self.frontier_s.max(self.ego_s + self.spawn_ahead) + gap;
             let lane_offset =
                 self.lane_offsets[random.next_u64() as usize % self.lane_offsets.len()];
+            let lane_front = lane_front(
+                self.live_traffic.values(),
+                lane_offset,
+                self.lane_tolerance,
+                self.ego_s,
+                self.spawn_ahead,
+            );
             let spawn = SpawnTrafficRequest {
                 actor_name: format!("traffic{}", self.cars_spawned),
                 lane_offset,
                 speed: random.range_f64(self.speed_range.0, self.speed_range.1),
-                start_s: self.frontier_s,
+                start_s: lane_front + gap,
                 first_due: ctx.now() + self.period,
             };
-            self.live_traffic
-                .insert(spawn.actor_name.clone(), spawn.start_s);
+            self.live_traffic.insert(
+                spawn.actor_name.clone(),
+                LiveCar {
+                    s: spawn.start_s,
+                    lateral: lane_offset,
+                },
+            );
             ctx.publish(traffic_spawn_key(ctx.world_name()), &spawn)?;
         }
 
@@ -227,17 +274,12 @@ impl Component for TrafficSpawner {
     }
 
     fn state_bytes(&self) -> Option<Vec<u8>> {
-        // The roll and the frontier decide every future request, and none
-        // of it is published, so state-hash mode is what catches a
-        // divergence here at the tick it happens.
+        // The cars it tracks decide every future request, and none of that
+        // is published, so state-hash mode is what catches a divergence
+        // here at the tick it happens.
         Some(
-            serde_json::to_vec(&(
-                &self.live_traffic,
-                self.ego_s,
-                self.frontier_s,
-                self.cars_spawned,
-            ))
-            .expect("spawner state serializes"),
+            serde_json::to_vec(&(&self.live_traffic, self.ego_s, self.cars_spawned))
+                .expect("spawner state serializes"),
         )
     }
 }
@@ -269,4 +311,59 @@ pub fn road_pose(road: &crate::Waypoints, s: f64, lateral: f64) -> Pose {
 pub fn straight_road(length: f64) -> crate::Waypoints {
     // Return the one-segment path; every lane is a lateral offset on it.
     crate::Waypoints::build_straight((0.0, 0.0), (length, 0.0))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const LANE: f64 = 0.0;
+    const NEXT_LANE: f64 = 3.5;
+    const LANE_TOLERANCE: f64 = 1.75;
+    const EGO_S: f64 = 100.0;
+    const SPAWN_AHEAD: f64 = 40.0;
+    const AHEAD_OF_EGO: f64 = EGO_S + SPAWN_AHEAD;
+
+    #[test]
+    fn a_lane_front_is_the_furthest_car_seen_in_the_lane() {
+        let furthest = AHEAD_OF_EGO + 10.0;
+        let cars = [
+            LiveCar {
+                s: furthest,
+                lateral: LANE,
+            },
+            LiveCar {
+                s: furthest - 5.0,
+                lateral: LANE,
+            },
+        ];
+        assert_eq!(
+            lane_front(&cars, LANE, LANE_TOLERANCE, EGO_S, SPAWN_AHEAD),
+            furthest
+        );
+    }
+
+    #[test]
+    fn a_lane_front_is_never_nearer_the_ego_than_spawn_ahead() {
+        let cars = [LiveCar {
+            s: AHEAD_OF_EGO - 10.0,
+            lateral: LANE,
+        }];
+        assert_eq!(
+            lane_front(&cars, LANE, LANE_TOLERANCE, EGO_S, SPAWN_AHEAD),
+            AHEAD_OF_EGO
+        );
+    }
+
+    #[test]
+    fn a_car_seen_in_another_lane_does_not_move_the_lane_front() {
+        let cars = [LiveCar {
+            s: AHEAD_OF_EGO + 10.0,
+            lateral: NEXT_LANE,
+        }];
+        assert_eq!(
+            lane_front(&cars, LANE, LANE_TOLERANCE, EGO_S, SPAWN_AHEAD),
+            AHEAD_OF_EGO
+        );
+    }
 }

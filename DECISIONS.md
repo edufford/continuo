@@ -1654,3 +1654,9 @@ it got there, including the roads not taken.
     monitoring may need to act on the sim later too, and the split
     redesigned more than resim needs, where a rename lets the one handler
     serve both scenarios.
+- **2026-11-20**: **The spawner places each new car a gap beyond the
+  furthest car seen in its lane.** It used to place each new car a gap
+  beyond where the previous one had spawned, in any lane, so a new car
+  could land right behind one that had driven on since. A car's lane comes
+  from its latest pose, so a car that changes lanes counts in its new one.
+  The world hash moves.

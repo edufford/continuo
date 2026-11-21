@@ -193,6 +193,11 @@ messages, PR titles and descriptions, console strings.
   what an earlier version got wrong. That history belongs in git and the PR.
   Saying why an alternative was rejected is welcome, in the conditional:
   "Keeping the previous one would go on steering from it without saying so."
+- **A comment stands on its own.** It uses no term it does not define, such
+  as a name coined while writing the code, and does not lean on the wording
+  of a comment somewhere else, so it reads in one pass. "Meters ahead of the
+  ego that every new car spawns beyond" says what "the least distance from
+  the ego to a lane's front" only points at.
 - **Name the work, not the writing.** "Improved Frenet coordinate handling",
   not "What a road can be asked"; "Test coverage for the sensor and the
   road", not "What proves it"; "the deferred list gains a road built from
