@@ -91,6 +91,9 @@ pub struct TrafficSpawner {
     /// nothing here models a collision, so traffic stays beside the ego
     /// rather than in front of it.
     lane_offsets: Vec<f64>,
+    /// How near a car's lateral offset must be to a lane's for the car to
+    /// count as in that lane, in meters.
+    lane_tolerance: f64,
     /// How many cars to keep on the road at once.
     target_population: usize,
     /// Meters ahead of the ego the first car of a fresh stretch appears.
@@ -102,17 +105,14 @@ pub struct TrafficSpawner {
     /// Speed range for a new car, m/s. Slower than the ego, or it would
     /// never pass anything.
     speed_range: (f64, f64),
-    /// Latest known position of each live car, by actor name. Holds what
+    /// Each live car's latest known position, by actor name. Holds what
     /// this spawner has *asked for*, which is why a car is struck off when
     /// its removal is requested rather than when it is processed: otherwise
     /// it would ask twice while the first request was still in flight.
-    live_traffic: BTreeMap<String, f64>,
+    live_traffic: BTreeMap<String, LiveCar>,
     /// Latest known position of the ego, the reference every decision here
     /// is measured against.
     ego_s: f64,
-    /// How far along the road the last spawn was placed, so a stream of
-    /// cars comes out spread rather than stacked at one point.
-    frontier_s: f64,
     /// How many cars have been created, ever, which is what makes their
     /// names unique. Never decremented, so a retired `traffic3` never
     /// returns as `traffic3`. Reoccupying a path is legal but arrives as a
@@ -127,6 +127,7 @@ impl TrafficSpawner {
         road: Arc<crate::Waypoints>,
         ego_name: impl Into<String>,
         lane_offsets: Vec<f64>,
+        lane_tolerance: f64,
         target_population: usize,
         spawn_ahead: f64,
         retire_behind: f64,
@@ -139,6 +140,7 @@ impl TrafficSpawner {
             road,
             ego_name: ego_name.into(),
             lane_offsets,
+            lane_tolerance,
             target_population,
             spawn_ahead,
             retire_behind,
@@ -146,10 +148,20 @@ impl TrafficSpawner {
             speed_range,
             live_traffic: BTreeMap::new(),
             ego_s: 0.0,
-            frontier_s: 0.0,
             cars_spawned: 0,
         }
     }
+}
+
+/// Where the spawner last saw one car it asked for.
+#[derive(Serialize)]
+struct LiveCar {
+    /// Arc length along the road.
+    s: f64,
+    /// Lateral offset from the road, positive to the left. Read from every
+    /// pose rather than kept from the spawn, so a car counts in the lane it
+    /// is in now.
+    lateral: f64,
 }
 
 impl Component for TrafficSpawner {
@@ -172,12 +184,14 @@ impl Component for TrafficSpawner {
             // Project onto the reference road rather than reading a
             // coordinate: cars sit in different lanes, so only a shared
             // arc length makes "ahead" and "behind" mean the same thing
-            // for all of them, whatever shape the road is.
-            let actor_s = self.road.frenet(pose.position.x, pose.position.y).0;
+            // for all of them, whatever shape the road is. The lateral
+            // offset says which lane a car is in.
+            let (actor_s, actor_lateral) = self.road.frenet(pose.position.x, pose.position.y);
             if actor_name == self.ego_name {
                 self.ego_s = actor_s;
-            } else if let Some(traffic_s) = self.live_traffic.get_mut(actor_name) {
-                *traffic_s = actor_s;
+            } else if let Some(car) = self.live_traffic.get_mut(actor_name) {
+                car.s = actor_s;
+                car.lateral = actor_lateral;
             }
         }
 
@@ -188,7 +202,7 @@ impl Component for TrafficSpawner {
         let passed: Vec<String> = self
             .live_traffic
             .iter()
-            .filter(|&(_, &traffic_s)| traffic_s < self.ego_s - self.retire_behind)
+            .filter(|&(_, car)| car.s < self.ego_s - self.retire_behind)
             .map(|(actor_name, _)| actor_name.clone())
             .collect();
         for actor_name in passed {
@@ -199,26 +213,38 @@ impl Component for TrafficSpawner {
             )?;
         }
 
-        // Top the road back up. Placing each car a gap beyond the last
-        // keeps them spread out; the frontier is pulled forward to the ego
-        // first, so a stretch that has all been passed starts fresh ahead
+        // Top the road back up. Each car goes a gap beyond the furthest car
+        // in its lane, judged by where the cars were last seen rather than
+        // where they were spawned, since they have driven on since. A lane
+        // with nothing that far ahead starts at `spawn_ahead` in front of
+        // the ego, so a stretch that has all been passed starts fresh ahead
         // rather than filling in behind.
         let mut random = ctx.step_random();
         while self.live_traffic.len() < self.target_population {
             self.cars_spawned += 1;
             let gap = random.range_f64(self.gap_range.0, self.gap_range.1);
-            self.frontier_s = self.frontier_s.max(self.ego_s + self.spawn_ahead) + gap;
             let lane_offset =
                 self.lane_offsets[random.next_u64() as usize % self.lane_offsets.len()];
+            let lane_front = self
+                .live_traffic
+                .values()
+                .filter(|car| (car.lateral - lane_offset).abs() <= self.lane_tolerance)
+                .map(|car| car.s)
+                .fold(self.ego_s + self.spawn_ahead, f64::max);
             let spawn = SpawnTrafficRequest {
                 actor_name: format!("traffic{}", self.cars_spawned),
                 lane_offset,
                 speed: random.range_f64(self.speed_range.0, self.speed_range.1),
-                start_s: self.frontier_s,
+                start_s: lane_front + gap,
                 first_due: ctx.now() + self.period,
             };
-            self.live_traffic
-                .insert(spawn.actor_name.clone(), spawn.start_s);
+            self.live_traffic.insert(
+                spawn.actor_name.clone(),
+                LiveCar {
+                    s: spawn.start_s,
+                    lateral: lane_offset,
+                },
+            );
             ctx.publish(traffic_spawn_key(ctx.world_name()), &spawn)?;
         }
 
@@ -227,17 +253,12 @@ impl Component for TrafficSpawner {
     }
 
     fn state_bytes(&self) -> Option<Vec<u8>> {
-        // The roll and the frontier decide every future request, and none
-        // of it is published, so state-hash mode is what catches a
-        // divergence here at the tick it happens.
+        // The roll decides every future request, and none of it is
+        // published, so state-hash mode is what catches a divergence here
+        // at the tick it happens.
         Some(
-            serde_json::to_vec(&(
-                &self.live_traffic,
-                self.ego_s,
-                self.frontier_s,
-                self.cars_spawned,
-            ))
-            .expect("spawner state serializes"),
+            serde_json::to_vec(&(&self.live_traffic, self.ego_s, self.cars_spawned))
+                .expect("spawner state serializes"),
         )
     }
 }
@@ -269,4 +290,108 @@ pub fn road_pose(road: &crate::Waypoints, s: f64, lateral: f64) -> Pose {
 pub fn straight_road(length: f64) -> crate::Waypoints {
     // Return the one-segment path; every lane is a lateral offset on it.
     crate::Waypoints::build_straight((0.0, 0.0), (length, 0.0))
+}
+
+#[cfg(test)]
+mod tests {
+    use continuo_core::{ComponentPath, Message};
+
+    use super::*;
+
+    const PERIOD: SimDuration = SimDuration::from_millis(500);
+
+    /// One pose message per car, each at an arc length and a lateral
+    /// offset on `road`, as the transport would deliver them.
+    fn get_poses(road: &crate::Waypoints, cars: &[(&str, f64, f64)]) -> Vec<Message> {
+        // Return the inbox a step would be handed.
+        cars.iter()
+            .map(|&(name, s, lateral)| Message {
+                key: KeyExpr::new_rooted(format!("w/actor/{name}/pose")).expect("valid key"),
+                publisher: ComponentPath::parse(&format!("{name}/physics")).expect("valid path"),
+                seq: 0,
+                sim_time: SimTime::ZERO,
+                payload: serde_json::to_vec(&road_pose(road, s, lateral))
+                    .expect("a pose serializes"),
+            })
+            .collect()
+    }
+
+    /// Steps `spawner` once and returns the spawn requests it published.
+    fn step_once(
+        spawner: &mut TrafficSpawner,
+        now: SimTime,
+        inbox: Vec<Message>,
+    ) -> Vec<SpawnTrafficRequest> {
+        let mut ctx = StepCtx::new(now, Some(PERIOD), "w", 0, inbox);
+        spawner
+            .step(&mut ctx)
+            .expect("a spawner given readable poses steps");
+
+        // Return the spawn requests, leaving out any despawns.
+        ctx.take_outbox()
+            .into_iter()
+            .filter(|(key, _)| *key == traffic_spawn_key("w"))
+            .map(|(_, payload)| serde_json::from_slice(&payload).expect("a spawn request"))
+            .collect()
+    }
+
+    /// The car that replaces `traffic1` in a one-lane spawner, once the ego
+    /// at 100 m has left `traffic1` behind and `traffic2` has driven on to
+    /// 150 m at `traffic2_lateral`.
+    ///
+    /// Both start in the lane at lateral 0, the first 40 m ahead of the
+    /// ego and the next 20 m beyond it, at 60 m and 80 m.
+    fn replacement_with_traffic2_at(traffic2_lateral: f64) -> SpawnTrafficRequest {
+        let road = Arc::new(straight_road(1000.0));
+        let mut spawner = TrafficSpawner::new(
+            PERIOD,
+            road.clone(),
+            "ego",
+            vec![0.0],
+            1.75,
+            2,
+            40.0,
+            60.0,
+            (20.0, 20.0),
+            (20.0, 20.0),
+        );
+        let first = step_once(
+            &mut spawner,
+            SimTime::ZERO,
+            get_poses(&road, &[("ego", 0.0, 0.0)]),
+        );
+        assert_eq!(first.len(), 2, "the empty road fills to its population");
+
+        let poses = get_poses(
+            &road,
+            &[
+                ("ego", 100.0, 0.0),
+                ("traffic1", 30.0, 0.0),
+                ("traffic2", 150.0, traffic2_lateral),
+            ],
+        );
+        let mut second = step_once(&mut spawner, SimTime::ZERO + PERIOD, poses);
+        assert_eq!(second.len(), 1, "one car replaces the one retired");
+
+        // Return the one replacement.
+        second.remove(0)
+    }
+
+    #[test]
+    fn a_new_car_spawns_a_gap_beyond_where_the_last_in_its_lane_has_driven_to() {
+        let replacement = replacement_with_traffic2_at(0.0);
+        assert!(
+            replacement.start_s >= 150.0 + 20.0,
+            "the replacement spawned at {} m, within the 20 m gap of the car at 150 m",
+            replacement.start_s,
+        );
+    }
+
+    #[test]
+    fn a_car_that_changed_lanes_no_longer_holds_back_the_lane_it_left() {
+        // `traffic2` is seen a lane over, so nothing holds the lane back
+        // beyond 40 m ahead of the ego.
+        let replacement = replacement_with_traffic2_at(3.5);
+        assert_eq!(replacement.start_s, 100.0 + 40.0 + 20.0);
+    }
 }

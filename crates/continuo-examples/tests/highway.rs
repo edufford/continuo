@@ -251,7 +251,7 @@ fn the_dynamic_world_reproduces_exactly() {
 /// deliberate act. Update it and README.md's sample output together. A
 /// stale controller FMU moves it too, which `cargo xtask package-fmus`
 /// fixes.
-const DEMO_WORLD_HASH: u64 = 0x602c_9fea_d4ec_7d98;
+const DEMO_WORLD_HASH: u64 = 0xdbb6_ddcb_8437_91e2;
 
 #[test]
 fn the_demo_world_hashes_to_the_same_value_on_every_platform() {

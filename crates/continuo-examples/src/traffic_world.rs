@@ -93,9 +93,10 @@ const PHYSICS_PERIOD: SimDuration = SimDuration::from_millis(10);
 /// How far ahead a car's radar sees, in meters.
 const RADAR_MAX_RANGE: f64 = 120.0;
 
-/// Half a lane either side, so a car counts as sharing the radar's lane
-/// when it is nearer that lane's center than any other.
-const RADAR_LANE_TOLERANCE: f64 = LANE_WIDTH / 2.0;
+/// Half a lane either side, so a car counts as in a lane when it is nearer
+/// that lane's center than any other. The radar and the spawner share it,
+/// so they agree on which cars share a lane.
+const LANE_TOLERANCE: f64 = LANE_WIDTH / 2.0;
 
 /// Which components a car is built from, and so how it drives.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -209,7 +210,7 @@ fn radar_component(actor_name: &str) -> Box<dyn Component> {
         shared_road(),
         CONTROL_PERIOD,
         RADAR_MAX_RANGE,
-        RADAR_LANE_TOLERANCE,
+        LANE_TOLERANCE,
     ))
 }
 
@@ -400,6 +401,7 @@ fn add_spawner<T: Transport>(conductor: &mut Conductor<T>) -> Result<(), Conduct
             shared_road(),
             EGO_NAME,
             TRAFFIC_LANES.to_vec(),
+            LANE_TOLERANCE,
             TRAFFIC_POPULATION,
             SPAWN_AHEAD,
             RETIRE_BEHIND,
