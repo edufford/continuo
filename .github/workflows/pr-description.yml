@@ -3,8 +3,8 @@ name: PR description
 # This repository squash-merges using the PR title and description, so the
 # description is the commit message that lands on main. This holds a PR that
 # is out of draft to what such a message needs: a title that fits the
-# subject line, no review notes still attached, no line wider than the
-# commit will keep, and no code span the wrap has broken.
+# subject line, no review notes still attached, no line past 72 columns,
+# and no code span the wrap has broken.
 #
 # Its own workflow rather than a job in CI, because the events that matter
 # here are `edited` and `ready_for_review`, which fire on every touch of a
