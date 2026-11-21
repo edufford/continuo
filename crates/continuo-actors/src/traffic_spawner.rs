@@ -219,10 +219,9 @@ impl Component for TrafficSpawner {
             }
         }
 
-        // Retire what the ego has gone past. The car is dropped from the
-        // roll here, when the request goes out, not when the driver acts on
-        // it: the spawner is tracking what it has *asked for*, so it does
-        // not ask twice while a request is in flight.
+        // Retire the cars the ego has gone past. Each leaves `live_traffic`
+        // as soon as its removal is requested, so the spawner does not ask
+        // twice while the request is in flight.
         let passed: Vec<String> = self
             .live_traffic
             .iter()
