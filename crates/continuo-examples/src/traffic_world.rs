@@ -24,8 +24,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 use continuo_actors::control_laws::{FREE_ROAD, IdmParams, PurePursuitParams};
 use continuo_actors::{
     CarState, DespawnTrafficRequest, PathFollowController, PlantLimits, RadarSensor,
-    SpawnTrafficRequest, TrafficSpawner, UnicyclePhysics, Waypoints, accel_cmd_key,
-    actor_of_pose_key, pose_key, radar_key, road_pose, steer_cmd_key, straight_road,
+    SpawnTrafficRequest, TrafficSpawner, TrafficSpawnerConfig, UnicyclePhysics, Waypoints,
+    accel_cmd_key, actor_of_pose_key, pose_key, radar_key, road_pose, steer_cmd_key, straight_road,
     traffic_despawn_key, traffic_spawn_key,
 };
 use continuo_conductor::record::LogEvent;
@@ -396,7 +396,7 @@ fn add_ego<T: Transport>(
 /// Registers the traffic spawner, the component that decides which cars
 /// exist while the run is under way, and the cars the run starts with,
 /// placed around an ego starting `ego_start_s` along the road in the lane
-/// at `ego_lane_offset`.
+/// at `ego_start_lateral`.
 ///
 /// Not needed by a run that plays traffic back from a log: there the
 /// recording is the traffic, and a live spawner would be deciding on top of
@@ -404,24 +404,24 @@ fn add_ego<T: Transport>(
 fn add_spawner<T: Transport>(
     conductor: &mut Conductor<T>,
     ego_start_s: f64,
-    ego_lane_offset: f64,
+    ego_start_lateral: f64,
 ) -> Result<(), ScenarioError> {
-    let mut spawner = TrafficSpawner::new(
-        SimDuration::from_millis(100),
-        shared_road(),
-        EGO_NAME,
+    let config = TrafficSpawnerConfig {
+        period: SimDuration::from_millis(100),
+        ego_name: EGO_NAME.to_string(),
         ego_start_s,
-        ego_lane_offset,
-        TRAFFIC_LANES.to_vec(),
-        LANE_TOLERANCE,
-        TRAFFIC_POPULATION,
-        SPAWN_AHEAD,
-        RETIRE_BEHIND,
-        RETIRE_AHEAD,
-        SPAWN_GAP,
-        EGO_HEADWAY_FACTOR,
-        TRAFFIC_SPEED,
-    );
+        ego_start_lateral,
+        lane_offsets: TRAFFIC_LANES.to_vec(),
+        lane_tolerance: LANE_TOLERANCE,
+        target_population: TRAFFIC_POPULATION,
+        spawn_ahead: SPAWN_AHEAD,
+        retire_behind: RETIRE_BEHIND,
+        retire_ahead: RETIRE_AHEAD,
+        gap_range: SPAWN_GAP,
+        ego_headway_factor: EGO_HEADWAY_FACTOR,
+        speed_range: TRAFFIC_SPEED,
+    };
+    let mut spawner = TrafficSpawner::new(shared_road(), config);
 
     // The cars the run starts with join at sim time zero beside the ego,
     // their speeds drawn from a stream of the spawner's own.
