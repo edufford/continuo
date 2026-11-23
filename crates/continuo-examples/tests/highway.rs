@@ -206,6 +206,7 @@ fn a_car_leaves_as_a_whole_actor() {
     let path = ComponentPath::parse(first).expect("a leave names a valid path");
     let actor = path.actor().expect("a leaf path has an actor").as_str();
 
+    // The slash keeps traffic1 from also matching the parts of traffic10.
     let prefix = format!("{actor}/");
     let pair: Vec<&&str> = left.iter().filter(|p| p.starts_with(&prefix)).collect();
     assert_eq!(
