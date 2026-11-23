@@ -146,7 +146,7 @@ impl TrafficSpawner {
             config.retire_ahead = furthest_spawn;
         }
 
-        // Return a spawner with an empty road; the first step fills it.
+        // Return a spawner with no cars yet.
         TrafficSpawner {
             road,
             live_traffic: BTreeMap::new(),

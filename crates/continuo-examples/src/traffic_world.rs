@@ -64,8 +64,7 @@ const EGO_NAME: &str = "ego";
 const EGO_START: f64 = 100.0;
 /// The ego starts in the middle lane, with traffic either side of it.
 const EGO_LANE: f64 = TRAFFIC_LANES[TRAFFIC_LANES.len() / 2];
-/// The speed the ego starts at, and wants whenever the road ahead is free,
-/// in m/s.
+/// The ego's starting and target speed, in m/s.
 const EGO_SPEED: f64 = 30.0;
 
 // Traffic is slower than the ego, so the ego closes on the car ahead in its
@@ -375,9 +374,8 @@ fn controller_fmu_mapping(
 }
 
 /// Registers the ego at sim time zero, `start_s` along the road in the lane
-/// at `lane_offset`, driving at `speed`, which is also the speed it wants
-/// when the road ahead is free. The three are parameters because a what-if
-/// run changes them.
+/// at `lane_offset`, driving at `speed`, which is also its target speed.
+/// The three are parameters because a what-if run changes them.
 fn add_ego<T: Transport>(
     conductor: &mut Conductor<T>,
     start_s: f64,
@@ -446,7 +444,7 @@ pub fn setup_live_traffic_scenario<T: Transport>(
     add_ego(conductor, EGO_START, EGO_LANE, EGO_SPEED)?;
     add_spawner(conductor, EGO_START, EGO_LANE)?;
 
-    // Return success; the fixed part of the world is registered.
+    // Return success; the starting world is registered.
     Ok(())
 }
 
