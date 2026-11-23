@@ -218,17 +218,12 @@ done: world 'demo' reached sim time 30.0 in 3001 ticks (free-run)
 actual time: 4.275 s (7x real-time), world hash acd134a54d7e0963
 ```
 
-The ego holds the centre lane at 30 m/s; traffic spawns at 16-22 m/s in the
-lanes either side, so the ego spends the run overtaking. Each traffic car
-drives on the controller FMU, following the car ahead in its lane with IDM
-and steering with pure pursuit, so a faster car closes on a slower one and
-settles behind it rather than driving through it. A collision monitor
-watches every car's footprint: traffic overlapping is logged, and the ego
-overlapping anything stops the run. The ego still holds its speed whatever
-is ahead, which is why traffic never shares its lane. A car is retired
-once it falls 60 m behind, and a replacement spawns ahead. Over
-30 sim-seconds fourteen different cars pass through a world that holds six
-at a time, eight of them retired along the way.
+Every car drives on the controller FMU, following the car ahead in its lane
+with IDM. The ego has a target speed of 30 m/s (67 mph) in the center lane
+and traffic 22 to 28 m/s (49 to 63 mph) in all three, so the ego passes cars
+beside it and then follows the one ahead. A collision monitor logs traffic
+overlapping and stops the run if the ego overlaps anything. Over 30
+sim-seconds, 21 cars pass through a world that holds ten at a time.
 
 The world hash is the run's determinism fingerprint: identical for every run
 of the same seeded scenario. CI checks it against a written-down value on four

@@ -776,6 +776,11 @@ under "Wire format", rather than churning the fingerprint once apiece.
   belongs with "World and map", where a road adopts a proper standardized
   geometry definition, rather than as a change to `Waypoints` on its own.
 
+- **Lane changes.** Cars keep the lane they spawn in, so each lane settles at
+  its slowest car's pace and the ego passes only cars in other lanes. The
+  spawner and the radar already read a car's lane from its latest pose; a
+  controller that decides to change lanes is what is missing.
+
 - **A component asking to retire itself**: `StepCtx` has no way back to the
   conductor, so nothing can say "I am done" (see `Component`'s TODO).
   Milestone 4 expected its spawner to need this and it did not. Worth

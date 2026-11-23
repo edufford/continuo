@@ -24,8 +24,8 @@ use continuo_core::SimTime;
 use continuo_examples::traffic_world::{self, TrafficHandler};
 use continuo_transport::{InProcTransport, MonitorTransport};
 
-/// The what-if: an ego holding 36 m/s against traffic recorded while it held
-/// 30, so it reaches the same cars sooner and overtakes more of them.
+/// The what-if: an ego with a target speed of 36 m/s against traffic
+/// recorded with a target of 30, so it closes on the car ahead faster.
 const WHAT_IF_EGO_SPEED: f64 = 36.0;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

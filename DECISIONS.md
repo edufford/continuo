@@ -1660,3 +1660,23 @@ it got there, including the roads not taken.
   could land right behind one that had driven on since. A car's lane comes
   from its latest pose, so a car that changes lanes counts in its new one.
   The world hash moves.
+
+- **2026-11-23**: **The ego drives in a traffic lane and follows the car
+  ahead.** The ego is `[radar, controller, physics]` on the controller FMU,
+  like traffic, in the middle of three traffic lanes. The run starts with
+  the whole population around the ego, since an ego starting on an empty
+  road spent most of the run reaching anyone. The world hash moves.
+  - **What joined the fingerprint**: `dbb6ddcb843791e2` to
+    `acd134a54d7e0963`, for the ego's scans and commands, the starting
+    traffic and the retuned scenario.
+  - **The retune**: one speed range for every lane, 22 to 28 m/s against the
+    ego's 30; gaps of 25 to 40 m, sized for the 2 m/s^2 the controller
+    brakes at; ten cars; spawning and retiring beyond the viewer's 60 m,
+    ahead of the ego as well as behind; twice the gap ahead of the ego in
+    its lane at the start, so it passes cars beside it first; and the
+    spawner stepping every 100 ms rather than 500: a new car appears on the
+    spawner's next step after it is placed, and the car behind it closes in
+    until then.
+  - Tried and dropped: lane-banded speeds, spawning behind the ego, a
+    longer run, other seeds, and varying each car's target speed during
+    the run.
