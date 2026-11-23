@@ -54,20 +54,18 @@ pub const SIM_SECONDS: i64 = 30;
 /// traffic, following the car ahead of it.
 const EGO_NAME: &str = "ego";
 
-/// Where the ego starts: 100 m along the road, leaving room behind it for
-/// the traffic the run starts with, in the center lane. Unlike
-/// [`EGO_SPEED`] these are not tuned against anything. They are what the
-/// rest of the scenario is measured from, which is why traffic spawns
-/// relative to the ego and the road is long enough for where it ends up.
+/// How far along the road the ego starts, in meters, leaving room behind
+/// it for the traffic the run starts with.
 const EGO_START: f64 = 100.0;
-const EGO_LANE: f64 = 0.0;
 
 /// Enough road for the ego's 30 s at 30 m/s, plus the stretch ahead that
 /// traffic spawns into.
 const ROAD_LENGTH: f64 = 1500.0;
 const LANE_WIDTH: f64 = 3.5;
-/// Lanes traffic spawns into: the ego's own and one either side of it.
-const TRAFFIC_LANES: [f64; 3] = [LANE_WIDTH, EGO_LANE, -LANE_WIDTH];
+/// Lanes traffic drives in, as offsets in meters to the left of the road.
+const TRAFFIC_LANES: [f64; 3] = [LANE_WIDTH, 0.0, -LANE_WIDTH];
+/// The ego starts in the middle lane, with traffic either side of it.
+const EGO_LANE: f64 = TRAFFIC_LANES[TRAFFIC_LANES.len() / 2];
 
 // Sized so the run shows the ego following traffic, with cars in view the
 // whole time. The run starts with the whole population around the ego.
