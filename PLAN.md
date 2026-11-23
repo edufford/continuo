@@ -871,11 +871,11 @@ under "Wire format", rather than churning the fingerprint once apiece.
     declaring `canBeInstantiatedOnlyOncePerProcess` keeps an archive per
     instance.
   - For FMUs not known before the run, a worker thread could load each one
-    during the join's lead time, half a second for the spawner's, and the
-    run would wait at `first_due` only for an unfinished load. The
-    instance is still made on the conductor's thread, since `fmi`'s
-    `Instance` is not `Send`. This hides the load only when paced, and
-    milestone 7's joins over the transport take this shape anyway.
+    during the join's lead time, 100 ms for the spawner's, and the run would
+    wait at `first_due` only for an unfinished load. The instance is still
+    made on the conductor's thread, since `fmi`'s `Instance` is not `Send`.
+    This hides the load only when paced, and milestone 7's joins over the
+    transport take this shape anyway.
   - Deferred because the world hash is unaffected and a paced run keeps
     time between joins. Proving a fix wants a churn measurement, since
     `traffic_scale` joins every car before its timer starts.
