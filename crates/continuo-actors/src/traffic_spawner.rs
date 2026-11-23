@@ -397,6 +397,36 @@ mod tests {
     const EGO_S: f64 = 100.0;
     const SPAWN_AHEAD: f64 = 40.0;
     const AHEAD_OF_EGO: f64 = EGO_S + SPAWN_AHEAD;
+    const GAP_RANGE: (f64, f64) = (25.0, 40.0);
+
+    /// An ego at `EGO_S` in `LANE`, with a lane either side of it.
+    fn config() -> TrafficSpawnerConfig {
+        TrafficSpawnerConfig {
+            period: SimDuration::from_millis(100),
+            ego_name: "ego".to_string(),
+            ego_start_s: EGO_S,
+            ego_start_lateral: LANE,
+            lane_offsets: vec![NEXT_LANE, LANE, -NEXT_LANE],
+            lane_tolerance: LANE_TOLERANCE,
+            target_population: 10,
+            spawn_ahead: SPAWN_AHEAD,
+            retire_behind: 70.0,
+            retire_ahead: 90.0,
+            gap_range: GAP_RANGE,
+            ego_headway_factor: 2.0,
+            speed_range: (22.0, 28.0),
+        }
+    }
+
+    #[test]
+    fn a_retire_ahead_short_of_the_furthest_spawn_is_increased_to_it() {
+        let config = TrafficSpawnerConfig {
+            retire_ahead: SPAWN_AHEAD,
+            ..config()
+        };
+        let spawner = TrafficSpawner::new(Arc::new(straight_road(1000.0)), config);
+        assert_eq!(spawner.config.retire_ahead, SPAWN_AHEAD + GAP_RANGE.1);
+    }
 
     #[test]
     fn a_lane_front_is_the_furthest_car_seen_in_the_lane() {
