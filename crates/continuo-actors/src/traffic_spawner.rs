@@ -137,18 +137,18 @@ pub struct TrafficSpawner {
 }
 
 impl TrafficSpawner {
-    /// # Panics
-    ///
-    /// If a new car could spawn beyond `retire_ahead`, that is if
-    /// `retire_ahead` is less than `spawn_ahead` plus the largest gap. The
-    /// spawner would never place a car there, so the road would stay empty.
-    pub fn new(road: Arc<crate::Waypoints>, config: TrafficSpawnerConfig) -> Self {
-        assert!(
-            config.retire_ahead >= config.spawn_ahead + config.gap_range.1,
-            "retire_ahead {} m is within the {} m a car can spawn at",
-            config.retire_ahead,
-            config.spawn_ahead + config.gap_range.1,
-        );
+    /// Increases `retire_ahead` to `spawn_ahead` plus the largest gap if it is
+    /// less, with a warning, so a new car never spawns where it would
+    /// immediately be retired.
+    pub fn new(road: Arc<crate::Waypoints>, mut config: TrafficSpawnerConfig) -> Self {
+        let furthest_spawn = config.spawn_ahead + config.gap_range.1;
+        if config.retire_ahead < furthest_spawn {
+            tracing::warn!(
+                "retire_ahead {} m is short of the furthest spawn, so it is increased to {furthest_spawn} m",
+                config.retire_ahead,
+            );
+            config.retire_ahead = furthest_spawn;
+        }
 
         // Return a spawner with an empty road; the first step fills it.
         TrafficSpawner {
