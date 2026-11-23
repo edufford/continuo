@@ -49,26 +49,27 @@ pub const WORLD_SEED: u64 = 42;
 pub const WORLD_NAME: &str = "demo";
 pub const SIM_SECONDS: i64 = 30;
 
-/// The car the scenario is arranged around. It drives in a lane with
-/// traffic, following the car ahead of it.
-const EGO_NAME: &str = "ego";
-
-/// How far along the road the ego starts, in meters, leaving room behind
-/// it for the traffic the run starts with.
-const EGO_START: f64 = 100.0;
-
 /// Enough road for the ego's 30 s at 30 m/s, plus the stretch ahead that
 /// traffic spawns into.
 const ROAD_LENGTH: f64 = 1500.0;
 const LANE_WIDTH: f64 = 3.5;
 /// Lanes traffic drives in, as offsets in meters to the left of the road.
 const TRAFFIC_LANES: [f64; 3] = [LANE_WIDTH, 0.0, -LANE_WIDTH];
+
+/// The car the scenario is arranged around. It drives in a lane with
+/// traffic, following the car ahead of it.
+const EGO_NAME: &str = "ego";
+/// How far along the road the ego starts, in meters, leaving room behind
+/// it for the traffic the run starts with.
+const EGO_START: f64 = 100.0;
 /// The ego starts in the middle lane, with traffic either side of it.
 const EGO_LANE: f64 = TRAFFIC_LANES[TRAFFIC_LANES.len() / 2];
+/// The speed the ego starts at, and wants whenever the road ahead is free,
+/// in m/s.
+const EGO_SPEED: f64 = 30.0;
 
 // Traffic is slower than the ego, so the ego closes on the car ahead in its
 // lane while cars in the other lanes drift by.
-const EGO_SPEED: f64 = 30.0;
 const TRAFFIC_SPEED: (f64, f64) = (22.0, 28.0);
 const TRAFFIC_POPULATION: usize = 10;
 const SPAWN_AHEAD: f64 = 40.0;
