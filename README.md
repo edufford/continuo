@@ -204,19 +204,20 @@ cargo xtask package-fmus
 ```
 
 The demo prints each car to the console as it joins and leaves, with
-where it was then, and finishes in a few wall-seconds. Traffic appears as
-it is spawned and retires once the ego has gone past it:
+where it was then, and finishes in a few wall-seconds. The run starts with
+traffic around the ego, and later cars join ahead of it and leave once
+they are far enough behind or ahead:
 
 ```
-INFO joined: actor="ego" (x=0.00 y=0.00 yaw_deg=0.0 at 0.0 sec)
-INFO joined: actor="traffic1" (x=80.36 y=-3.50 yaw_deg=0.0 at 0.5 sec)
-INFO joined: actor="traffic2" (x=120.83 y=-3.50 yaw_deg=0.0 at 0.5 sec)
+INFO joined: actor="ego" (x=100.00 y=0.00 yaw_deg=0.0 at 0.0 sec)
+INFO joined: actor="traffic1" (x=60.24 y=3.50 yaw_deg=0.0 at 0.0 sec)
+INFO joined: actor="traffic2" (x=68.75 y=0.00 yaw_deg=0.0 at 0.0 sec)
 ...
-INFO left: actor="traffic3" (x=219.87 y=3.50 yaw_deg=0.0 at 9.5 sec)
-INFO joined: actor="traffic7" (x=359.26 y=3.50 yaw_deg=0.0 at 10.0 sec)
+INFO left: actor="traffic10" (x=416.04 y=0.00 yaw_deg=0.0 at 9.9 sec)
+INFO joined: actor="traffic11" (x=393.06 y=0.00 yaw_deg=0.0 at 10.0 sec)
 ...
 done: world 'demo' reached sim time 30.0 in 3001 ticks (free-run)
-actual time: 2.979 s (10x real-time), world hash dbb6ddcb843791e2
+actual time: 3.457 s (9x real-time), world hash 8bac2ed99f675b77
 ```
 
 The ego holds the centre lane at 30 m/s; traffic spawns at 16-22 m/s in the
