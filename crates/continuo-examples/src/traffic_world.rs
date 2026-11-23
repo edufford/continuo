@@ -207,6 +207,23 @@ fn add_car<T: Transport>(
     Ok(())
 }
 
+/// Registers a traffic car where `spawn` places it, following the car
+/// ahead on IDM.
+fn add_traffic_car<T: Transport>(
+    conductor: &mut Conductor<T>,
+    spawn: &SpawnTrafficRequest,
+) -> Result<(), ScenarioError> {
+    add_car(
+        conductor,
+        &spawn.actor_name,
+        CarConfiguration::IdmFollowing,
+        spawn.start_s,
+        spawn.lane_offset,
+        spawn.speed,
+        spawn.first_due,
+    )
+}
+
 /// A car's radar, scanning its own lane ahead.
 fn radar_component(actor_name: &str) -> Box<dyn Component> {
     Box::new(RadarSensor::new(
@@ -424,15 +441,7 @@ fn add_spawner<T: Transport>(
 
     let starting_cars = spawner.fill_around_ego(conductor.world_seed());
     for spawn in starting_cars {
-        add_car(
-            conductor,
-            &spawn.actor_name,
-            CarConfiguration::IdmFollowing,
-            spawn.start_s,
-            spawn.lane_offset,
-            spawn.speed,
-            spawn.first_due,
-        )?;
+        add_traffic_car(conductor, &spawn)?;
     }
     conductor.add_component_at_start(WORLD_LEVEL, Box::new(spawner))?;
 
@@ -958,15 +967,7 @@ impl TrafficHandler {
         );
         for request in collected {
             match request {
-                TrafficRequest::Spawn(spawn) => add_car(
-                    conductor,
-                    &spawn.actor_name,
-                    CarConfiguration::IdmFollowing,
-                    spawn.start_s,
-                    spawn.lane_offset,
-                    spawn.speed,
-                    spawn.first_due,
-                )?,
+                TrafficRequest::Spawn(spawn) => add_traffic_car(conductor, &spawn)?,
                 // The spawner drops a car from its roll when it asks, so it
                 // never asks twice, but a scenario that also removed cars
                 // by hand could, and a request for someone already gone has
