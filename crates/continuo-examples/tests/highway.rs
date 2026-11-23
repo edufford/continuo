@@ -202,11 +202,12 @@ fn a_car_leaves_as_a_whole_actor() {
     // the driver removes the actor rather than its parts.
     let log = record_highway(traffic_world::SIM_SECONDS);
     let left = left(&log);
-    let first = left.first().expect("the ego overtakes somebody");
+    let first = left.first().expect("some car leaves");
     let path = ComponentPath::parse(first).expect("a leave names a valid path");
     let actor = path.actor().expect("a leaf path has an actor").as_str();
 
-    let pair: Vec<&&str> = left.iter().filter(|p| p.starts_with(actor)).collect();
+    let prefix = format!("{actor}/");
+    let pair: Vec<&&str> = left.iter().filter(|p| p.starts_with(&prefix)).collect();
     assert_eq!(
         pair,
         vec![
