@@ -1,6 +1,6 @@
 //! The demo world shared by every traffic example: an ego car driving a
-//! straight highway, with traffic spawning ahead of it in the neighboring
-//! lanes and retiring once it has gone past.
+//! straight highway among traffic kept around it, with new cars added
+//! ahead and cars that drift too far away in either direction retired.
 //!
 //! Two scenarios, kept side by side so the difference between them is one
 //! diff rather than two files: [`setup_live_traffic_scenario`], whose cars
@@ -66,21 +66,16 @@ const TRAFFIC_LANES: [f64; 3] = [LANE_WIDTH, 0.0, -LANE_WIDTH];
 /// The ego starts in the middle lane, with traffic either side of it.
 const EGO_LANE: f64 = TRAFFIC_LANES[TRAFFIC_LANES.len() / 2];
 
-// Sized so the run shows the ego following traffic, with cars in view the
-// whole time. The run starts with the whole population around the ego.
-// Traffic drives at 49 to 63 mph, all slower than the 67 mph the ego
-// wants, so the ego closes on the car ahead in its lane and follows it
-// while cars in the other lanes drift by. A car retires once it is
-// `RETIRE_BEHIND` behind the ego or `RETIRE_AHEAD` in front, and a new car
-// spawns at least `SPAWN_AHEAD` plus a `SPAWN_GAP` ahead of the ego, all
-// beyond the viewer's 60 m either side. A `SPAWN_GAP` leaves room to brake
-// from the largest difference in speed at the controller's 2 m/s^2.
+// Traffic is slower than the ego, so the ego closes on the car ahead in its
+// lane while cars in the other lanes drift by.
 const EGO_SPEED: f64 = 30.0;
 const TRAFFIC_SPEED: (f64, f64) = (22.0, 28.0);
 const TRAFFIC_POPULATION: usize = 10;
 const SPAWN_AHEAD: f64 = 40.0;
 const RETIRE_AHEAD: f64 = 90.0;
 const RETIRE_BEHIND: f64 = 70.0;
+/// Wide enough for a car to brake from the largest difference in speed
+/// before reaching the car ahead.
 const SPAWN_GAP: (f64, f64) = (25.0, 40.0);
 /// How many times a `SPAWN_GAP` the run starts with ahead of the ego in its
 /// lane, so it passes a few cars before it settles behind one.
@@ -378,19 +373,10 @@ fn controller_fmu_mapping(
     }
 }
 
-/// Registers the ego with the initial conditions given: starting `start_s`
-/// along the road, in the lane at `lane_offset`, at `speed`, which is also
-/// the speed it wants whenever the road ahead is free.
-///
-/// All three are parameters because they are the knobs a what-if run
-/// turns, and the ego is the component under study. Both setups pass
-/// [`EGO_START`] and [`EGO_LANE`]; where they differ is the speed.
-/// [`setup_live_traffic_scenario`] passes [`EGO_SPEED`] and
-/// [`setup_playback_traffic_scenario`] takes whatever the experiment wants,
-/// which is what keeps the two runs comparable to each other.
-///
-/// It always joins at sim time zero, which is not a parameter: an ego that
-/// turned up partway through would not be the run's subject.
+/// Registers the ego at sim time zero, `start_s` along the road in the lane
+/// at `lane_offset`, driving at `speed`, which is also the speed it wants
+/// when the road ahead is free. The three are parameters because a what-if
+/// run changes them.
 fn add_ego<T: Transport>(
     conductor: &mut Conductor<T>,
     start_s: f64,
@@ -409,14 +395,11 @@ fn add_ego<T: Transport>(
     )
 }
 
-/// Registers the traffic spawner, the component that decides which cars
-/// exist while the run is under way, and the cars the run starts with,
-/// placed around an ego starting `ego_start_s` along the road in the lane
-/// at `ego_start_lateral`.
-///
-/// Not needed by a run that plays traffic back from a log: there the
-/// recording is the traffic, and a live spawner would be deciding on top of
-/// it. See `traffic_resim`.
+/// Registers the cars the run starts with and the spawner that manages
+/// traffic after that, around an ego starting `ego_start_s` along the road
+/// in the lane at `ego_start_lateral`. A run that plays traffic back from a
+/// log, such as `traffic_resim`, leaves it out, since the recording is the
+/// traffic.
 fn add_spawner<T: Transport>(
     conductor: &mut Conductor<T>,
     ego_start_s: f64,
@@ -449,10 +432,9 @@ fn add_spawner<T: Transport>(
     Ok(())
 }
 
-/// Registers the live scenario's fixed cast: the ego and the spawner that
-/// manages traffic around it. Every car arrives later, while the run is
-/// under way, so this is the whole world only at sim time zero, and
-/// [`run_live_traffic_scenario`] is what builds the rest of it.
+/// Registers the live scenario's starting world: the ego, the traffic
+/// around it, and the spawner whose later cars [`run_live_traffic_scenario`]
+/// adds while the run is under way.
 ///
 /// *Live* because the traffic is decided as the run happens. `traffic_resim`
 /// assembles the other kind by hand: the same ego, but no spawner, and
@@ -471,14 +453,10 @@ pub fn setup_live_traffic_scenario<T: Transport>(
 /// once [`setup_scale_scenario`] has filled every lane and wrapped.
 const SCALE_ROW_SPACING: f64 = 50.0;
 
-/// The size the live demo holds at once, and the baseline a scaling run
-/// measures against: the ego plus its traffic, across the lanes traffic
-/// spawns into, the ego's among them.
-///
-/// Public so that a scaling run has something to measure against, namely the
-/// size everything else in the project is tuned for. It is the *size* that
-/// carries over and not the scenario: the demo decides its traffic while it
-/// runs, and [`setup_scale_scenario`] holds the cast still.
+/// The size of the live demo: the ego plus its traffic, across the lanes
+/// traffic drives in. A scaling run measures against it, since it is the
+/// size the project is tuned for. [`setup_scale_scenario`] takes the size
+/// but not the scenario, keeping one fixed set of cars.
 pub const BASELINE_DEMO_CARS: usize = TRAFFIC_POPULATION + 1;
 pub const BASELINE_DEMO_LANES: usize = TRAFFIC_LANES.len();
 

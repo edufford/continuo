@@ -203,10 +203,8 @@ cargo xtask verify-fmus
 cargo xtask package-fmus
 ```
 
-The demo prints each car to the console as it joins and leaves, with
-where it was then, and finishes in a few wall-seconds. The run starts with
-traffic around the ego, and later cars join ahead of it and leave once
-they are far enough behind or ahead:
+The demo prints where each car is as it joins and leaves, and finishes in
+a few wall-seconds:
 
 ```
 INFO joined: actor="ego" (x=100.00 y=0.00 yaw_deg=0.0 at 0.0 sec)

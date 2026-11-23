@@ -102,9 +102,8 @@ pub struct TrafficSpawnerConfig {
     /// How far beyond the furthest car in its lane a new car spawns, as a
     /// range in meters.
     pub gap_range: (f64, f64),
-    /// How many times a usual gap the cars a run starts with leave ahead
-    /// of the ego in its own lane, so it has room to pass cars beside it
-    /// before it reaches the car ahead.
+    /// Stretches the starting gaps ahead of the ego in its own lane, so it
+    /// passes cars beside it before it reaches the car ahead.
     pub ego_headway_factor: f64,
     /// Speed range for a new car, in m/s.
     pub speed_range: (f64, f64),
@@ -113,11 +112,8 @@ pub struct TrafficSpawnerConfig {
 /// Keeps the road around the ego populated, retiring cars that get too far
 /// behind or ahead of it, and watching poses to know where everyone is.
 pub struct TrafficSpawner {
-    /// The road everyone is measured along. Poses are projected onto it,
-    /// so every distance here is an arc length on one shared reference
-    /// path rather than a raw coordinate, which is what lets cars in
-    /// different lanes be compared, and what keeps this working if the
-    /// road ever bends.
+    /// The road every pose is projected onto, so cars in any lane, on a
+    /// straight or curved road, are compared by distance along it.
     road: Arc<crate::Waypoints>,
     /// What the spawner was built with.
     config: TrafficSpawnerConfig,
@@ -126,8 +122,8 @@ pub struct TrafficSpawner {
     /// its removal is requested, so the spawner does not ask twice while
     /// the first request is in flight.
     live_traffic: BTreeMap<String, LiveCar>,
-    /// Latest known position of the ego, the reference every decision here
-    /// is measured against. Where it starts until its first pose arrives.
+    /// The ego's arc length along the road, from its latest pose, or its
+    /// start before the first pose arrives.
     ego_s: f64,
     /// How many cars have been created, ever, which is what makes their
     /// names unique. Never decremented, so a retired `traffic3` never
@@ -162,13 +158,10 @@ impl TrafficSpawner {
 }
 
 impl TrafficSpawner {
-    /// The cars a run starts with, due at sim time zero and tracked as cars
-    /// the spawner spawned. Cars take the lanes in turn, each a gap beyond
-    /// the last car placed in its lane, starting from `retire_behind` behind
-    /// the ego. A car that would land beyond `retire_ahead` is left out, and
-    /// so is one within the smallest gap of the ego in the ego's lane, where
-    /// the next car then goes a gap beyond the ego. Ahead of the ego in its
-    /// own lane, each gap is `ego_headway_factor` times as long.
+    /// The cars a run starts with, due at sim time zero. They take the
+    /// lanes in turn, each a gap beyond the last in its lane, from
+    /// `retire_behind` behind the ego to `retire_ahead` ahead of it, and
+    /// keep clear of the ego in its own lane.
     pub fn fill_around_ego(&mut self, world_seed: u64) -> Vec<SpawnTrafficRequest> {
         // The seed the conductor gives the spawner, so the starting cars
         // come from the world seed like everything else in the run.
@@ -303,10 +296,10 @@ impl Component for TrafficSpawner {
             }
         }
 
-        // Retire the cars the ego has gone past. Each leaves `live_traffic`
-        // as soon as its removal is requested, so the spawner does not ask
-        // twice while the request is in flight.
-        let passed: Vec<String> = self
+        // Retire the cars too far behind or ahead of the ego. Each leaves
+        // `live_traffic` as soon as its removal is requested, so the spawner
+        // does not ask twice while the request is in flight.
+        let retiring: Vec<String> = self
             .live_traffic
             .iter()
             .filter(|&(_, car)| {
@@ -315,7 +308,7 @@ impl Component for TrafficSpawner {
             })
             .map(|(actor_name, _)| actor_name.clone())
             .collect();
-        for actor_name in passed {
+        for actor_name in retiring {
             self.live_traffic.remove(&actor_name);
             ctx.publish(
                 traffic_despawn_key(ctx.world_name()),
