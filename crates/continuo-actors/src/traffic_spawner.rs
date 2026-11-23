@@ -62,19 +62,6 @@ pub struct DespawnTrafficRequest {
     pub actor_name: String,
 }
 
-/// A new speed for one traffic car to want whenever the road ahead is free.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct SpeedTarget {
-    /// Speed to want, m/s.
-    pub speed: f64,
-}
-
-/// Key the spawner publishes a car's [`SpeedTarget`]s on.
-pub fn speed_target_key(world_name: &str, actor_name: &str) -> KeyExpr {
-    KeyExpr::new_rooted(format!("{world_name}/actor/{actor_name}/speed_tgt"))
-        .expect("valid speed target key")
-}
-
 /// Key the spawner publishes [`SpawnTrafficRequest`]s on.
 pub fn traffic_spawn_key(world_name: &str) -> KeyExpr {
     KeyExpr::new_rooted(format!("{world_name}/traffic_spawner/spawn")).expect("valid spawn key")
@@ -126,8 +113,6 @@ pub struct TrafficSpawner {
     ego_headway_factor: f64,
     /// Speed range for a new car, in m/s.
     speed_range: (f64, f64),
-    /// Mean seconds between new speed targets for each car.
-    retarget_interval: f64,
     /// The cars this spawner has spawned and not yet asked to remove, by
     /// actor name, with where each was last seen. A car leaves as soon as
     /// its removal is requested, so the spawner does not ask twice while
@@ -165,7 +150,6 @@ impl TrafficSpawner {
         gap_range: (f64, f64),
         ego_headway_factor: f64,
         speed_range: (f64, f64),
-        retarget_interval: f64,
     ) -> Self {
         assert!(
             retire_ahead >= spawn_ahead + gap_range.1,
@@ -188,7 +172,6 @@ impl TrafficSpawner {
             gap_range,
             ego_headway_factor,
             speed_range,
-            retarget_interval,
             live_traffic: BTreeMap::new(),
             ego_s: ego_start_s,
             cars_spawned: 0,
@@ -369,19 +352,6 @@ impl Component for TrafficSpawner {
             let speed = random.range_f64(self.speed_range.0, self.speed_range.1);
             let spawn = self.track_new_car(lane_offset, start_s, speed, ctx.now() + self.period);
             ctx.publish(traffic_spawn_key(ctx.world_name()), &spawn)?;
-        }
-
-        if self.retarget_interval > 0.0 {
-            let chance = self.period.as_secs_f64() / self.retarget_interval;
-            let names: Vec<String> = self.live_traffic.keys().cloned().collect();
-            for actor_name in names {
-                if random.next_f64() < chance {
-                    let target = SpeedTarget {
-                        speed: random.range_f64(self.speed_range.0, self.speed_range.1),
-                    };
-                    ctx.publish(speed_target_key(ctx.world_name(), &actor_name), &target)?;
-                }
-            }
         }
 
         // Return the next due time, one period out.

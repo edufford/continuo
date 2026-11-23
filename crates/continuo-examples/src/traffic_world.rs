@@ -25,8 +25,8 @@ use continuo_actors::control_laws::{FREE_ROAD, IdmParams, PurePursuitParams};
 use continuo_actors::{
     CarState, DespawnTrafficRequest, PathFollowController, PlantLimits, RadarSensor,
     SpawnTrafficRequest, TrafficSpawner, UnicyclePhysics, Waypoints, accel_cmd_key,
-    actor_of_pose_key, pose_key, radar_key, road_pose, speed_target_key, steer_cmd_key,
-    straight_road, traffic_despawn_key, traffic_spawn_key,
+    actor_of_pose_key, pose_key, radar_key, road_pose, steer_cmd_key, straight_road,
+    traffic_despawn_key, traffic_spawn_key,
 };
 use continuo_conductor::record::LogEvent;
 use continuo_conductor::{
@@ -79,9 +79,6 @@ const TRAFFIC_LANES: [f64; 3] = [LANE_WIDTH, EGO_LANE, -LANE_WIDTH];
 // beyond the viewer's 60 m either side. A `SPAWN_GAP` leaves room to brake
 // from the largest difference in speed at the controller's 2 m/s^2.
 const EGO_SPEED: f64 = 30.0;
-/// Mean seconds between new speed targets for each traffic car, or zero
-/// for none.
-const RETARGET_INTERVAL: f64 = 0.0;
 const TRAFFIC_SPEED: (f64, f64) = (22.0, 28.0);
 const TRAFFIC_POPULATION: usize = 10;
 const SPAWN_AHEAD: f64 = 40.0;
@@ -313,8 +310,6 @@ fn controller_fmu_mapping(
         InputBinding::new("orientation.y", pose_msg_key.clone()),
         InputBinding::new("orientation.z", pose_msg_key.clone()),
         InputBinding::new("speed", pose_msg_key),
-        InputBinding::new("idm.v0_speed_tgt", speed_target_key(world_name, actor_name))
-            .with_pointer("/speed"),
         InputBinding::new("range", radar_msg_key.clone())
             .with_pointer("/detections/*/range")
             .when_missing(json!(FREE_ROAD.range)),
@@ -428,7 +423,6 @@ fn add_spawner<T: Transport>(
         SPAWN_GAP,
         EGO_HEADWAY_FACTOR,
         TRAFFIC_SPEED,
-        RETARGET_INTERVAL,
     );
 
     // The cars the run starts with join at sim time zero beside the ego,
