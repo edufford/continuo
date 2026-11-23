@@ -337,13 +337,14 @@ impl Component for TrafficSpawner {
             let gap = random.range_f64(self.gap_range.0, self.gap_range.1);
             let lane_offset =
                 self.lane_offsets[random.next_u64() as usize % self.lane_offsets.len()];
-            let start_s = lane_front(
+            let front = lane_front(
                 self.live_traffic.values(),
                 lane_offset,
                 self.lane_tolerance,
                 self.ego_s,
                 self.spawn_ahead,
-            ) + gap;
+            );
+            let start_s = front + gap;
             if start_s > self.ego_s + self.retire_ahead {
                 // The lane has no room left this side of `retire_ahead`, so
                 // spawning waits for the next step.
