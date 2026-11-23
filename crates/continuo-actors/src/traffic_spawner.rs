@@ -120,6 +120,10 @@ pub struct TrafficSpawner {
     /// How far beyond the furthest car in its lane a new car spawns, as a
     /// range in meters.
     gap_range: (f64, f64),
+    /// How many times a usual gap the cars a run starts with leave ahead
+    /// of the ego in its own lane, so it has room to pass cars beside it
+    /// before it reaches the car ahead.
+    ego_headway_factor: f64,
     /// Speed range for a new car, in m/s.
     speed_range: (f64, f64),
     /// Mean seconds between new speed targets for each car.
@@ -159,6 +163,7 @@ impl TrafficSpawner {
         retire_behind: f64,
         retire_ahead: f64,
         gap_range: (f64, f64),
+        ego_headway_factor: f64,
         speed_range: (f64, f64),
         retarget_interval: f64,
     ) -> Self {
@@ -181,6 +186,7 @@ impl TrafficSpawner {
             retire_behind,
             retire_ahead,
             gap_range,
+            ego_headway_factor,
             speed_range,
             retarget_interval,
             live_traffic: BTreeMap::new(),
@@ -196,15 +202,20 @@ impl TrafficSpawner {
     /// the last car placed in its lane, starting from `retire_behind` behind
     /// the ego. A car that would land beyond `retire_ahead` is left out, and
     /// so is one within the smallest gap of the ego in the ego's lane, where
-    /// the next car then goes a gap beyond the ego.
+    /// the next car then goes a gap beyond the ego. Ahead of the ego in its
+    /// own lane, each gap is `ego_headway_factor` times as long.
     pub fn fill_around_ego(&mut self, random: &mut RandomSplitMix64) -> Vec<SpawnTrafficRequest> {
         let mut lane_fronts = vec![self.ego_s - self.retire_behind; self.lane_offsets.len()];
         let mut spawns = Vec::with_capacity(self.target_population);
         for slot in 0..self.target_population {
             let lane = slot % lane_fronts.len();
-            let start_s = lane_fronts[lane] + random.range_f64(self.gap_range.0, self.gap_range.1);
             let in_ego_lane =
                 (self.lane_offsets[lane] - self.ego_start_lateral).abs() <= self.lane_tolerance;
+            let mut gap = random.range_f64(self.gap_range.0, self.gap_range.1);
+            if in_ego_lane && lane_fronts[lane] >= self.ego_s {
+                gap *= self.ego_headway_factor;
+            }
+            let start_s = lane_fronts[lane] + gap;
             if in_ego_lane && (start_s - self.ego_s).abs() < self.gap_range.0 {
                 lane_fronts[lane] = self.ego_s;
                 continue;

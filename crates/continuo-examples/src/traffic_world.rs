@@ -88,6 +88,9 @@ const SPAWN_AHEAD: f64 = 40.0;
 const RETIRE_AHEAD: f64 = 90.0;
 const RETIRE_BEHIND: f64 = 70.0;
 const SPAWN_GAP: (f64, f64) = (25.0, 40.0);
+/// How many times a `SPAWN_GAP` the run starts with ahead of the ego in its
+/// lane, so it passes a few cars before it settles behind one.
+const EGO_HEADWAY_FACTOR: f64 = 2.0;
 
 /// What a full command is worth on every car in this world.
 const CAR_LIMITS: PlantLimits = PlantLimits::highway_car();
@@ -423,6 +426,7 @@ fn add_spawner<T: Transport>(
         RETIRE_BEHIND,
         RETIRE_AHEAD,
         SPAWN_GAP,
+        EGO_HEADWAY_FACTOR,
         TRAFFIC_SPEED,
         RETARGET_INTERVAL,
     );

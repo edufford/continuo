@@ -213,11 +213,11 @@ INFO joined: actor="ego" (x=100.00 y=0.00 yaw_deg=0.0 at 0.0 sec)
 INFO joined: actor="traffic1" (x=60.24 y=3.50 yaw_deg=0.0 at 0.0 sec)
 INFO joined: actor="traffic2" (x=68.75 y=0.00 yaw_deg=0.0 at 0.0 sec)
 ...
-INFO left: actor="traffic10" (x=416.04 y=0.00 yaw_deg=0.0 at 9.9 sec)
-INFO joined: actor="traffic11" (x=393.06 y=0.00 yaw_deg=0.0 at 10.0 sec)
+INFO left: actor="traffic1" (x=199.70 y=3.50 yaw_deg=0.0 at 6.5 sec)
+INFO joined: actor="traffic11" (x=358.10 y=0.00 yaw_deg=0.0 at 6.6 sec)
 ...
 done: world 'demo' reached sim time 30.0 in 3001 ticks (free-run)
-actual time: 3.457 s (9x real-time), world hash 8bac2ed99f675b77
+actual time: 4.275 s (7x real-time), world hash acd134a54d7e0963
 ```
 
 The ego holds the centre lane at 30 m/s; traffic spawns at 16-22 m/s in the
