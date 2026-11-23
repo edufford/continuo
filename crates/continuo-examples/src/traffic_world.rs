@@ -35,8 +35,7 @@ use continuo_conductor::{
     WORLD_LEVEL,
 };
 use continuo_core::{
-    Component, ComponentId, ComponentPath, CoreError, KeyExpr, Message, Pose, RandomSplitMix64,
-    SimDuration, SimTime, derive_component_seed,
+    Component, ComponentId, ComponentPath, CoreError, KeyExpr, Message, Pose, SimDuration, SimTime,
 };
 use continuo_fmi::{FmuComponent, FmuConstructionError, FmuMapping, InputBinding, OutputBinding};
 use continuo_transport::Transport;
@@ -423,12 +422,8 @@ fn add_spawner<T: Transport>(
     };
     let mut spawner = TrafficSpawner::new(shared_road(), config);
 
-    // The cars the run starts with join at sim time zero beside the ego,
-    // their speeds drawn from a stream of the spawner's own.
-    let spawner_path = ComponentPath::parse("traffic_spawner").expect("a valid path");
-    let mut random =
-        RandomSplitMix64::new(derive_component_seed(conductor.world_seed(), &spawner_path));
-    for spawn in spawner.fill_around_ego(&mut random) {
+    let starting_cars = spawner.fill_around_ego(conductor.world_seed());
+    for spawn in starting_cars {
         add_car(
             conductor,
             &spawn.actor_name,

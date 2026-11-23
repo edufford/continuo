@@ -18,8 +18,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use continuo_core::{
-    Component, ComponentId, CoreError, KeyExpr, Pose, RandomSplitMix64, SimDuration, SimTime,
-    StepCtx,
+    Component, ComponentId, ComponentPath, CoreError, KeyExpr, Pose, RandomSplitMix64, SimDuration,
+    SimTime, StepCtx, derive_component_seed,
 };
 use serde::{Deserialize, Serialize};
 
@@ -169,7 +169,11 @@ impl TrafficSpawner {
     /// so is one within the smallest gap of the ego in the ego's lane, where
     /// the next car then goes a gap beyond the ego. Ahead of the ego in its
     /// own lane, each gap is `ego_headway_factor` times as long.
-    pub fn fill_around_ego(&mut self, random: &mut RandomSplitMix64) -> Vec<SpawnTrafficRequest> {
+    pub fn fill_around_ego(&mut self, world_seed: u64) -> Vec<SpawnTrafficRequest> {
+        // The seed the conductor gives the spawner, so the starting cars
+        // come from the world seed like everything else in the run.
+        let path = ComponentPath::parse(self.id().as_str()).expect("an id is a valid path");
+        let mut random = RandomSplitMix64::new(derive_component_seed(world_seed, &path));
         let mut lane_fronts =
             vec![self.ego_s - self.config.retire_behind; self.config.lane_offsets.len()];
         let mut spawns = Vec::with_capacity(self.config.target_population);
