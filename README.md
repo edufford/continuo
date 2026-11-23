@@ -7,7 +7,7 @@ vehicle. It runs entirely in a single process today, and is designed so
 components can later be split into separate processes over
 [Zenoh](https://zenoh.io/) without changing component code.
 
-![The viewer following the ego car as it overtakes traffic](docs/viewer.gif)
+![The viewer following the ego car through traffic](docs/viewer.gif)
 
 See [PLAN.md](PLAN.md) for the full design and milestone roadmap, and
 [DECISIONS.md](DECISIONS.md) for why the design is what it is.
@@ -300,7 +300,7 @@ To record rather than watch, `--record` writes an animated GIF, which is how
 the picture at the top of this file was made:
 
 ```sh
-python -m continuo_viz --log ../run.jsonl --record ../docs/viewer.gif
+python -m continuo_viz --log ../run.jsonl --record ../docs/viewer.gif --record-seconds 5
 ```
 
 Recording opens no window and does not use the wall clock: it walks the log in
