@@ -9,12 +9,12 @@ with the length of the run.
 from __future__ import annotations
 
 import logging
-import time
 from collections.abc import Generator
 from pathlib import Path
 
 from ..events import Event, event_from_log_line
 from ..protocol import check_log_header
+from .wall_clock import wall_seconds
 
 logger = logging.getLogger(__name__)
 
@@ -229,10 +229,7 @@ class LogSource:
         if self.done:
             return []
 
-        # `perf_counter` rather than `monotonic`, which on Windows before
-        # Python 3.13 ticks only every 15.6 ms, so a frame would sometimes see
-        # no time pass and the next see two ticks of it.
-        now = time.perf_counter()
+        now = wall_seconds()
         # Anchored on the first drain rather than in the constructor, so a
         # replay does not lose time to whatever happened between being built
         # and being asked for anything.
