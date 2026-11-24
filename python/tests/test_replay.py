@@ -205,7 +205,7 @@ def test_a_join_from_the_future_is_delivered_when_its_instant_arrives(
     # A clock the test moves rather than one it waits on, so thirty seconds
     # pass between the two drains without the suite taking thirty seconds.
     now = 1000.0
-    monkeypatch.setattr(log_source, "time", SimpleNamespace(monotonic=lambda: now))
+    monkeypatch.setattr(log_source, "time", SimpleNamespace(perf_counter=lambda: now))
 
     source = LogSource(log)
     source.drain()

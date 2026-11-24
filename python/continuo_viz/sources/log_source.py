@@ -224,7 +224,10 @@ class LogSource:
         if self.done:
             return []
 
-        now = time.monotonic()
+        # `perf_counter` rather than `monotonic`, which on Windows before
+        # Python 3.13 ticks only every 15.6 ms, so a frame would sometimes see
+        # no time pass and the next see two ticks of it.
+        now = time.perf_counter()
         # Anchored on the first drain rather than in the constructor, so a
         # replay does not lose time to whatever happened between being built
         # and being asked for anything.

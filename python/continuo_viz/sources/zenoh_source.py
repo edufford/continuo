@@ -12,11 +12,13 @@ keys are relayed or published at the source.
 from __future__ import annotations
 
 import logging
+import time
 from collections import deque
 from typing import Any
 
 from ..events import Event, event_from_sample
 from ..protocol import VIZ_KEY_ROOT
+from .playout import Playout
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +54,7 @@ class ZenohSource:
 
         self.world_name = world_name
         self._queue: deque[Event] = deque(maxlen=_QUEUE_LIMIT)
+        self._playout = Playout()
 
         # Reported either side of the open, because this is where a live
         # session hangs when discovery finds nothing: the first line is what
@@ -117,10 +120,19 @@ class ZenohSource:
             self._queue.append(event)
 
     def drain(self) -> list[Event]:
-        """Everything received since the last call."""
-        received = list(self._queue)
-        self._queue.clear()
-        return received
+        """Everything received whose instant the display clock has reached.
+
+        See :mod:`~continuo_viz.sources.playout` for why it is held back. The
+        queue is taken one sample at a time, since the Zenoh thread may append
+        while this runs, and copying it and then clearing it would drop
+        whatever arrived between the two.
+        """
+        while self._queue:
+            self._playout.add(self._queue.popleft())
+        # `perf_counter` rather than `monotonic`, which on Windows before
+        # Python 3.13 ticks only every 15.6 ms, so a frame would sometimes see
+        # no time pass and the next see two ticks of it.
+        return self._playout.release(time.perf_counter())
 
     def close(self) -> None:
         logger.info("closing the Zenoh session")
