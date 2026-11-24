@@ -18,7 +18,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use continuo_core::{
-    Component, ComponentId, CoreError, KeyExpr, Pose, SimDuration, SimTime, StepCtx,
+    Component, ComponentId, CoreError, KeyExpr, Pose, SimDuration, SimTime, StepCtx, Subscription,
 };
 use serde::{Deserialize, Serialize};
 
@@ -193,10 +193,12 @@ impl Component for TrafficSpawner {
         ComponentId::new("traffic_spawner").expect("valid id")
     }
 
-    fn subscriptions(&self) -> Vec<KeyExpr> {
-        // Every actor's pose, the ego's included: the spawner's decisions
-        // are all relative positions along the road.
-        vec![KeyExpr::new_rooted("*/actor/**/pose").expect("valid key")]
+    fn subscriptions(&self) -> Vec<Subscription> {
+        // The newest pose of every actor, the ego's included: the spawner's
+        // decisions are all about where cars are now along the road.
+        vec![Subscription::latest(
+            KeyExpr::new_rooted("*/actor/**/pose").expect("valid key"),
+        )]
     }
 
     fn step(&mut self, ctx: &mut StepCtx) -> Result<SimTime, CoreError> {

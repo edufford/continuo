@@ -7,6 +7,48 @@ use crate::keyexpr::KeyExpr;
 use crate::messages::Message;
 use crate::time::{SimDuration, SimTime};
 
+/// Which of the messages on a subscribed key reach the inbox.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Delivery {
+    /// Every message released since the component last stepped.
+    Every,
+    /// Only the newest released message on each key, for a component that
+    /// keeps the latest value and steps less often than the key is
+    /// published, so it neither queues nor decodes the messages it would
+    /// skip.
+    ///
+    /// A message published at an earlier instant is always released, so the
+    /// newest released one is either that or a same-instant message the
+    /// visibility rule lets through.
+    Latest,
+}
+
+/// A key expression a component subscribes to, and which of its messages
+/// to deliver.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Subscription {
+    pub key: KeyExpr,
+    pub delivery: Delivery,
+}
+
+impl Subscription {
+    /// Every message on `key`.
+    pub fn every(key: KeyExpr) -> Self {
+        Subscription {
+            key,
+            delivery: Delivery::Every,
+        }
+    }
+
+    /// Only the newest message on each key `key` matches.
+    pub fn latest(key: KeyExpr) -> Self {
+        Subscription {
+            key,
+            delivery: Delivery::Latest,
+        }
+    }
+}
+
 /// A simulation component: steps when due, reads its inbox, publishes
 /// outputs, and reports the next sim time it should step.
 ///
@@ -28,8 +70,9 @@ pub trait Component {
     /// This component's name within its parent (one path segment).
     fn id(&self) -> ComponentId;
 
-    /// Key expressions this component wants delivered to its inbox.
-    fn subscriptions(&self) -> Vec<KeyExpr>;
+    /// Key expressions this component wants delivered to its inbox, each
+    /// with which of its messages to deliver.
+    fn subscriptions(&self) -> Vec<Subscription>;
 
     /// Advance internal state to `ctx.now()`. Returns the next sim time this
     /// component should step, which must be strictly greater than `ctx.now()`

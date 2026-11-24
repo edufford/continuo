@@ -16,7 +16,7 @@ pub mod random;
 pub mod seed;
 mod time;
 
-pub use component::{Component, StepCtx};
+pub use component::{Component, Delivery, StepCtx, Subscription};
 pub use error::CoreError;
 pub use hash::{HashFnv1a64, hash_bytes};
 pub use ids::{ComponentId, ComponentPath};

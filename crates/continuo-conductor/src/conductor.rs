@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 use continuo_core::{
-    Component, ComponentPath, HashFnv1a64, Message, SimDuration, SimTime, StepCtx, TickDone,
-    TickStart, hash_bytes, mix_seeds,
+    Component, ComponentPath, HashFnv1a64, Message, SimDuration, SimTime, StepCtx, Subscription,
+    TickDone, TickStart, hash_bytes, mix_seeds,
 };
 use continuo_transport::Transport;
 use tracing::{trace, warn};
@@ -461,8 +461,8 @@ impl<T: Transport> Conductor<T> {
         let (index, path) =
             self.registry
                 .add(&parent_path, component, self.config.world_seed, step_timing)?;
-        for key in subscriptions {
-            self.transport.subscribe(path.clone(), key);
+        for Subscription { key, delivery } in subscriptions {
+            self.transport.subscribe(path.clone(), key, delivery);
         }
         self.schedule.insert(first_due, index);
         self.emit_membership(MembershipChange::Joined(RecordedJoin {

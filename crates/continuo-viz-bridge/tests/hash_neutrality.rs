@@ -14,7 +14,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use continuo_conductor::record::LogEvent;
 use continuo_conductor::{Conductor, ConductorConfig, JoinMetadata, Pacing, Recorder, WORLD_LEVEL};
 use continuo_core::{
-    Component, ComponentId, CoreError, KeyExpr, Pose, SimDuration, SimTime, StepCtx, Vec3,
+    Component, ComponentId, CoreError, KeyExpr, Pose, SimDuration, SimTime, StepCtx, Subscription,
+    Vec3,
 };
 use continuo_transport::{InProcTransport, MonitorTransport, Transport};
 use continuo_viz_bridge::{VizBridge, VizFrame, VizSink};
@@ -32,7 +33,7 @@ impl Component for Beacon {
         ComponentId::new(self.id).expect("valid id")
     }
 
-    fn subscriptions(&self) -> Vec<KeyExpr> {
+    fn subscriptions(&self) -> Vec<Subscription> {
         Vec::new()
     }
 
@@ -152,8 +153,10 @@ impl Component for SilentObserver {
         ComponentId::new("observer").expect("valid id")
     }
 
-    fn subscriptions(&self) -> Vec<KeyExpr> {
-        vec![KeyExpr::new("continuo/*/actor/*/pose").expect("valid key")]
+    fn subscriptions(&self) -> Vec<Subscription> {
+        vec![Subscription::every(
+            KeyExpr::new("continuo/*/actor/*/pose").expect("valid key"),
+        )]
     }
 
     fn step(&mut self, ctx: &mut StepCtx) -> Result<SimTime, CoreError> {

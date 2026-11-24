@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use continuo_core::{
-    Component, ComponentId, CoreError, KeyExpr, Pose, SimDuration, SimTime, StepCtx,
+    Component, ComponentId, CoreError, KeyExpr, Pose, SimDuration, SimTime, StepCtx, Subscription,
 };
 
 use crate::commands::SteerCmd;
@@ -74,12 +74,13 @@ impl Component for PathFollowController {
         ComponentId::new("controller").expect("valid id")
     }
 
-    fn subscriptions(&self) -> Vec<KeyExpr> {
+    fn subscriptions(&self) -> Vec<Subscription> {
         // World segment wildcarded: the world name is only known at step time.
         // TODO(PLAN "Scenario configuration"): once scenarios instantiate
         // components, pass the world name at construction and subscribe
         // precisely (same in `UnicyclePhysics`).
-        vec![KeyExpr::new_rooted(format!("*/actor/{}/pose", self.actor_name)).expect("valid key")]
+        let own_pose = KeyExpr::new_rooted(format!("*/actor/{}/pose", self.actor_name));
+        vec![Subscription::every(own_pose.expect("valid key"))]
     }
 
     fn step(&mut self, ctx: &mut StepCtx) -> Result<SimTime, CoreError> {

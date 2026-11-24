@@ -6,7 +6,7 @@ use std::path::Path;
 
 use continuo_core::{
     Component, ComponentId, ComponentPath, CoreError, KeyExpr, Message, SimDuration, SimTime,
-    StepCtx,
+    StepCtx, Subscription,
 };
 use fmi::fmi3::instance::InstanceCS;
 use fmi::fmi3::schema::Fmi3ModelDescription;
@@ -426,8 +426,12 @@ impl Component for FmuComponent {
         self.id.clone()
     }
 
-    fn subscriptions(&self) -> Vec<KeyExpr> {
-        self.subscriptions.clone()
+    fn subscriptions(&self) -> Vec<Subscription> {
+        self.subscriptions
+            .iter()
+            .cloned()
+            .map(Subscription::every)
+            .collect()
     }
 
     /// An FMU is opaque to the per-tick hash, so it is covered in

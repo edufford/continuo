@@ -12,7 +12,9 @@
 
 use continuo_actors::traffic_spawn_key;
 use continuo_conductor::{Conductor, WORLD_LEVEL};
-use continuo_core::{Component, ComponentId, CoreError, KeyExpr, SimDuration, SimTime, StepCtx};
+use continuo_core::{
+    Component, ComponentId, CoreError, SimDuration, SimTime, StepCtx, Subscription,
+};
 use continuo_examples::traffic_world::{self, TrafficHandler};
 use continuo_transport::{InProcTransport, MonitorTransport};
 
@@ -29,7 +31,7 @@ impl Component for Saboteur {
         ComponentId::new("saboteur").expect("valid id")
     }
 
-    fn subscriptions(&self) -> Vec<KeyExpr> {
+    fn subscriptions(&self) -> Vec<Subscription> {
         Vec::new()
     }
 

@@ -1,4 +1,4 @@
-use continuo_core::{ComponentPath, KeyExpr, Message};
+use continuo_core::{ComponentPath, Delivery, KeyExpr, Message};
 
 use crate::Transport;
 
@@ -40,8 +40,8 @@ impl<T: Transport> MonitorTransport<T> {
 }
 
 impl<T: Transport> Transport for MonitorTransport<T> {
-    fn subscribe(&mut self, subscriber: ComponentPath, key: KeyExpr) {
-        self.inner.subscribe(subscriber, key);
+    fn subscribe(&mut self, subscriber: ComponentPath, key: KeyExpr, delivery: Delivery) {
+        self.inner.subscribe(subscriber, key, delivery);
     }
 
     fn unsubscribe(&mut self, subscriber: &ComponentPath) {
@@ -97,6 +97,7 @@ mod tests {
         monitor.subscribe(
             ComponentPath::parse("sub").unwrap(),
             KeyExpr::new("w/data").unwrap(),
+            Delivery::Every,
         );
         monitor.publish(msg("w/data", 1));
 

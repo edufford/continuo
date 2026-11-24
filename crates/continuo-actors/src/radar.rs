@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use continuo_core::{
     Component, ComponentId, CoreError, Detection, KeyExpr, SimDuration, SimTime, StepCtx,
+    Subscription,
 };
 use serde::{Deserialize, Serialize};
 
@@ -211,11 +212,15 @@ impl Component for RadarSensor {
         ComponentId::new("radar").expect("valid id")
     }
 
-    fn subscriptions(&self) -> Vec<KeyExpr> {
+    fn subscriptions(&self) -> Vec<Subscription> {
         // Every actor's pose, since a sensor cannot know in advance what
-        // it will find. The world segment is wildcarded for the reason
-        // given in `PathFollowController`, and its TODO covers this too.
-        vec![KeyExpr::new_rooted("*/actor/*/pose").expect("valid key")]
+        // it will find, and only the newest of each, since a scan measures
+        // where cars are now. The world segment is wildcarded for the
+        // reason given in `PathFollowController`, and its TODO covers this
+        // too.
+        vec![Subscription::latest(
+            KeyExpr::new_rooted("*/actor/*/pose").expect("valid key"),
+        )]
     }
 
     fn step(&mut self, ctx: &mut StepCtx) -> Result<SimTime, CoreError> {

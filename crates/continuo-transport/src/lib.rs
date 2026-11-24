@@ -11,7 +11,7 @@ mod monitor;
 pub use inproc::InProcTransport;
 pub use monitor::MonitorTransport;
 
-use continuo_core::{ComponentPath, KeyExpr, Message};
+use continuo_core::{ComponentPath, Delivery, KeyExpr, Message};
 
 /// Pub/sub transport for continuo messages.
 ///
@@ -19,8 +19,13 @@ use continuo_core::{ComponentPath, KeyExpr, Message};
 /// subscriptions and message metadata, never on arrival order or wall time.
 pub trait Transport {
     /// Registers a subscription: messages whose key matches `key` are queued
-    /// for `subscriber` until drained.
-    fn subscribe(&mut self, subscriber: ComponentPath, key: KeyExpr);
+    /// for `subscriber` until drained, as `delivery` says. A key matched by
+    /// patterns asking for both deliveries delivers every message.
+    ///
+    /// [`Delivery::Latest`] relies on the release rule [`drain`](Self::drain)
+    /// describes: a message published before the drain's instant always
+    /// releases.
+    fn subscribe(&mut self, subscriber: ComponentPath, key: KeyExpr, delivery: Delivery);
 
     /// Drops every subscription for `subscriber`, along with anything still
     /// queued for it. Called when a component leaves (milestone 4).

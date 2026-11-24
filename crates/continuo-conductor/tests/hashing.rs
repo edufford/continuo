@@ -8,6 +8,7 @@ use continuo_conductor::{
 };
 use continuo_core::{
     Component, ComponentId, CoreError, KeyExpr, RandomSplitMix64, SimDuration, SimTime, StepCtx,
+    Subscription,
 };
 use continuo_transport::{InProcTransport, MonitorTransport};
 
@@ -23,7 +24,7 @@ impl Component for NoiseSource {
         ComponentId::new(self.id).expect("valid id")
     }
 
-    fn subscriptions(&self) -> Vec<KeyExpr> {
+    fn subscriptions(&self) -> Vec<Subscription> {
         Vec::new()
     }
 
@@ -52,7 +53,7 @@ impl Component for HiddenCounter {
         ComponentId::new("hidden").expect("valid id")
     }
 
-    fn subscriptions(&self) -> Vec<KeyExpr> {
+    fn subscriptions(&self) -> Vec<Subscription> {
         Vec::new()
     }
 

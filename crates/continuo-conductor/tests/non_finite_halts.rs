@@ -12,7 +12,7 @@
 
 use continuo_conductor::{Conductor, ConductorConfig, ConductorError, Pacing, WORLD_LEVEL};
 use continuo_core::{
-    Component, ComponentId, CoreError, KeyExpr, SimDuration, SimTime, StepCtx, Vec3,
+    Component, ComponentId, CoreError, KeyExpr, SimDuration, SimTime, StepCtx, Subscription, Vec3,
 };
 use continuo_transport::InProcTransport;
 
@@ -30,7 +30,7 @@ impl Component for DivergingIntegrator {
         ComponentId::new("integrator").expect("valid id")
     }
 
-    fn subscriptions(&self) -> Vec<KeyExpr> {
+    fn subscriptions(&self) -> Vec<Subscription> {
         Vec::new()
     }
 

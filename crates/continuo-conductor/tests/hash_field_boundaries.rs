@@ -16,7 +16,9 @@
 //! requires their hashes to differ.
 
 use continuo_conductor::{Conductor, ConductorConfig, Pacing, WORLD_LEVEL};
-use continuo_core::{Component, ComponentId, CoreError, KeyExpr, SimDuration, SimTime, StepCtx};
+use continuo_core::{
+    Component, ComponentId, CoreError, KeyExpr, SimDuration, SimTime, StepCtx, Subscription,
+};
 use continuo_transport::InProcTransport;
 
 /// Publishes a fixed set of `(key, payload)` pairs once, then holds fixed
@@ -34,7 +36,7 @@ impl Component for ScriptedComponent {
         ComponentId::new(self.id).expect("valid id")
     }
 
-    fn subscriptions(&self) -> Vec<KeyExpr> {
+    fn subscriptions(&self) -> Vec<Subscription> {
         Vec::new()
     }
 

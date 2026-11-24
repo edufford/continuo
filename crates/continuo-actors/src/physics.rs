@@ -1,5 +1,6 @@
 use continuo_core::{
-    Component, ComponentId, CoreError, KeyExpr, Pose, Quat, SimDuration, SimTime, StepCtx, Vec3,
+    Component, ComponentId, CoreError, KeyExpr, Pose, Quat, SimDuration, SimTime, StepCtx,
+    Subscription, Vec3,
 };
 use serde::{Deserialize, Serialize};
 
@@ -209,15 +210,15 @@ impl Component for UnicyclePhysics {
         ComponentId::new("physics").expect("valid id")
     }
 
-    fn subscriptions(&self) -> Vec<KeyExpr> {
+    fn subscriptions(&self) -> Vec<Subscription> {
         // World segment wildcarded for the reason `PathFollowController`
         // gives, and its TODO covers this one too.
-        vec![
-            KeyExpr::new_rooted(format!("*/actor/{}/accel_cmd", self.actor_name))
-                .expect("valid key"),
-            KeyExpr::new_rooted(format!("*/actor/{}/steer_cmd", self.actor_name))
-                .expect("valid key"),
-        ]
+        ["accel_cmd", "steer_cmd"]
+            .map(|command| {
+                let key = KeyExpr::new_rooted(format!("*/actor/{}/{command}", self.actor_name));
+                Subscription::every(key.expect("valid key"))
+            })
+            .to_vec()
     }
 
     fn step(&mut self, ctx: &mut StepCtx) -> Result<SimTime, CoreError> {

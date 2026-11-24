@@ -20,7 +20,7 @@ use continuo_conductor::{
     StepTiming, Verifier, WORLD_LEVEL,
 };
 use continuo_core::{
-    Component, ComponentId, ComponentPath, CoreError, KeyExpr, SimDuration, SimTime, StepCtx,
+    Component, ComponentId, ComponentPath, CoreError, SimDuration, SimTime, StepCtx, Subscription,
 };
 use continuo_transport::{InProcTransport, MonitorTransport};
 
@@ -43,7 +43,7 @@ impl Component for SlowTicker {
         ComponentId::new(self.id).expect("valid id")
     }
 
-    fn subscriptions(&self) -> Vec<KeyExpr> {
+    fn subscriptions(&self) -> Vec<Subscription> {
         Vec::new()
     }
 

@@ -13,7 +13,9 @@ use continuo_conductor::{
     Conductor, ConductorConfig, ConductorError, JoinMetadata, LeaveMetadata, MembershipChange,
     Pacing, RecordedJoin, RecordedLeave, RecordedObservation, Recorder, Verifier, WORLD_LEVEL,
 };
-use continuo_core::{Component, ComponentId, CoreError, KeyExpr, SimDuration, SimTime, StepCtx};
+use continuo_core::{
+    Component, ComponentId, CoreError, KeyExpr, SimDuration, SimTime, StepCtx, Subscription,
+};
 use continuo_transport::{InProcTransport, MonitorTransport};
 
 /// Every step every component took, in order.
@@ -31,7 +33,7 @@ impl Component for Ticker {
         ComponentId::new(self.id).expect("valid id")
     }
 
-    fn subscriptions(&self) -> Vec<KeyExpr> {
+    fn subscriptions(&self) -> Vec<Subscription> {
         Vec::new()
     }
 
@@ -1143,7 +1145,7 @@ impl Component for Talker {
         ComponentId::new("talker").expect("valid id")
     }
 
-    fn subscriptions(&self) -> Vec<KeyExpr> {
+    fn subscriptions(&self) -> Vec<Subscription> {
         Vec::new()
     }
 
@@ -1166,8 +1168,10 @@ impl Component for Listener {
         ComponentId::new("listener").expect("valid id")
     }
 
-    fn subscriptions(&self) -> Vec<KeyExpr> {
-        vec![KeyExpr::new("chatter").expect("valid key")]
+    fn subscriptions(&self) -> Vec<Subscription> {
+        vec![Subscription::every(
+            KeyExpr::new("chatter").expect("valid key"),
+        )]
     }
 
     fn step(&mut self, ctx: &mut StepCtx) -> Result<SimTime, CoreError> {

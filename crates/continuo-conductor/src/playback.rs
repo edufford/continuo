@@ -6,7 +6,7 @@
 //! it is harness machinery built on [`EventLog`], not a sample actor, and
 //! putting it in the actors crate would make that crate depend on this one.
 
-use continuo_core::{Component, ComponentId, CoreError, KeyExpr, SimTime, StepCtx};
+use continuo_core::{Component, ComponentId, CoreError, KeyExpr, SimTime, StepCtx, Subscription};
 use serde_json::value::RawValue;
 
 use crate::record::{EventLog, LogEvent};
@@ -66,7 +66,7 @@ impl Component for PlaybackComponent {
         self.id.clone()
     }
 
-    fn subscriptions(&self) -> Vec<KeyExpr> {
+    fn subscriptions(&self) -> Vec<Subscription> {
         Vec::new()
     }
 
