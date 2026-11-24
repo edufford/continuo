@@ -17,7 +17,7 @@ from __future__ import annotations
 import heapq
 import itertools
 
-from ..events import Event
+from ..events import RESTART_SECONDS, Event
 
 # Sim seconds the display clock trails the newest event received.
 #
@@ -38,8 +38,11 @@ class Playout:
     attaching late, catches up at once rather than drifting further behind.
     """
 
-    def __init__(self, delay: float = DELAY_SECONDS) -> None:
+    def __init__(
+        self, delay: float = DELAY_SECONDS, restart: float = RESTART_SECONDS
+    ) -> None:
         self._delay = delay
+        self._restart = restart
         # Ordered by sim time, then by arrival, so events of one instant keep
         # the order they came in.
         self._held: list[tuple[float, int, Event]] = []
@@ -49,7 +52,18 @@ class Playout:
         self._shown_at_wall: float | None = None
 
     def add(self, event: Event) -> None:
-        """Holds an event until the display clock reaches its instant."""
+        """Holds an event until the display clock reaches its instant.
+
+        An event from well before the newest one means the world started
+        again, so the playout starts again with it. Otherwise the display
+        clock would already be past everything the new run sends, and each
+        event would be released the moment it arrived.
+        """
+        if self._newest is not None and event.event_time < self._newest - self._restart:
+            self._held.clear()
+            self._newest = None
+            self._shown = None
+            self._shown_at_wall = None
         heapq.heappush(self._held, (event.event_time, next(self._arrivals), event))
         if self._newest is None or event.event_time > self._newest:
             self._newest = event.event_time

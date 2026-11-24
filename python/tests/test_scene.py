@@ -164,6 +164,18 @@ def test_a_second_publisher_moves_an_actor_without_taking_ownership():
     assert scene.actors["ego"].pose_source == "ego/physics"
 
 
+def test_a_world_starting_again_starts_the_scene_again():
+    scene = Scene()
+    scene.apply(pose_message("ego", 250.0, time=8.0))
+    scene.apply(pose_message("traffic12", 400.0, time=8.0))
+
+    scene.apply(pose_message("ego", 100.0, time=0.0))
+
+    assert set(scene.actors) == {"ego"}
+    assert scene.actors["ego"].pose.x == 100.0
+    assert scene.sim_time == 0.0
+
+
 def test_parse_actor_key_only_matches_actor_keys():
     assert parse_actor_key("continuo/demo/actor/ego/pose") == ("ego", "pose")
     assert parse_actor_key("continuo/demo/actor/ego/steer_cmd") == (

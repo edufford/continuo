@@ -1,7 +1,7 @@
 """How a live source paces what it receives by the sim times it carries.
 
-Times here are whole seconds with a two-second delay, so every comparison is
-exact. The playout does not care what the unit is.
+Times here are whole seconds with a two-second delay and a ten-second restart,
+so every comparison is exact. The playout does not care what the unit is.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ def times(released: list) -> list[float]:
 
 
 def test_events_are_released_as_the_display_clock_reaches_their_instants():
-    playout = Playout(delay=2.0)
+    playout = Playout(delay=2.0, restart=10.0)
     for time in range(3):
         playout.add(pose_at(float(time)))
     assert times(playout.release(wall_now=0.0)) == [0.0]
@@ -36,7 +36,7 @@ def test_events_are_released_as_the_display_clock_reaches_their_instants():
 
 
 def test_an_instant_is_released_only_once_every_car_has_had_the_delay_to_arrive():
-    playout = Playout(delay=2.0)
+    playout = Playout(delay=2.0, restart=10.0)
     for time in (0.0, 1.0, 2.0):
         playout.add(pose_at(time, "ego"))
     playout.add(pose_at(0.0, "traffic1"))
@@ -53,7 +53,7 @@ def test_an_instant_is_released_only_once_every_car_has_had_the_delay_to_arrive(
 
 
 def test_the_display_clock_stops_at_the_delay_behind_the_newest_event():
-    playout = Playout(delay=2.0)
+    playout = Playout(delay=2.0, restart=10.0)
     playout.add(pose_at(5.0))
     playout.release(wall_now=0.0)
 
@@ -61,10 +61,22 @@ def test_the_display_clock_stops_at_the_delay_behind_the_newest_event():
 
 
 def test_a_display_clock_more_than_two_delays_behind_catches_up_at_once():
-    playout = Playout(delay=2.0)
+    playout = Playout(delay=2.0, restart=10.0)
     playout.add(pose_at(0.0))
     playout.release(wall_now=0.0)
     for time in range(101):
         playout.add(pose_at(float(time)))
 
     assert times(playout.release(wall_now=1.0))[-1] == 96.0
+
+
+def test_a_world_starting_again_is_held_back_like_the_first_run():
+    playout = Playout(delay=2.0, restart=10.0)
+    for time in range(31):
+        playout.add(pose_at(float(time)))
+    playout.release(wall_now=0.0)
+
+    for time in range(4):
+        playout.add(pose_at(float(time)))
+
+    assert times(playout.release(wall_now=1.0)) == [0.0, 1.0]

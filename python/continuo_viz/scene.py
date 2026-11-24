@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .events import Event, Join, Leave, Message
+from .events import RESTART_SECONDS, Event, Join, Leave, Message
 from .pose import PoseTopDown, pose_from_payload
 from .protocol import parse_actor_key
 
@@ -78,7 +78,17 @@ class Scene:
     """
 
     def apply(self, event: Event) -> None:
-        """Brings the scene up to date with one event, from whichever source."""
+        """Brings the scene up to date with one event, from whichever source.
+
+        An event from well before the newest one seen means the world started
+        again, so the scene starts again with it. Otherwise the cars still on
+        the road when the last run ended, which no leave ever removes, would
+        stay where they stopped, and the sim time would not go back.
+        """
+        if event.event_time < self.sim_time - RESTART_SECONDS:
+            for name, value in vars(Scene()).items():
+                setattr(self, name, value)
+
         if isinstance(event, Message):
             self._apply_message(event)
         elif isinstance(event, Join):
