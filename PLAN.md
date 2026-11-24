@@ -926,6 +926,19 @@ under "Wire format", rather than churning the fingerprint once apiece.
   settle it. The CI smoke asserts those exact labels, so the two move
   together.
 
+- **A run ID on the viewer's side channel, so a viewer knows when a run starts
+  and ends.** The viewer infers a new run from sim time jumping back by more
+  than a second, and resets its scene and playout. That misses a run starting
+  later than the last one stopped, and cannot tell a restart from two worlds
+  publishing under one name, whose poses then mix on screen. A `run` value in
+  each sample's metadata, chosen once per run outside the sim, would make the
+  reset exact, reach a viewer attaching mid-run, and let it warn when two runs
+  alternate. An end-of-run status carrying the final sim time and world hash
+  would let the viewer say the run finished and drop the cars no leave ever
+  removes. The ID must stay out of the world hash, since two runs of one world
+  differ only in it. The bridge can choose it now, and milestone 7 moves it to
+  the conductor, which owns a run across hosts.
+
 - **A native component that follows, so both control laws have a caller on
   each side of the FMI boundary.** The laws live in `continuo-actors` so that
   the native side and the FMU call one implementation rather than two kept in
