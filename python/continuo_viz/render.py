@@ -384,12 +384,26 @@ class Renderer:
 
     def _draw_body(self, camera: Camera, actor, focused: bool) -> None:
         color = actor_color(actor.name, focused)
-        corners = [
-            camera.to_pixels(x, y)
-            for x, y in body_corners(
+
+        # pygame rounds each corner to a pixel on its own, so a car drawn at a
+        # fraction of a pixel would come out a pixel wider or narrower as it
+        # moved, depending on which way each edge rounded. Moving the whole car
+        # by under a pixel, so its center lands on one, keeps every corner the
+        # same whole number of pixels from it and the car the same size.
+        center_x, center_y = camera.to_pixels(actor.pose.x, actor.pose.y)
+        shift_x, shift_y = round(center_x) - center_x, round(center_y) - center_y
+
+        def on_pixels(world_points):
+            return [
+                (round(x + shift_x), round(y + shift_y))
+                for x, y in (camera.to_pixels(*point) for point in world_points)
+            ]
+
+        corners = on_pixels(
+            body_corners(
                 actor.pose.x, actor.pose.y, actor.pose.yaw, CAR_LENGTH, CAR_WIDTH
             )
-        ]
+        )
         self._pygame.draw.polygon(self.surface, color, corners)
 
         # The windshield, so heading is readable at a glance and a car
@@ -398,18 +412,19 @@ class Renderer:
         # windshield rather than a stripe is what makes that read as a car.
         #
         # `body_corners` is a rotated rectangle either way, so it places this
-        # one too, about its own center rather than the body's.
+        # one too, about its own center rather than the body's. It moves by
+        # the body's own shift, so it keeps its place on the body as well as
+        # its size.
         cos_yaw, sin_yaw = math.cos(actor.pose.yaw), math.sin(actor.pose.yaw)
-        windshield = [
-            camera.to_pixels(x, y)
-            for x, y in body_corners(
+        windshield = on_pixels(
+            body_corners(
                 actor.pose.x + _WINDSHIELD_FORWARD * cos_yaw,
                 actor.pose.y + _WINDSHIELD_FORWARD * sin_yaw,
                 actor.pose.yaw,
                 _WINDSHIELD_LENGTH,
                 _WINDSHIELD_WIDTH,
             )
-        ]
+        )
         self._pygame.draw.polygon(
             self.surface, _Color.WINDSHIELD, windshield, _WINDSHIELD_PIXELS
         )
