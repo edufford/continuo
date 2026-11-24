@@ -29,11 +29,6 @@ from typing import Any
 
 from .protocol import MessageType
 
-# Sim seconds an event may be behind the newest one seen before it is taken to
-# come from the world starting again, such as a second run while a viewer
-# stays open. A straggler from the same run is late by milliseconds.
-RESTART_SECONDS = 1.0
-
 
 class Event(ABC):
     """Something that happened in the world, at a knowable instant.

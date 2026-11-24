@@ -55,6 +55,7 @@ class ZenohSource:
         self.world_name = world_name
         self._queue: deque[Event] = deque(maxlen=_QUEUE_LIMIT)
         self._playout_buffer = PlayoutBuffer()
+        self.started_again = False
 
         # Reported either side of the open, because this is where a live
         # session hangs when discovery finds nothing: the first line is what
@@ -127,8 +128,13 @@ class ZenohSource:
         while this runs, and copying it and then clearing it would drop
         whatever arrived between the two.
         """
+        self.started_again = False
         while self._queue:
-            self._playout_buffer.add(self._queue.popleft())
+            event = self._queue.popleft()
+            if self._playout_buffer.begins_new_run(event):
+                self._playout_buffer.reset()
+                self.started_again = True
+            self._playout_buffer.add(event)
         # `perf_counter` rather than `monotonic`, which on Windows before
         # Python 3.13 ticks only every 15.6 ms, so a frame would sometimes see
         # no time pass and the next see two ticks of it.

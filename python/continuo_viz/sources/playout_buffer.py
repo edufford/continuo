@@ -17,7 +17,7 @@ from __future__ import annotations
 import heapq
 import itertools
 
-from ..events import RESTART_SECONDS, Event
+from ..events import Event
 
 # Sim seconds the display clock trails the newest event received.
 #
@@ -25,6 +25,11 @@ from ..events import RESTART_SECONDS, Event
 # few milliseconds on one machine. Longer only delays the picture, while
 # shorter lets a late sample miss the frame its instant is drawn in.
 DELAY_SECONDS = 0.05
+
+# Sim seconds an event may be older than the newest one before it is taken to
+# begin a new run of the world, such as a second run while the viewer stays
+# open. A late sample from the same run is behind by milliseconds.
+RESTART_SECONDS = 1.0
 
 
 class PlayoutBuffer:
@@ -51,19 +56,28 @@ class PlayoutBuffer:
         self._shown: float | None = None
         self._shown_at_wall: float | None = None
 
-    def add(self, event: Event) -> None:
-        """Holds an event until the display clock reaches its instant.
-
-        An event from well before the newest one means the world started
-        again, so the buffer starts again with it. Otherwise the display
-        clock would already be past everything the new run sends, and each
-        event would be released the moment it arrived.
+    def begins_new_run(self, event: Event) -> bool:
+        """Whether ``event`` is older than the newest one received by more than
+        the restart threshold, which is taken to mean the world began a new
+        run.
         """
-        if self._newest is not None and event.event_time < self._newest - self._restart:
-            self._held.clear()
-            self._newest = None
-            self._shown = None
-            self._shown_at_wall = None
+        # TODO(PLAN "Deferred"): a signal from the world when a run starts
+        # replaces this guess.
+        return (
+            self._newest is not None and event.event_time < self._newest - self._restart
+        )
+
+    def reset(self) -> None:
+        """Drops everything held and resets the display clock, for a new run
+        of the world, whose events the clock would otherwise already be past.
+        """
+        self._held.clear()
+        self._newest = None
+        self._shown = None
+        self._shown_at_wall = None
+
+    def add(self, event: Event) -> None:
+        """Holds an event until the display clock reaches its instant."""
         heapq.heappush(self._held, (event.event_time, next(self._arrivals), event))
         if self._newest is None or event.event_time > self._newest:
             self._newest = event.event_time

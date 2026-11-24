@@ -219,6 +219,11 @@ class LogSource:
         """Whether everything in the log has been handed out."""
         return self._timeline.done
 
+    @property
+    def started_again(self) -> bool:
+        """Never, since a log holds one run."""
+        return False
+
     def drain(self) -> list[Event]:
         """Every event whose sim time the replay clock has now reached."""
         if self.done:

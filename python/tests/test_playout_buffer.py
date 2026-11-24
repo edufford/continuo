@@ -70,12 +70,22 @@ def test_a_display_clock_more_than_two_delays_behind_catches_up_at_once():
     assert times(buffer.release(wall_now=1.0))[-1] == 96.0
 
 
-def test_a_world_starting_again_is_held_back_like_the_first_run():
+def test_sim_time_going_back_past_the_restart_threshold_begins_a_new_run():
+    # Inferred from sim time until the world says when a run starts.
+    buffer = PlayoutBuffer(delay=2.0, restart=10.0)
+    buffer.add(pose_at(30.0))
+
+    assert not buffer.begins_new_run(pose_at(25.0))
+    assert buffer.begins_new_run(pose_at(0.0))
+
+
+def test_a_reset_buffer_holds_back_a_new_run_like_the_first():
     buffer = PlayoutBuffer(delay=2.0, restart=10.0)
     for time in range(31):
         buffer.add(pose_at(float(time)))
     buffer.release(wall_now=0.0)
 
+    buffer.reset()
     for time in range(4):
         buffer.add(pose_at(float(time)))
 

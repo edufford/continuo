@@ -1,9 +1,10 @@
 """Where events come from.
 
-Every source exposes the same three things, so the render loop is written once:
+Every source exposes the same four things, so the render loop is written once:
 
 - ``drain()`` returns the events that have become current since the last call,
   and never blocks
+- ``started_again`` says whether that call saw the world begin a new run
 - ``done`` says whether anything more can arrive
 - ``close()`` releases whatever the source holds open
 
