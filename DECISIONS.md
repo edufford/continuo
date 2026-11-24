@@ -1667,9 +1667,9 @@ it got there, including the roads not taken.
   The Zenoh source now releases what it holds against a display clock that
   follows the wall clock 50 ms behind, by when an instant's poses have all
   arrived. A world running slow is drawn steadily slower rather than in
-  bursts. The scene and the playout start over when sim time jumps back by
-  over a second, as a second run does with the viewer left open. Pacing
-  reads `perf_counter`, since `monotonic` ticks only every 15.6 ms on
+  bursts. The scene and the playout buffer start over when sim time jumps
+  back by over a second, as a second run does with the viewer left open.
+  Pacing reads `perf_counter`, since `monotonic` ticks only every 15.6 ms on
   Windows before Python 3.13, and each car is drawn from a whole-pixel
   center so it keeps its size as it moves.
   - Rejected: holding each pose until every car reached its instant, which

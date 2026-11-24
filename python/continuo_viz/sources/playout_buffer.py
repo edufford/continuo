@@ -6,7 +6,7 @@ partway through that spread would show some cars at the new instant and the
 rest at the one before, and a car drawn one instant behind the car the camera
 follows looks as if it twitched back by the distance it covers in that time.
 
-A playout holds what arrives and releases it against a display clock that runs
+A playout buffer holds what arrives and releases it against a display clock that runs
 a fixed delay behind the newest sim time received. By the time the clock
 reaches an instant, everything published at it has arrived, so a frame shows
 each car's own pose at the instant it occurred.
@@ -27,7 +27,7 @@ from ..events import RESTART_SECONDS, Event
 DELAY_SECONDS = 0.05
 
 
-class Playout:
+class PlayoutBuffer:
     """Events held until a display clock trailing the newest one reaches them.
 
     The clock advances with the wall clock, so a burst of arrivals is drawn
@@ -55,7 +55,7 @@ class Playout:
         """Holds an event until the display clock reaches its instant.
 
         An event from well before the newest one means the world started
-        again, so the playout starts again with it. Otherwise the display
+        again, so the buffer starts again with it. Otherwise the display
         clock would already be past everything the new run sends, and each
         event would be released the moment it arrived.
         """

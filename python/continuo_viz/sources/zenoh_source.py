@@ -18,7 +18,7 @@ from typing import Any
 
 from ..events import Event, event_from_sample
 from ..protocol import VIZ_KEY_ROOT
-from .playout import Playout
+from .playout_buffer import PlayoutBuffer
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +54,7 @@ class ZenohSource:
 
         self.world_name = world_name
         self._queue: deque[Event] = deque(maxlen=_QUEUE_LIMIT)
-        self._playout = Playout()
+        self._playout_buffer = PlayoutBuffer()
 
         # Reported either side of the open, because this is where a live
         # session hangs when discovery finds nothing: the first line is what
@@ -122,17 +122,17 @@ class ZenohSource:
     def drain(self) -> list[Event]:
         """Everything received whose instant the display clock has reached.
 
-        See :mod:`~continuo_viz.sources.playout` for why it is held back. The
+        See :mod:`~continuo_viz.sources.playout_buffer` for why it is held back. The
         queue is taken one sample at a time, since the Zenoh thread may append
         while this runs, and copying it and then clearing it would drop
         whatever arrived between the two.
         """
         while self._queue:
-            self._playout.add(self._queue.popleft())
+            self._playout_buffer.add(self._queue.popleft())
         # `perf_counter` rather than `monotonic`, which on Windows before
         # Python 3.13 ticks only every 15.6 ms, so a frame would sometimes see
         # no time pass and the next see two ticks of it.
-        return self._playout.release(time.perf_counter())
+        return self._playout_buffer.release(time.perf_counter())
 
     def close(self) -> None:
         logger.info("closing the Zenoh session")
