@@ -60,7 +60,11 @@ def test_the_display_clock_stops_at_the_delay_behind_the_newest_event():
     assert buffer.release(wall_now=100.0) == []
 
 
-def test_a_display_clock_more_than_two_delays_behind_catches_up_at_once():
+def test_a_display_clock_over_an_additional_delay_behind_the_buffer_limit_catches_up():
+    # The display clock starts at sim time 0, and then a hundred seconds of a
+    # run arrive at once, as when the world runs far faster than real time.
+    # Rather than play them out over a hundred seconds, it jumps to an
+    # additional delay behind the buffer limit, the newest less two delays.
     buffer = PlayoutBuffer(delay=2.0, restart=10.0)
     buffer.add(pose_at(0.0))
     buffer.release(wall_now=0.0)

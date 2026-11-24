@@ -1,15 +1,13 @@
 """Releasing live events at the pace of their own sim times.
 
-Every car publishes its own pose, so the poses of one instant reach a live
-viewer as separate samples spread over a few milliseconds. A frame drawn
-partway through that spread would show some cars at the new instant and the
-rest at the one before, and a car drawn one instant behind the car the camera
-follows looks as if it twitched back by the distance it covers in that time.
+Each car publishes its own pose, so the poses of one instant reach a live
+viewer as separate samples a few milliseconds apart. A frame drawn between
+them would show some cars an instant behind the car the camera follows, which
+looks like a twitch back and forth.
 
-A playout buffer holds what arrives and releases it against a display clock that runs
-a fixed delay behind the newest sim time received. By the time the clock
-reaches an instant, everything published at it has arrived, so a frame shows
-each car's own pose at the instant it occurred.
+A playout buffer holds what arrives and releases it against a display clock
+running a fixed delay behind the newest sim time received. By the time the
+clock reaches an instant, all of that instant's samples have arrived.
 """
 
 from __future__ import annotations
@@ -19,11 +17,9 @@ import itertools
 
 from ..events import Event
 
-# Sim seconds the display clock trails the newest event received.
-#
-# It has to cover how far apart the samples of one instant arrive, which is a
-# few milliseconds on one machine. Longer only delays the picture, while
-# shorter lets a late sample miss the frame its instant is drawn in.
+# Sim seconds the display clock trails the newest sim time received. It covers
+# how far apart one instant's samples arrive, which is a few milliseconds on
+# one machine, and longer only delays the picture.
 DELAY_SECONDS = 0.05
 
 # Sim seconds an event may be older than the newest one before it is taken to
@@ -33,14 +29,13 @@ RESTART_SECONDS = 1.0
 
 
 class PlayoutBuffer:
-    """Events held until a display clock trailing the newest one reaches them.
+    """Events held until a display clock reaches their sim times.
 
-    The clock advances with the wall clock, so a burst of arrivals is drawn
-    over the time it covers rather than all at once. It never passes the
-    newest time received less the delay, so a world that pauses pauses the
-    picture rather than running it dry. And it never falls more than a second
-    delay behind that, so a world running faster than real time, or a viewer
-    attaching late, catches up at once rather than drifting further behind.
+    The display clock is a sim time. It advances at the wall clock's rate, so
+    a burst of samples is drawn over the time it covers, but never past one
+    delay behind the newest sim time received, so a world that pauses pauses
+    the picture. When it falls more than an additional delay behind that, as
+    for a viewer joining a run under way, it jumps forward.
     """
 
     def __init__(
@@ -52,9 +47,11 @@ class PlayoutBuffer:
         # the order they came in.
         self._held: list[tuple[float, int, Event]] = []
         self._arrivals = itertools.count()
-        self._newest: float | None = None
-        self._shown: float | None = None
-        self._shown_at_wall: float | None = None
+        self._newest_sim_time: float | None = None
+        # The display clock: the sim time the last release reached, and the
+        # wall time it was called at. Unset until the first release.
+        self._released_to_sim_time: float | None = None
+        self._released_at_wall_time: float | None = None
 
     def begins_new_run(self, event: Event) -> bool:
         """Whether ``event`` is older than the newest one received by more than
@@ -64,7 +61,8 @@ class PlayoutBuffer:
         # TODO(PLAN "Deferred"): a signal from the world when a run starts
         # replaces this guess.
         return (
-            self._newest is not None and event.event_time < self._newest - self._restart
+            self._newest_sim_time is not None
+            and event.event_time < self._newest_sim_time - self._restart
         )
 
     def reset(self) -> None:
@@ -72,35 +70,55 @@ class PlayoutBuffer:
         of the world, whose events the clock would otherwise already be past.
         """
         self._held.clear()
-        self._newest = None
-        self._shown = None
-        self._shown_at_wall = None
+        self._newest_sim_time = None
+        self._released_to_sim_time = None
+        self._released_at_wall_time = None
 
     def add(self, event: Event) -> None:
-        """Holds an event until the display clock reaches its instant."""
+        """Holds an event until the display clock reaches its sim time."""
         heapq.heappush(self._held, (event.event_time, next(self._arrivals), event))
-        if self._newest is None or event.event_time > self._newest:
-            self._newest = event.event_time
+        if self._newest_sim_time is None or event.event_time > self._newest_sim_time:
+            self._newest_sim_time = event.event_time
 
     def release(self, wall_now: float) -> list[Event]:
         """Every held event the display clock has reached at ``wall_now``, in
-        sim-time order.
+        sim-time order. ``wall_now`` is in seconds, from any clock that never
+        goes backward.
 
-        ``wall_now`` is a wall clock in seconds that never goes backward, read
-        finely enough to tell one frame from the next.
+        Each call releases up to the last call's sim time plus the wall time
+        since, held to no later than the buffer limit, one delay behind the
+        newest sim time received, and no earlier than an additional delay
+        behind the buffer limit.
         """
-        if self._newest is None:
+        if self._newest_sim_time is None:
             return []
 
-        latest = self._newest - self._delay
-        if self._shown is None or self._shown_at_wall is None:
-            shown = latest
+        # The buffer limit, the latest sim time the buffer releases: one delay
+        # behind the newest sample received.
+        buffer_limit_sim_time = self._newest_sim_time - self._delay
+        if self._released_to_sim_time is None or self._released_at_wall_time is None:
+            # The first release, or the first after a reset, goes up to the
+            # buffer limit.
+            release_to_sim_time = buffer_limit_sim_time
         else:
-            shown = min(self._shown + (wall_now - self._shown_at_wall), latest)
-            shown = max(shown, latest - self._delay)
-        self._shown, self._shown_at_wall = shown, wall_now
+            # Move forward by the wall time since the last frame, so the
+            # picture runs at real-time speed.
+            elapsed_wall_time = wall_now - self._released_at_wall_time
+            release_to_sim_time = self._released_to_sim_time + elapsed_wall_time
+            # With no newer samples, as when the world pauses, wait at the
+            # buffer limit, so the picture always trails the newest sample by
+            # the delay.
+            release_to_sim_time = min(release_to_sim_time, buffer_limit_sim_time)
+            # If more than an additional delay behind the buffer limit, as when
+            # the viewer joins a run already under way, catch up to an
+            # additional delay behind it.
+            release_to_sim_time = max(
+                release_to_sim_time, buffer_limit_sim_time - self._delay
+            )
 
         released = []
-        while self._held and self._held[0][0] <= shown:
+        while self._held and self._held[0][0] <= release_to_sim_time:
             released.append(heapq.heappop(self._held)[2])
+        self._released_to_sim_time = release_to_sim_time
+        self._released_at_wall_time = wall_now
         return released
