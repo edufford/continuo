@@ -251,6 +251,26 @@ def body_corners(
     ]
 
 
+def snap_to_pixels(
+    camera: Camera,
+    center: tuple[float, float],
+    world_points: Iterable[tuple[float, float]],
+) -> list[tuple[int, int]]:
+    """Converts ``world_points`` to whole-pixel screen coordinates, after
+    first moving them all by the same fraction of a pixel: the one that would
+    put ``center`` exactly on a pixel.
+
+    pygame rounds each vertex of a polygon to a pixel separately. With every
+    point moved by the same amount first, each lands the same number of whole
+    pixels from ``center`` in every frame, so a shape drawn from these points
+    keeps its size as it moves.
+    """
+    center_x, center_y = camera.to_pixels(*center)
+    shift_x, shift_y = round(center_x) - center_x, round(center_y) - center_y
+    pixels = (camera.to_pixels(x, y) for x, y in world_points)
+    return [(round(x + shift_x), round(y + shift_y)) for x, y in pixels]
+
+
 class Renderer:
     """Draws a scene, into a window or into memory.
 
@@ -384,13 +404,13 @@ class Renderer:
 
     def _draw_body(self, camera: Camera, actor, focused: bool) -> None:
         color = actor_color(actor.name, focused)
-        corners = [
-            camera.to_pixels(x, y)
-            for x, y in body_corners(
-                actor.pose.x, actor.pose.y, actor.pose.yaw, CAR_LENGTH, CAR_WIDTH
-            )
-        ]
-        self._pygame.draw.polygon(self.surface, color, corners)
+        center = (actor.pose.x, actor.pose.y)
+        corners = body_corners(
+            actor.pose.x, actor.pose.y, actor.pose.yaw, CAR_LENGTH, CAR_WIDTH
+        )
+        self._pygame.draw.polygon(
+            self.surface, color, snap_to_pixels(camera, center, corners)
+        )
 
         # The windshield, so heading is readable at a glance and a car
         # travelling backwards is obvious rather than merely wrong. Sitting
@@ -400,18 +420,18 @@ class Renderer:
         # `body_corners` is a rotated rectangle either way, so it places this
         # one too, about its own center rather than the body's.
         cos_yaw, sin_yaw = math.cos(actor.pose.yaw), math.sin(actor.pose.yaw)
-        windshield = [
-            camera.to_pixels(x, y)
-            for x, y in body_corners(
-                actor.pose.x + _WINDSHIELD_FORWARD * cos_yaw,
-                actor.pose.y + _WINDSHIELD_FORWARD * sin_yaw,
-                actor.pose.yaw,
-                _WINDSHIELD_LENGTH,
-                _WINDSHIELD_WIDTH,
-            )
-        ]
+        windshield = body_corners(
+            actor.pose.x + _WINDSHIELD_FORWARD * cos_yaw,
+            actor.pose.y + _WINDSHIELD_FORWARD * sin_yaw,
+            actor.pose.yaw,
+            _WINDSHIELD_LENGTH,
+            _WINDSHIELD_WIDTH,
+        )
         self._pygame.draw.polygon(
-            self.surface, _Color.WINDSHIELD, windshield, _WINDSHIELD_PIXELS
+            self.surface,
+            _Color.WINDSHIELD,
+            snap_to_pixels(camera, center, windshield),
+            _WINDSHIELD_PIXELS,
         )
 
     def _draw_labels(self, camera: Camera, actors: list, follow: str | None) -> None:
