@@ -71,11 +71,10 @@ TARGET_FPS = 60
 
 # How wide a slice of road the camera shows, in meters.
 #
-# Sixty either side of the followed car. The demo retires traffic sixty meters
-# behind the ego, so a car leaves the view as it leaves the world rather than
-# vanishing mid-screen. Traffic is seeded further ahead than any width worth
-# using, so cars arrive at the right edge either way, and a narrower slice at
-# least draws them large enough to tell apart.
+# Sixty either side of the followed car. The demo spawns and retires traffic
+# beyond that on both sides, so a car enters and leaves the view at its edges
+# rather than appearing or vanishing mid-screen, and a narrower slice draws
+# the cars large enough to tell apart.
 VIEW_METERS = 120.0
 
 # Pixels between the HUD and the road, leaving the top of the window to text.

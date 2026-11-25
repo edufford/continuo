@@ -7,9 +7,9 @@
 //! come from inside the sim, which is the part that has to stay
 //! deterministic.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
-use continuo_actors::AccelCmd;
+use continuo_actors::{AccelCmd, CarState, actor_of_pose_key};
 use continuo_conductor::record::LogEvent;
 use continuo_conductor::{
     Conductor, Divergence, EventLog, RecordedObservation, Recorder, Verifier,
@@ -45,17 +45,7 @@ fn record_highway(seconds: i64) -> EventLog {
     recorder.finish()
 }
 
-/// Actor names in the order they joined and left, from a recorded log.
-fn joined(log: &EventLog) -> Vec<&str> {
-    log.events
-        .iter()
-        .filter_map(|event| match event {
-            LogEvent::Join(join) => Some(join.path.as_str()),
-            _ => None,
-        })
-        .collect()
-}
-
+/// Component paths in the order they left, from a recorded log.
 fn left(log: &EventLog) -> Vec<&str> {
     log.events
         .iter()
@@ -67,30 +57,101 @@ fn left(log: &EventLog) -> Vec<&str> {
 }
 
 #[test]
-fn traffic_arrives_and_retires_while_the_run_is_under_way() {
+fn traffic_surrounds_the_ego_from_the_start_and_turns_over_during_the_run() {
     let log = record_highway(traffic_world::SIM_SECONDS);
-    let joined = joined(&log);
-    let left = left(&log);
-
-    // The ego and the spawner are there from the start; every traffic car
-    // arrived mid-run.
-    assert!(joined.contains(&"ego/controller"));
-    assert!(joined.contains(&"traffic_spawner"));
-    let traffic_joins = joined.iter().filter(|p| p.starts_with("traffic")).count();
-    let traffic_leaves = left.iter().filter(|p| p.starts_with("traffic")).count();
+    let membership = traffic_membership(&log);
+    let joined_at_start = membership
+        .iter()
+        .filter(|(_, change, at)| *change == "joined" && *at == SimTime::ZERO)
+        .count();
+    let joined_later = membership
+        .iter()
+        .filter(|(_, change, at)| *change == "joined" && *at > SimTime::ZERO)
+        .count();
+    let left = membership
+        .iter()
+        .filter(|(_, change, _)| *change == "left")
+        .count();
+    let joined = joined_at_start + joined_later;
 
     assert!(
-        traffic_joins > 12,
-        "more cars joined than the road holds at once, so the population \
-         turned over rather than being built once: {traffic_joins} joins"
+        joined_at_start > 0,
+        "the run starts with traffic around the ego"
     );
     assert!(
-        traffic_leaves >= 2,
-        "and the ego overtook some of them: {traffic_leaves} leaves"
+        joined_later > 0,
+        "and more joins while the run is under way"
     );
     assert!(
-        traffic_leaves < traffic_joins,
-        "with cars still on the road when the run ends"
+        left > 0 && left < joined,
+        "cars leave, with some still on the road at the end: {left} of {joined} left"
+    );
+}
+
+/// The actor and car state a logged event carries, if it is a pose.
+fn car_states(event: &LogEvent) -> Option<(&str, CarState)> {
+    match event {
+        LogEvent::Msg(message) if message.key.ends_with("/pose") => {
+            let state: CarState =
+                serde_json::from_str(message.payload.get()).expect("a pose decodes as a car state");
+            Some((actor_of_pose_key(&message.key), state))
+        }
+        _ => None,
+    }
+}
+
+/// How far below its starting speed the ego must drop, in m/s, to show it
+/// followed a slower car.
+const SLOWED_BY_FOLLOWING: f64 = 2.0;
+
+#[test]
+fn the_ego_slows_behind_the_car_ahead_of_it() {
+    // The ego starts at the speed it wants and holds it on a free road, so
+    // dropping well below it means it followed a slower car.
+    let log = record_highway(traffic_world::SIM_SECONDS);
+    let ego_speeds: Vec<f64> = log
+        .events
+        .iter()
+        .filter_map(car_states)
+        .filter(|(actor, _)| *actor == "ego")
+        .map(|(_, state)| state.speed)
+        .collect();
+    let starting_speed = ego_speeds[0];
+    let slowest = ego_speeds.iter().copied().fold(f64::INFINITY, f64::min);
+
+    assert!(
+        slowest < starting_speed - SLOWED_BY_FOLLOWING,
+        "the ego started at {starting_speed} m/s and slowed only to {slowest} m/s"
+    );
+}
+
+#[test]
+fn cars_leave_both_ahead_of_the_ego_and_behind_it() {
+    // The road runs along +x, so a car's x says how far along it is.
+    let log = record_highway(traffic_world::SIM_SECONDS);
+    let mut latest_x: BTreeMap<&str, f64> = BTreeMap::new();
+    let (mut ahead, mut behind) = (0, 0);
+    for event in &log.events {
+        if let Some((actor, state)) = car_states(event) {
+            latest_x.insert(actor, state.position.x);
+        }
+        // A car leaves as one event per component. Its physics leave counts
+        // it once, and what precedes "/physics" is the actor its poses are
+        // under.
+        if let LogEvent::Leave(leave) = event
+            && let Some(actor) = leave.path.strip_suffix("/physics")
+        {
+            if latest_x[actor] > latest_x["ego"] {
+                ahead += 1;
+            } else {
+                behind += 1;
+            }
+        }
+    }
+
+    assert!(
+        ahead > 0 && behind > 0,
+        "{ahead} cars left ahead of the ego and {behind} behind it"
     );
 }
 
@@ -202,11 +263,13 @@ fn a_car_leaves_as_a_whole_actor() {
     // the driver removes the actor rather than its parts.
     let log = record_highway(traffic_world::SIM_SECONDS);
     let left = left(&log);
-    let first = left.first().expect("the ego overtakes somebody");
+    let first = left.first().expect("some car leaves");
     let path = ComponentPath::parse(first).expect("a leave names a valid path");
     let actor = path.actor().expect("a leaf path has an actor").as_str();
 
-    let pair: Vec<&&str> = left.iter().filter(|p| p.starts_with(actor)).collect();
+    // The slash keeps traffic1 from also matching the parts of traffic10.
+    let prefix = format!("{actor}/");
+    let pair: Vec<&&str> = left.iter().filter(|p| p.starts_with(&prefix)).collect();
     assert_eq!(
         pair,
         vec![
@@ -251,7 +314,7 @@ fn the_dynamic_world_reproduces_exactly() {
 /// deliberate act. Update it and README.md's sample output together. A
 /// stale controller FMU moves it too, which `cargo xtask package-fmus`
 /// fixes.
-const DEMO_WORLD_HASH: u64 = 0xdbb6_ddcb_8437_91e2;
+const DEMO_WORLD_HASH: u64 = 0xacd1_34a5_4d7e_0963;
 
 #[test]
 fn the_demo_world_hashes_to_the_same_value_on_every_platform() {

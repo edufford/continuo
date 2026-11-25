@@ -5,7 +5,7 @@
 //! well under a second, which is correct and unwatchable.
 //!
 //! Run with (a short duration, since it runs in real time):
-//!   cargo run -p continuo-examples --features viz --example traffic_viz -- 30
+//!   cargo run --release -p continuo-examples --features viz --example traffic_viz -- 30
 //!
 //! Then, in another terminal, anything subscribing to
 //! `continuo_viz/demo/**` will see it. Poses arrive on
