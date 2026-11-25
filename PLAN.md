@@ -776,6 +776,11 @@ under "Wire format", rather than churning the fingerprint once apiece.
   belongs with "World and map", where a road adopts a proper standardized
   geometry definition, rather than as a change to `Waypoints` on its own.
 
+- **Lane changes.** Cars keep the lane they spawn in, so each lane settles at
+  its slowest car's pace and the ego passes only cars in other lanes. The
+  spawner and the radar already read a car's lane from its latest pose; a
+  controller that decides to change lanes is what is missing.
+
 - **A component asking to retire itself**: `StepCtx` has no way back to the
   conductor, so nothing can say "I am done" (see `Component`'s TODO).
   Milestone 4 expected its spawner to need this and it did not. Worth
@@ -866,11 +871,11 @@ under "Wire format", rather than churning the fingerprint once apiece.
     declaring `canBeInstantiatedOnlyOncePerProcess` keeps an archive per
     instance.
   - For FMUs not known before the run, a worker thread could load each one
-    during the join's lead time, half a second for the spawner's, and the
-    run would wait at `first_due` only for an unfinished load. The
-    instance is still made on the conductor's thread, since `fmi`'s
-    `Instance` is not `Send`. This hides the load only when paced, and
-    milestone 7's joins over the transport take this shape anyway.
+    during the join's lead time, 100 ms for the spawner's, and the run would
+    wait at `first_due` only for an unfinished load. The instance is still
+    made on the conductor's thread, since `fmi`'s `Instance` is not `Send`.
+    This hides the load only when paced, and milestone 7's joins over the
+    transport take this shape anyway.
   - Deferred because the world hash is unaffected and a paced run keeps
     time between joins. Proving a fix wants a churn measurement, since
     `traffic_scale` joins every car before its timer starts.
@@ -925,6 +930,15 @@ under "Wire format", rather than churning the fingerprint once apiece.
   at one, and eight cars retiring. Saying "component joins / leaves" would
   settle it. The CI smoke asserts those exact labels, so the two move
   together.
+
+- **A signal when a run starts.** A consumer outside the sim, such as the
+  viewer, needs to know when a new run begins to reset what it keeps. The
+  viewer guesses from sim time jumping back by more than a second, which
+  misses a run starting later than the last one stopped, and cannot tell a
+  restart from two worlds sharing one name. The conductor could report each
+  run's start, with an ID chosen per run and carried on every message so a
+  consumer joining mid-run still learns it. The ID stays out of the world
+  hash, since two runs of one world differ only in it.
 
 - **A native component that follows, so both control laws have a caller on
   each side of the FMI boundary.** The laws live in `continuo-actors` so that

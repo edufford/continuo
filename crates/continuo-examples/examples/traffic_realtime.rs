@@ -5,8 +5,8 @@
 //! free-run demo, because pacing changes timing, never content.
 //!
 //! Run with (a short duration, since it runs in real time):
-//!   cargo run -p continuo-examples --example traffic_realtime -- 3
-//!   cargo run -p continuo-examples --example traffic_realtime -- 3 precise
+//!   cargo run --release -p continuo-examples --example traffic_realtime -- 30
+//!   cargo run --release -p continuo-examples --example traffic_realtime -- 30 precise
 //!
 //! First optional argument is sim-seconds to run (default 5); a second
 //! argument `precise` selects `Pacing::real_time_precise`, sleep-then-spin

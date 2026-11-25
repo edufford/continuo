@@ -159,7 +159,10 @@ def run_viewer(event_source, follow: str | None, status: str) -> None:
     renderer = Renderer()
     try:
         while renderer.process_events():
-            for event in event_source.drain():
+            events = event_source.drain()
+            if event_source.started_again:
+                scene = Scene()
+            for event in events:
                 scene.apply(event)
             if event_source.done:
                 status = "replay finished"

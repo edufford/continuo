@@ -9,12 +9,12 @@ with the length of the run.
 from __future__ import annotations
 
 import logging
-import time
 from collections.abc import Generator
 from pathlib import Path
 
 from ..events import Event, event_from_log_line
 from ..protocol import check_log_header
+from .wall_clock import wall_seconds
 
 logger = logging.getLogger(__name__)
 
@@ -219,12 +219,17 @@ class LogSource:
         """Whether everything in the log has been handed out."""
         return self._timeline.done
 
+    @property
+    def started_again(self) -> bool:
+        """Never, since a log holds one run."""
+        return False
+
     def drain(self) -> list[Event]:
         """Every event whose sim time the replay clock has now reached."""
         if self.done:
             return []
 
-        now = time.monotonic()
+        now = wall_seconds()
         # Anchored on the first drain rather than in the constructor, so a
         # replay does not lose time to whatever happened between being built
         # and being asked for anything.

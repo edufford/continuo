@@ -1,6 +1,6 @@
 //! The demo world shared by every traffic example: an ego car driving a
-//! straight highway, with traffic spawning ahead of it in the neighboring
-//! lanes and retiring once it has gone past.
+//! straight highway among traffic kept around it, with new cars added
+//! ahead and cars that drift too far away in either direction retired.
 //!
 //! Two scenarios, kept side by side so the difference between them is one
 //! diff rather than two files: [`setup_live_traffic_scenario`], whose cars
@@ -24,8 +24,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 use continuo_actors::control_laws::{FREE_ROAD, IdmParams, PurePursuitParams};
 use continuo_actors::{
     CarState, DespawnTrafficRequest, PathFollowController, PlantLimits, RadarSensor,
-    SpawnTrafficRequest, TrafficSpawner, UnicyclePhysics, Waypoints, accel_cmd_key,
-    actor_of_pose_key, pose_key, radar_key, road_pose, steer_cmd_key, straight_road,
+    SpawnTrafficRequest, TrafficSpawner, TrafficSpawnerConfig, UnicyclePhysics, Waypoints,
+    accel_cmd_key, actor_of_pose_key, pose_key, radar_key, road_pose, steer_cmd_key, straight_road,
     traffic_despawn_key, traffic_spawn_key,
 };
 use continuo_conductor::record::LogEvent;
@@ -49,38 +49,37 @@ pub const WORLD_SEED: u64 = 42;
 pub const WORLD_NAME: &str = "demo";
 pub const SIM_SECONDS: i64 = 30;
 
-/// The car the scenario is arranged around. Alone in its lane, and faster
-/// than the traffic, so it spends the run overtaking.
-const EGO_NAME: &str = "ego";
-
-/// Where the ego starts: at the road's origin, in the centre lane. Unlike
-/// [`EGO_SPEED`] these are not tuned against anything. They are what the
-/// rest of the scenario is measured from, which is why traffic spawns
-/// relative to the ego and the road is long enough for where it ends up.
-const EGO_START: f64 = 0.0;
-const EGO_LANE: f64 = 0.0;
-
 /// Enough road for the ego's 30 s at 30 m/s, plus the stretch ahead that
 /// traffic spawns into.
-const ROAD_LENGTH: f64 = 1600.0;
+const ROAD_LENGTH: f64 = 1500.0;
 const LANE_WIDTH: f64 = 3.5;
-/// Lanes traffic may use: either side of the ego, never [`EGO_LANE`]
-/// itself: nothing here models a collision, so traffic goes beside the ego
-/// rather than in front of it, and the overtaking stays clean.
-const TRAFFIC_LANES: [f64; 2] = [LANE_WIDTH, -LANE_WIDTH];
+/// Lanes traffic drives in, as offsets in meters to the left of the road.
+const TRAFFIC_LANES: [f64; 3] = [LANE_WIDTH, 0.0, -LANE_WIDTH];
 
-// Sized so the run actually shows what it is meant to. The ego closes on
-// traffic at 8-14 m/s, and the six cars start between 40 m and roughly
-// 250 m ahead, so the first is overtaken within seconds and the last
-// before the run ends, with replacements spawning ahead as they go. Slow
-// the traffic down or push it further ahead and the demo becomes thirty
-// seconds of nothing being passed.
+/// The car the scenario is arranged around. It drives in a lane with
+/// traffic, following the car ahead of it.
+const EGO_NAME: &str = "ego";
+/// How far along the road the ego starts, in meters, leaving room behind
+/// it for the traffic the run starts with.
+const EGO_START: f64 = 100.0;
+/// The ego starts in the middle lane, with traffic either side of it.
+const EGO_LANE: f64 = TRAFFIC_LANES[TRAFFIC_LANES.len() / 2];
+/// The ego's starting and target speed, in m/s.
 const EGO_SPEED: f64 = 30.0;
-const TRAFFIC_SPEED: (f64, f64) = (16.0, 22.0);
-const TRAFFIC_POPULATION: usize = 6;
+
+// Traffic is slower than the ego, so the ego closes on the car ahead in its
+// lane while cars in the other lanes drift by.
+const TRAFFIC_SPEED: (f64, f64) = (22.0, 28.0);
+const TRAFFIC_POPULATION: usize = 10;
 const SPAWN_AHEAD: f64 = 40.0;
-const RETIRE_BEHIND: f64 = 60.0;
-const SPAWN_GAP: (f64, f64) = (20.0, 50.0);
+const RETIRE_AHEAD: f64 = 90.0;
+const RETIRE_BEHIND: f64 = 70.0;
+/// Wide enough for a car to brake from the largest difference in speed
+/// before reaching the car ahead.
+const SPAWN_GAP: (f64, f64) = (25.0, 40.0);
+/// How many times a `SPAWN_GAP` the run starts with ahead of the ego in its
+/// lane, so it passes a few cars before it settles behind one.
+const EGO_HEADWAY_FACTOR: f64 = 2.0;
 
 /// What a full command is worth on every car in this world.
 const CAR_LIMITS: PlantLimits = PlantLimits::highway_car();
@@ -201,6 +200,23 @@ fn add_car<T: Transport>(
 
     // Return success; the car is registered.
     Ok(())
+}
+
+/// Registers a traffic car where `spawn` places it, following the car
+/// ahead on IDM.
+fn add_traffic_car<T: Transport>(
+    conductor: &mut Conductor<T>,
+    spawn: &SpawnTrafficRequest,
+) -> Result<(), ScenarioError> {
+    add_car(
+        conductor,
+        &spawn.actor_name,
+        CarConfiguration::IdmFollowing,
+        spawn.start_s,
+        spawn.lane_offset,
+        spawn.speed,
+        spawn.first_due,
+    )
 }
 
 /// A car's radar, scanning its own lane ahead.
@@ -357,18 +373,9 @@ fn controller_fmu_mapping(
     }
 }
 
-/// Registers the ego with the initial conditions given: starting `start_s`
-/// along the road, in the lane at `lane_offset`, holding `speed`.
-///
-/// All three are parameters because they are the knobs a what-if run
-/// turns, and the ego is the component under study. Both setups pass
-/// [`EGO_START`] and [`EGO_LANE`]; where they differ is the speed.
-/// [`setup_live_traffic_scenario`] passes [`EGO_SPEED`] and
-/// [`setup_playback_traffic_scenario`] takes whatever the experiment wants,
-/// which is what keeps the two runs comparable to each other.
-///
-/// It always joins at sim time zero, which is not a parameter: an ego that
-/// turned up partway through would not be the run's subject.
+/// Registers the ego at sim time zero, `start_s` along the road in the lane
+/// at `lane_offset`, driving at `speed`, which is also its target speed.
+/// The three are parameters because a what-if run changes them.
 fn add_ego<T: Transport>(
     conductor: &mut Conductor<T>,
     start_s: f64,
@@ -379,7 +386,7 @@ fn add_ego<T: Transport>(
     add_car(
         conductor,
         EGO_NAME,
-        CarConfiguration::ConstantSpeed,
+        CarConfiguration::IdmFollowing,
         start_s,
         lane_offset,
         speed,
@@ -387,37 +394,46 @@ fn add_ego<T: Transport>(
     )
 }
 
-/// Registers the traffic spawner, the component that decides which cars
-/// exist while the run is under way.
-///
-/// Not needed by a run that plays traffic back from a log: there the
-/// recording is the traffic, and a live spawner would be deciding on top of
-/// it. See `traffic_resim`.
-fn add_spawner<T: Transport>(conductor: &mut Conductor<T>) -> Result<(), ConductorError> {
-    conductor.add_component_at_start(
-        WORLD_LEVEL,
-        Box::new(TrafficSpawner::new(
-            SimDuration::from_millis(500),
-            shared_road(),
-            EGO_NAME,
-            TRAFFIC_LANES.to_vec(),
-            LANE_TOLERANCE,
-            TRAFFIC_POPULATION,
-            SPAWN_AHEAD,
-            RETIRE_BEHIND,
-            SPAWN_GAP,
-            TRAFFIC_SPEED,
-        )),
-    )?;
+/// Registers the cars the run starts with and the spawner that manages
+/// traffic after that, around an ego starting `ego_start_s` along the road
+/// in the lane at `ego_start_lateral`. A run that plays traffic back from a
+/// log, such as `traffic_resim`, leaves it out, since the recording is the
+/// traffic.
+fn add_spawner<T: Transport>(
+    conductor: &mut Conductor<T>,
+    ego_start_s: f64,
+    ego_start_lateral: f64,
+) -> Result<(), ScenarioError> {
+    let config = TrafficSpawnerConfig {
+        period: SimDuration::from_millis(100),
+        ego_name: EGO_NAME.to_string(),
+        ego_start_s,
+        ego_start_lateral,
+        lane_offsets: TRAFFIC_LANES.to_vec(),
+        lane_tolerance: LANE_TOLERANCE,
+        target_population: TRAFFIC_POPULATION,
+        spawn_ahead: SPAWN_AHEAD,
+        retire_behind: RETIRE_BEHIND,
+        retire_ahead: RETIRE_AHEAD,
+        gap_range: SPAWN_GAP,
+        ego_headway_factor: EGO_HEADWAY_FACTOR,
+        speed_range: TRAFFIC_SPEED,
+    };
+    let mut spawner = TrafficSpawner::new(shared_road(), config);
 
-    // Return success; the spawner is registered.
+    let starting_cars = spawner.fill_around_ego(conductor.world_seed());
+    for spawn in starting_cars {
+        add_traffic_car(conductor, &spawn)?;
+    }
+    conductor.add_component_at_start(WORLD_LEVEL, Box::new(spawner))?;
+
+    // Return success; the spawner and the cars it starts with are registered.
     Ok(())
 }
 
-/// Registers the live scenario's fixed cast: the ego and the spawner that
-/// manages traffic around it. Every car arrives later, while the run is
-/// under way, so this is the whole world only at sim time zero, and
-/// [`run_live_traffic_scenario`] is what builds the rest of it.
+/// Registers the live scenario's starting world: the ego, the traffic
+/// around it, and the spawner whose later cars [`run_live_traffic_scenario`]
+/// adds while the run is under way.
 ///
 /// *Live* because the traffic is decided as the run happens. `traffic_resim`
 /// assembles the other kind by hand: the same ego, but no spawner, and
@@ -426,9 +442,9 @@ pub fn setup_live_traffic_scenario<T: Transport>(
     conductor: &mut Conductor<T>,
 ) -> Result<(), ScenarioError> {
     add_ego(conductor, EGO_START, EGO_LANE, EGO_SPEED)?;
-    add_spawner(conductor)?;
+    add_spawner(conductor, EGO_START, EGO_LANE)?;
 
-    // Return success; the fixed part of the world is registered.
+    // Return success; the starting world is registered.
     Ok(())
 }
 
@@ -436,16 +452,12 @@ pub fn setup_live_traffic_scenario<T: Transport>(
 /// once [`setup_scale_scenario`] has filled every lane and wrapped.
 const SCALE_ROW_SPACING: f64 = 50.0;
 
-/// The size the live demo holds at once, and the baseline a scaling run
-/// measures against: the ego plus its traffic, across the ego's lane and the
-/// traffic's.
-///
-/// Public so that a scaling run has something to measure against, namely the
-/// size everything else in the project is tuned for. It is the *size* that
-/// carries over and not the scenario: the demo decides its traffic while it
-/// runs, and [`setup_scale_scenario`] holds the cast still.
+/// The size of the live demo: the ego plus its traffic, across the lanes
+/// traffic drives in. A scaling run measures against it, since it is the
+/// size the project is tuned for. [`setup_scale_scenario`] takes the size
+/// but not the scenario, keeping one fixed set of cars.
 pub const BASELINE_DEMO_CARS: usize = TRAFFIC_POPULATION + 1;
-pub const BASELINE_DEMO_LANES: usize = TRAFFIC_LANES.len() + 1;
+pub const BASELINE_DEMO_LANES: usize = TRAFFIC_LANES.len();
 
 /// Registers `cars` cars across `lanes` lanes, for measuring what a world
 /// costs as it grows rather than for watching anything happen in it.
@@ -932,15 +944,7 @@ impl TrafficHandler {
         );
         for request in collected {
             match request {
-                TrafficRequest::Spawn(spawn) => add_car(
-                    conductor,
-                    &spawn.actor_name,
-                    CarConfiguration::IdmFollowing,
-                    spawn.start_s,
-                    spawn.lane_offset,
-                    spawn.speed,
-                    spawn.first_due,
-                )?,
+                TrafficRequest::Spawn(spawn) => add_traffic_car(conductor, &spawn)?,
                 // The spawner drops a car from its roll when it asks, so it
                 // never asks twice, but a scenario that also removed cars
                 // by hand could, and a request for someone already gone has

@@ -206,6 +206,11 @@ impl<T: Transport> Conductor<T> {
         &self.config.world_name
     }
 
+    /// The seed every component's random stream is derived from.
+    pub fn world_seed(&self) -> u64 {
+        self.config.world_seed
+    }
+
     pub fn sim_time(&self) -> SimTime {
         self.sim_time
     }
