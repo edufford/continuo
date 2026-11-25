@@ -931,6 +931,15 @@ under "Wire format", rather than churning the fingerprint once apiece.
   settle it. The CI smoke asserts those exact labels, so the two move
   together.
 
+- **A signal when a run starts.** A consumer outside the sim, such as the
+  viewer, needs to know when a new run begins to reset what it keeps. The
+  viewer guesses from sim time jumping back by more than a second, which
+  misses a run starting later than the last one stopped, and cannot tell a
+  restart from two worlds sharing one name. The conductor could report each
+  run's start, with an ID chosen per run and carried on every message so a
+  consumer joining mid-run still learns it. The ID stays out of the world
+  hash, since two runs of one world differ only in it.
+
 - **A native component that follows, so both control laws have a caller on
   each side of the FMI boundary.** The laws live in `continuo-actors` so that
   the native side and the FMU call one implementation rather than two kept in

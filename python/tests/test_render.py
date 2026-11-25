@@ -15,11 +15,12 @@ from continuo_viz.pose import PoseTopDown
 from continuo_viz.render import (
     CAR_LENGTH,
     Camera,
+    Renderer,
     actor_color,
     actors_in_view,
     body_corners,
 )
-from continuo_viz.scene import Actor
+from continuo_viz.scene import Actor, Scene
 
 
 def camera(center_x: float = 0.0, scale: float = 7.0) -> Camera:
@@ -163,3 +164,26 @@ def test_actors_are_ordered_along_the_road_not_by_arrival():
     scrambled = [actor_at("c", 20.0), actor_at("a", -20.0), actor_at("b", 0.0)]
 
     assert [actor.name for actor in actors_in_view(view, scrambled)] == ["a", "b", "c"]
+
+
+def test_a_car_is_drawn_the_same_size_wherever_it_falls_between_pixels():
+    # pygame rounds each corner on its own, so a car at a fraction of a pixel
+    # can come out a pixel wider or narrower as it moves, which reads as the
+    # car shimmering against the one the camera follows.
+    renderer = Renderer(onscreen=False)
+    color = actor_color("traffic1", False)
+    areas = set()
+    for step in range(10):
+        scene = Scene()
+        scene.actors = {
+            "ego": actor_at("ego", 0.0),
+            "traffic1": actor_at("traffic1", 10.0 + step * 0.013),
+        }
+        renderer.draw(scene, "ego", "test")
+        mask = renderer._pygame.mask.from_threshold(
+            renderer.surface, color, (1, 1, 1, 255)
+        )
+        areas.add(mask.count())
+    renderer.close()
+
+    assert len(areas) == 1, areas

@@ -1680,3 +1680,21 @@ it got there, including the roads not taken.
   - Tried and dropped: lane-banded speeds, spawning behind the ego, a
     longer run, other seeds, and varying each car's target speed during
     the run.
+- **2026-11-24**: **The live viewer draws each pose at its own sim time, 50
+  ms behind the newest pose received.** Each car publishes its own pose, so
+  one instant's poses arrive milliseconds apart, and a frame drawn before
+  all of them arrived showed some cars an instant behind the followed car,
+  twitching against it. The live source now holds each pose in a playout
+  buffer until a display clock reaches its sim time. The clock runs at the
+  wall clock's rate, 50 ms behind the newest pose, so by the time it reaches
+  an instant, every pose from that instant has arrived. A world running
+  slower than real time is drawn steadily slower rather than in bursts. When
+  sim time jumps back by more than a second, as when a second run starts
+  with the viewer open, the buffer starts over and the viewer starts a new
+  scene. Pacing reads `perf_counter`, since `monotonic` ticks only every
+  15.6 ms on Windows before Python 3.13, and each car is drawn from a
+  whole-pixel center so it keeps its size as it moves.
+  - Rejected: holding each pose until every car reached its instant, which
+    lines up only cars publishing at aligned sim time instants; and
+    interpolating every car to one instant, which draws positions nobody
+    published.
