@@ -158,7 +158,7 @@ cargo run -p continuo-examples --example traffic
 
 # The same world paced to 1x real time (argument = sim-seconds to run;
 # add `precise` for sleep-then-spin sub-millisecond pacing)
-cargo run -p continuo-examples --example traffic_realtime -- 3
+cargo run --release -p continuo-examples --example traffic_realtime -- 30
 
 # Record the run's event log (messages + tick fingerprints)
 cargo run -p continuo-examples --example traffic_record -- run.jsonl
@@ -287,7 +287,7 @@ python -m continuo_viz --log ../run.jsonl --check
 Watching a live run takes two terminals. The world in one:
 
 ```sh
-cargo run -p continuo-examples --example traffic_viz -- 30
+cargo run --release -p continuo-examples --example traffic_viz -- 30
 ```
 
 and the viewer in the other, which watches a live world when given no log:
