@@ -42,11 +42,11 @@ select = [
     # than separating them, and ISC004 names that.
     "ISC", # implicit string concatenation
     "RUF",
-    "TID251", # banned APIs, listed below
+    "TID251", # Ruff's banned APIs, listed below
 ]
 
 # On Windows before Python 3.13 the monotonic clock ticks only every 15.6 ms,
-# so a frame paced by it sees no time pass and the next sees two ticks of it.
+# too coarse to pace frames by.
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 "time.monotonic".msg = "Use `wall_seconds()` from `continuo_viz.sources.wall_clock`."
 "time.monotonic_ns".msg = "Use `wall_seconds()` from `continuo_viz.sources.wall_clock`."
