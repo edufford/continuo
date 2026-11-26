@@ -33,7 +33,7 @@ be split into separate processes over Zenoh without changing component code.
 
 - FMI 2.0, or Model Exchange FMUs (would require owning a solver).
 - Binary wire formats (the `Transport` boundary allows adding one later if needed).
-- Physics engine, 3D rendering, sensor simulation.
+- Physics engine, 3D rendering, realistic sensor models.
 - Snapshot/restore of world state. Replay-from-log is the replay mechanism.
   If snapshots become worthwhile, FMI 3.0's optional `SerializeFMUState`
   capability is the standardized hook for FMU components, but user-provided
@@ -141,18 +141,15 @@ Key expression conventions (draft):
 | `continuo/{world}/conductor/membership/leave_request` | departure request | M7 |
 | `continuo/{world}/scene` | scene-graph state update (fixed-period publisher for renderers) | deferred |
 
-The status column is there because the table previously mixed what exists
-with what is intended and said nothing about which was which. Scenario-owned
-keys are deliberately absent: the traffic demo's spawn and despawn requests
-live with the spawner, not here, for the reason recorded on 2026-07-31.
+Scenario-owned keys are deliberately absent: the traffic demo's spawn and
+despawn requests live with the spawner, not here, for the reason recorded on
+2026-07-31.
 
 Membership is nested one level deeper than the rest so that *asking* and
 *having happened* are separated by structure rather than by remembering which
 verb means which. A request is something a component or host sends inward and
 the conductor may reject; a status is the conductor saying it already did it,
-which is what an observer subscribes to. The earlier flat
-`conductor/join` and `conductor/leave` blurred that, and called one a request
-and the other a notice for no reason beyond the order they were written in.
+which is what an observer subscribes to.
 
 ## Determinism rules
 
@@ -193,9 +190,10 @@ Baked in from the start, because they are hard to retrofit:
     would hold whatever was published while it waited, and its place among
     its siblings would say when it was asked for rather than when it
     arrived.
-- Per-tick canonical **state hash** (e.g. xxhash over serialized state) as the
-  determinism check. Two runs with the same seed must produce identical hash
-  streams; this becomes a CI test.
+- Per-tick canonical **state hash**, an owned FNV-1a over what each
+  component published and its state where it offers one, as the determinism
+  check. Two runs with the same seed produce identical hash streams, which
+  CI checks on four platforms.
 - FMU caveat: FMUs are black-box native code, and **hashed on their outputs**.
   Hashing supports both modes per component, so an FMU could join in
   state-hash mode, but `canSerializeFMUState` is not the signal for it: the
@@ -223,7 +221,7 @@ All transport payloads are JSON via `serde_json`:
   struct fields in declaration order (serde default), and **never serialize
   `HashMap`** in messages; use `BTreeMap` or `Vec` of pairs. Hash-ordered
   collections are in fact banned everywhere, not only on the wire, and a lint
-  enforces it (see the 2026-08-02 decision below).
+  enforces it (DECISIONS.md, 2026-08-02).
 - **Pose convention**: SI units throughout. Right-handed, Z-up world frame
   (ENU); body frames X-forward/Y-left/Z-up (ROS REP-103 style). A pose is a
   position `{x, y, z}` in meters plus a unit quaternion `{w, x, y, z}`,
@@ -463,13 +461,14 @@ component in particular.
 
 ## Visualization
 
-- `continuo-viz-bridge`: a component subscribing to
-  `continuo/{world}/actor/**/pose`, throttled to ~30 Hz, serving JSON over a
-  WebSocket. No translation layer needed, since the wire format is already JSON.
-- `python/continuo_viz`: WebSocket client + 2D top-down view.
-- When distribution lands, the Python side swaps its WebSocket client for
-  `zenoh-python` with the same message schema, so keep the schema versioned and
-  stable from milestone 5 on.
+- `continuo-viz-bridge` is a transport monitor rather than a component, so
+  watching a run cannot change it. It republishes every message and
+  membership change under `continuo_viz/{world}/**` over Zenoh, unthrottled.
+- `python/continuo_viz` draws the world top-down, live from that Zenoh
+  session or replayed from a recorded log. Live, it plays each pose at its
+  own sim time, 50 ms behind the newest received.
+- The viewer protocol is versioned, and a log's header names the version it
+  was written with.
 
 ## Distribution (Zenoh)
 
@@ -574,10 +573,6 @@ continuo/
   python/continuo_viz/        # top-down viewer, live over Zenoh or from a log
 ```
 
-Plain threads and channels (crossbeam), no tokio initially: a deterministic sim
-loop wants synchronous control flow, and Zenoh's Rust API can be used without
-owning an async runtime later.
-
 ## Milestones
 
 1. **Skeleton ticks**: workspace, core types, `InProcTransport`, conductor
@@ -602,7 +597,7 @@ owning an async runtime later.
 6. **FMI**: `continuo-fmi` and its mapping, a car controller FMU driving
    every car, a radar feeding it, and a collision monitor.
 7. **Distribution**: Zenoh transport, standalone host binary, one component
-   out-of-process in lockstep, Python viz on zenoh-python.
+   out-of-process in lockstep.
 
 FMI before Zenoh: it exercises the component abstraction while everything is
 still in one process, making native-code issues easier to debug without
@@ -610,10 +605,9 @@ networking in the mix. They are independent and can swap if priorities shift.
 
 ## Decision log
 
-Moved to [DECISIONS.md](DECISIONS.md), which records why the design is
-what it is, in the order the questions were settled. It lives apart because
-it had grown to two fifths of this document, and a plan should lead with
-what the system *is* rather than the history of how it got there.
+[DECISIONS.md](DECISIONS.md) records why the design is what it is, in the
+order the questions were settled, so this document can lead with what the
+system *is*.
 
 ## Deferred (decided-not-now, revisit when they bite)
 
@@ -807,7 +801,7 @@ under "Wire format", rather than churning the fingerprint once apiece.
 - **Reclaiming vacated registry slots**: `Registry::entries` never shrinks,
   so a long run with heavy turnover accumulates one dead slot per departed
   component, and the due loop skips past them for the rest of the run. Fine
-  at demo scale, where thirty sim-seconds of traffic leaves eight holes, and the
+  at demo scale, where thirty sim-seconds of traffic leaves 33 holes, and the
   cost is bounded by *total* joins rather than by live components, so it
   only bites where a scenario churns many actors over a long run. Not
   fixable by compacting: an index **is** the execution order within an
@@ -903,10 +897,6 @@ under "Wire format", rather than churning the fingerprint once apiece.
 - **Road-network importer**: which format (OpenDRIVE, Lanelet2, other) lowers
   into the world spec; decide when realistic road scenarios are needed.
 
-- **Snapshot/restore**: via FMI 3.0 `SerializeFMUState` for FMUs plus a
-  serialize hook for native components, only if replay-from-log proves
-  insufficient.
-
 - **External (non-deterministic) ego participation**: a relaxed admission mode
   for a live AV stack under test, after milestone 7.
 
@@ -935,13 +925,12 @@ under "Wire format", rather than churning the fingerprint once apiece.
 - **The viewer's `--check` counts components and calls them joins.** Its
   summary prints `joins / leaves` directly above `actors seen`, and the two
   count different things: membership is published per component, so a
-  traffic car joining raises three events, one each for its radar, its
-  controller and its physics. A demo run reports 45 joins and 24 leaves
-  against 15 actors, which reads as a discrepancy and is not one: fourteen
-  traffic cars at three components each and the ego at two, plus the spawner
-  at one, and eight cars retiring. Saying "component joins / leaves" would
-  settle it. The CI smoke asserts those exact labels, so the two move
-  together.
+  car joining raises three events, one each for its radar, its controller
+  and its physics. A demo run reports 67 joins and 33 leaves against 22
+  actors, which reads as a discrepancy and is not one: 22 cars at three
+  components each, plus the spawner at one, and eleven cars retiring.
+  Saying "component joins / leaves" would settle it. The CI smoke asserts
+  those exact labels, so the two move together.
 
 - **A signal when a run starts.** A consumer outside the sim, such as the
   viewer, needs to know when a new run begins to reset what it keeps. The
