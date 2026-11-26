@@ -430,13 +430,13 @@ fn a_shared_extraction_is_deleted_once_it_and_its_instances_are_gone() {
     assert!(!extracted.exists(), "nothing holds {extracted:?}");
 }
 
-/// A copy of the `name` fixture whose model description declares
+/// A copy of the `fmu_name` fixture whose model description declares
 /// `canBeInstantiatedOnlyOncePerProcess`, written into `dir`. No reference
 /// FMU declares it.
-fn once_per_process_copy(name: &str, dir: &Path) -> PathBuf {
-    let fixture = File::open(fixture_path(name)).expect("the fixture opens");
+fn once_per_process_copy(fmu_name: &str, dir: &Path) -> PathBuf {
+    let fixture = File::open(fixture_path(fmu_name)).expect("the fixture opens");
     let mut source = zip::ZipArchive::new(fixture).expect("the fixture is a zip");
-    let path = dir.join(format!("{name}.fmu"));
+    let path = dir.join(format!("{fmu_name}.fmu"));
     let copy_file = File::create(&path).expect("the copy can be written");
     let mut copy = zip::ZipWriter::new(copy_file);
     for index in 0..source.len() {
