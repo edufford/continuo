@@ -16,7 +16,7 @@ use fmi::traits::FmiImport;
 use serde_json::Value;
 
 use crate::error::{FmuConstructionError, fmi_call_failure};
-use crate::fmu_archive::FmuArchive;
+use crate::fmu_extraction::FmuExtraction;
 use crate::fmu_get_set::{get_output_var, set_input_var, set_values};
 use crate::fmu_mapping::{FmuMapping, insert_at_pointer};
 use crate::fmu_variable::{
@@ -35,11 +35,10 @@ pub struct FmuComponent {
     /// in its own log and in every error about it.
     instance_name: String,
     /// Declared before `import`, which is load-bearing rather than stylistic.
-    /// Fields drop in declaration order, the instance holds a reference to the
-    /// loaded shared library, and the import owns the temporary directory
-    /// that library came out of, deleted when the last instance and archive
-    /// sharing it are gone. Windows refuses to delete a directory holding a
-    /// loaded DLL, so the other order would leave the directory behind.
+    /// Fields drop in declaration order, the instance holds the loaded shared
+    /// library, and the import owns the temporary directory that library came
+    /// out of. Windows refuses to delete a directory holding a loaded DLL, so
+    /// the other order would leave it behind.
     instance: InstanceCS,
     import: Arc<Fmi3Import>,
     inputs: Vec<BoundInput>,
@@ -80,20 +79,19 @@ enum Phase {
 }
 
 impl FmuComponent {
-    /// Extracts a `.fmu` and instantiates it for co-simulation, as
-    /// [`Self::from_archive`] does with an archive of its own. Building
-    /// several instances of one `.fmu` from a shared [`FmuArchive`] loads its
-    /// library once rather than once each.
+    /// Extracts a `.fmu` and instantiates it for co-simulation. Instances
+    /// built with [`Self::from_extraction`] from one shared [`FmuExtraction`]
+    /// load its library only once.
     pub fn new(
         id: &str,
         parent_path: &str,
         fmu_path: impl AsRef<Path>,
         mapping: FmuMapping,
     ) -> Result<Self, FmuConstructionError> {
-        Self::from_archive(id, parent_path, &FmuArchive::open(fmu_path)?, mapping)
+        Self::from_extraction(id, parent_path, &FmuExtraction::extract(fmu_path)?, mapping)
     }
 
-    /// Instantiates an FMU from an extracted archive for co-simulation.
+    /// Instantiates an extracted FMU for co-simulation.
     ///
     /// Everything the mapping asserts about the FMU is checked here rather
     /// than at the first step: that each named variable exists, and that the
@@ -108,10 +106,10 @@ impl FmuComponent {
     /// where the component goes.
     // TODO(PLAN "Scenario configuration"): `parent_path` moves into
     // `FmuMapping`, with the rest of what configures an instance.
-    pub fn from_archive(
+    pub fn from_extraction(
         id: &str,
         parent_path: &str,
-        archive: &FmuArchive,
+        extraction: &FmuExtraction,
         mapping: FmuMapping,
     ) -> Result<Self, FmuConstructionError> {
         let id = ComponentId::new(id)?;
@@ -119,7 +117,7 @@ impl FmuComponent {
             .join(id.clone())
             .to_string();
 
-        let import = archive.import_for_instance()?;
+        let import = extraction.import_for_instance()?;
 
         let description = import.model_description();
         let co_simulation = description.co_simulation.as_ref().ok_or_else(|| {
@@ -192,7 +190,7 @@ impl FmuComponent {
 
         tracing::debug!(
             instance = instance_name.as_str(),
-            source = %archive.source().display(),
+            source = %extraction.source().display(),
             extracted_to = %import.archive_path().display(),
             "imported FMU"
         );

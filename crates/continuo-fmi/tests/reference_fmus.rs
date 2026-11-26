@@ -7,7 +7,7 @@
 
 use continuo_core::{Component, ComponentPath, KeyExpr, Message, SimDuration, SimTime, StepCtx};
 use continuo_fmi::{
-    FmuArchive, FmuComponent, FmuMapping, InputBinding, OutputBinding, fixture_path,
+    FmuComponent, FmuExtraction, FmuMapping, InputBinding, OutputBinding, fixture_path,
 };
 use serde_json::{Value, json};
 
@@ -315,21 +315,20 @@ fn the_extraction_directory_is_reachable_and_holds_the_fmu() {
     );
 }
 
-/// Instances from one archive load one shared library, so this is what says
-/// that sharing it shares nothing else: each keeps its own parameters and
-/// its own state.
+/// Instances from one extraction share a library, but each keeps its own
+/// parameters and state.
 #[test]
-fn instances_built_from_one_archive_keep_separate_state() {
-    let archive = FmuArchive::open(fixture_path("BouncingBall")).expect("open");
+fn instances_built_from_one_extraction_keep_separate_state() {
+    let extraction = FmuExtraction::extract(fixture_path("BouncingBall")).expect("extract");
     let mut earth_mapping = empty_mapping(10);
     earth_mapping.outputs = vec![OutputBinding::new("h", key("earth"))];
     let mut heavy_mapping = empty_mapping(10);
     heavy_mapping.outputs = vec![OutputBinding::new("h", key("heavy"))];
     heavy_mapping.initial_values = vec![("g".to_string(), json!(-20.0))];
     let mut earth =
-        FmuComponent::from_archive("earth", "", &archive, earth_mapping).expect("build");
+        FmuComponent::from_extraction("earth", "", &extraction, earth_mapping).expect("build");
     let mut heavy =
-        FmuComponent::from_archive("heavy", "", &archive, heavy_mapping).expect("build");
+        FmuComponent::from_extraction("heavy", "", &extraction, heavy_mapping).expect("build");
 
     let mut heights = (0.0, 0.0);
     for tick in 0..20 {
@@ -350,12 +349,13 @@ fn instances_built_from_one_archive_keep_separate_state() {
 }
 
 #[test]
-fn a_shared_extraction_is_deleted_once_the_archive_and_its_instances_are_gone() {
-    let archive = FmuArchive::open(fixture_path("BouncingBall")).expect("open");
-    let fmu = FmuComponent::from_archive("ball", "", &archive, empty_mapping(10)).expect("build");
+fn a_shared_extraction_is_deleted_once_it_and_its_instances_are_gone() {
+    let extraction = FmuExtraction::extract(fixture_path("BouncingBall")).expect("extract");
+    let fmu =
+        FmuComponent::from_extraction("ball", "", &extraction, empty_mapping(10)).expect("build");
     let extracted = fmu.extracted_path().to_path_buf();
 
-    drop(archive);
+    drop(extraction);
     assert!(extracted.exists(), "an instance still holds {extracted:?}");
 
     drop(fmu);
