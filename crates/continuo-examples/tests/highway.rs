@@ -32,7 +32,7 @@ fn record_highway(seconds: i64) -> EventLog {
     conductor.add_membership_callback(recorder.membership_callback());
     conductor.add_membership_callback(traffic_handler.membership_callback());
     conductor.add_observation_callback(recorder.observation_callback());
-    traffic_world::setup_live_traffic_scenario(&mut conductor, &traffic_handler)
+    traffic_world::setup_live_traffic_scenario(&mut conductor, traffic_handler.car_factory())
         .expect("the world builds");
     traffic_world::run_live_traffic_scenario(
         &mut conductor,
@@ -244,7 +244,7 @@ fn playback_doubles_join_and_leave_when_their_originals_did() {
     conductor.add_membership_callback(traffic_handler.membership_callback());
     traffic_world::setup_playback_traffic_scenario(
         &mut conductor,
-        &traffic_handler,
+        traffic_handler.car_factory(),
         &live_run_log,
         30.0,
     )
@@ -358,7 +358,7 @@ fn verify_highway(recorded: EventLog, seconds: i64) -> (SimTime, Result<usize, D
     conductor.add_tick_callback(verifier.tick_callback());
     conductor.add_membership_callback(verifier.membership_callback());
     conductor.add_membership_callback(traffic_handler.membership_callback());
-    traffic_world::setup_live_traffic_scenario(&mut conductor, &traffic_handler)
+    traffic_world::setup_live_traffic_scenario(&mut conductor, traffic_handler.car_factory())
         .expect("the world builds");
 
     traffic_world::run_live_traffic_scenario(

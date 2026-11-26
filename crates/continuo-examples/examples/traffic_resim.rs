@@ -46,7 +46,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // mean something.
     let num_cars = traffic_world::setup_playback_traffic_scenario(
         &mut conductor,
-        &traffic_handler,
+        traffic_handler.car_factory(),
         &log,
         WHAT_IF_EGO_SPEED,
     )?;
