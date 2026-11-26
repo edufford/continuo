@@ -1698,3 +1698,12 @@ it got there, including the roads not taken.
     lines up only cars publishing at aligned sim time instants; and
     interpolating every car to one instant, which draws positions nobody
     published.
+- **2026-11-25**: **Every instance of one FMU is built from a single
+  extraction.** Each car joining the demo stopped the world for 75 to 93 ms
+  on Windows while its controller FMU was extracted and loaded.
+  `FmuExtraction` extracts a `.fmu` once and every instance loads the same
+  library, so only the first pays. Instances share the library's statics,
+  so an FMU declaring `canBeInstantiatedOnlyOncePerProcess` is extracted
+  per instance. `traffic_realtime` now keeps real time, and the world hash
+  is unchanged.
+  - Deferred: loading an FMU first seen mid-run on a worker thread.

@@ -44,8 +44,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The speed is the only thing this run varies; the setup holds the rest
     // at the recorded scenario's values, which is what makes the comparison
     // mean something.
-    let num_cars =
-        traffic_world::setup_playback_traffic_scenario(&mut conductor, &log, WHAT_IF_EGO_SPEED)?;
+    let num_cars = traffic_world::setup_playback_traffic_scenario(
+        &mut conductor,
+        &traffic_handler,
+        &log,
+        WHAT_IF_EGO_SPEED,
+    )?;
 
     traffic_world::run_playback_traffic_scenario(
         &mut conductor,

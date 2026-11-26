@@ -410,6 +410,8 @@ component in particular.
   value references.
 - Per-FMU mapping config binds key expressions to variable names (borrowing
   ideas from FMI's SSP standard for wiring configuration).
+- Every instance of one `.fmu` is built from a shared `FmuExtraction`, so
+  only the first loads its library.
 - Candidate crate: `fmi` (fmi-rs) for 3.0 import. Validate early, because FMU
   loading is `libloading` + native code, and Windows DLL handling can be finicky.
 - Demo target: an FMI 3.0 reference FMU from the Modelica Association set
@@ -857,28 +859,12 @@ under "Wire format", rather than churning the fingerprint once apiece.
   which `traffic_scale` is the instrument for measuring. Nothing at demo
   scale needs it.
 
-- **An FMU archive opened once and shared by every instance built from
-  it.** `fmi` 0.8 extracts and loads the archive for each `FmuComponent`.
-  On Windows, loading a freshly extracted DLL takes 75 to 93 ms, against
-  under 1 ms for the FMU's own instantiate and 65 us to instantiate again
-  once loaded, so every following car stalls the run as it joins. Fourteen
-  joins cost 1.08 s of a 1.40 s release demo, and leave `traffic_realtime`
-  1.25 s behind real time. Other platforms were not measured.
-  - `TrafficHandler` would open the archive during setup and share it,
-    so no join loads anything. Instances would then share the DLL's
-    statics; this FMU and `fmi-export` hold no mutable ones, by reading
-    their source, and the pinned world hash would be the test. An FMU
-    declaring `canBeInstantiatedOnlyOncePerProcess` keeps an archive per
-    instance.
-  - For FMUs not known before the run, a worker thread could load each one
-    during the join's lead time, 100 ms for the spawner's, and the run would
-    wait at `first_due` only for an unfinished load. The instance is still
-    made on the conductor's thread, since `fmi`'s `Instance` is not `Send`.
-    This hides the load only when paced, and milestone 7's joins over the
-    transport take this shape anyway.
-  - Deferred because the world hash is unaffected and a paced run keeps
-    time between joins. Proving a fix wants a churn measurement, since
-    `traffic_scale` joins every car before its timer starts.
+- **Loading an FMU first seen mid-run off the conductor's thread.** The
+  first instance of a `.fmu` still stops the run while its library loads,
+  75 to 93 ms on Windows. A worker thread could load it during the join's
+  lead time, though the instance is still made on the conductor's thread,
+  since `fmi`'s `Instance` is not `Send`. Milestone 7's joins over the
+  transport take this shape anyway.
 
 - **Pacing slips recorded in the event log.** When real-time pacing falls
   behind past its re-anchor threshold, the slip is counted by

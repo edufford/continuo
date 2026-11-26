@@ -37,7 +37,9 @@ use continuo_conductor::{
 use continuo_core::{
     Component, ComponentId, ComponentPath, CoreError, KeyExpr, Message, Pose, SimDuration, SimTime,
 };
-use continuo_fmi::{FmuComponent, FmuConstructionError, FmuMapping, InputBinding, OutputBinding};
+use continuo_fmi::{
+    FmuComponent, FmuConstructionError, FmuExtraction, FmuMapping, InputBinding, OutputBinding,
+};
 use continuo_transport::Transport;
 use serde_json::json;
 
@@ -98,15 +100,14 @@ const RADAR_MAX_RANGE: f64 = 120.0;
 const LANE_TOLERANCE: f64 = LANE_WIDTH / 2.0;
 
 /// Which components a car is built from, and so how it drives.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CarConfiguration {
     /// Holds the speed it started at whatever is ahead, steering with
     /// the native controller: `[controller, physics]`.
     ConstantSpeed,
-    /// Follows the car ahead in its lane on the controller FMU, and wants
-    /// the speed it started at whenever the road ahead is free:
-    /// `[radar, controller, physics]`.
-    IdmFollowing,
+    /// Follows the car ahead in its lane on the controller FMU, built from
+    /// this extraction, and wants the speed it started at whenever the road
+    /// ahead is free: `[radar, controller, physics]`.
+    IdmFollowing(FmuExtraction),
 }
 
 /// Why a traffic scenario could not be built or run.
@@ -119,6 +120,9 @@ pub enum ScenarioError {
     /// built. The message names the command that fixes it.
     #[error(transparent)]
     NotPackaged(#[from] continuo_fmu_controller_idm::PackageError),
+
+    #[error("cannot extract the controller FMU: {0}")]
+    ControllerFmuExtraction(#[source] FmuConstructionError),
 
     #[error("cannot build the controller FMU for {actor_name}: {source}")]
     Controller {
@@ -188,9 +192,15 @@ fn add_car<T: Transport>(
             native_controller_component(actor_name, lane_offset, initial_state),
             physics_component(actor_name, initial_state),
         ],
-        CarConfiguration::IdmFollowing => vec![
+        CarConfiguration::IdmFollowing(controller_fmu) => vec![
             radar_component(actor_name),
-            fmu_controller_component(world_name, actor_name, lane_offset, initial_state)?,
+            fmu_controller_component(
+                &controller_fmu,
+                world_name,
+                actor_name,
+                lane_offset,
+                initial_state,
+            )?,
             physics_component(actor_name, initial_state),
         ],
     };
@@ -206,12 +216,13 @@ fn add_car<T: Transport>(
 /// ahead on IDM.
 fn add_traffic_car<T: Transport>(
     conductor: &mut Conductor<T>,
+    controller_fmu: FmuExtraction,
     spawn: &SpawnTrafficRequest,
 ) -> Result<(), ScenarioError> {
     add_car(
         conductor,
         &spawn.actor_name,
-        CarConfiguration::IdmFollowing,
+        CarConfiguration::IdmFollowing(controller_fmu),
         spawn.start_s,
         spawn.lane_offset,
         spawn.speed,
@@ -250,26 +261,22 @@ fn native_controller_component(
     ))
 }
 
-/// A car's controller FMU, run from the `.fmu` that
-/// `cargo xtask package-fmus` builds and
-/// [`continuo_fmu_controller_idm::packaged_fmu_path`] finds.
+/// A car's controller FMU, instantiated from `controller_fmu`.
 fn fmu_controller_component(
+    controller_fmu: &FmuExtraction,
     world_name: &str,
     actor_name: &str,
     lane_offset: f64,
     initial_state: CarState,
 ) -> Result<Box<dyn Component>, ScenarioError> {
     let mapping = controller_fmu_mapping(world_name, actor_name, lane_offset, initial_state);
-    let controller = FmuComponent::new(
-        "controller",
-        actor_name,
-        continuo_fmu_controller_idm::packaged_fmu_path()?,
-        mapping,
-    )
-    .map_err(|source| ScenarioError::Controller {
-        actor_name: actor_name.to_string(),
-        source,
-    })?;
+    let controller =
+        FmuComponent::from_extraction("controller", actor_name, controller_fmu, mapping).map_err(
+            |source| ScenarioError::Controller {
+                actor_name: actor_name.to_string(),
+                source,
+            },
+        )?;
 
     // Return the controller, ready to join.
     Ok(Box::new(controller))
@@ -378,15 +385,18 @@ fn controller_fmu_mapping(
 /// The three are parameters because a what-if run changes them.
 fn add_ego<T: Transport>(
     conductor: &mut Conductor<T>,
+    traffic_handler: &TrafficHandler,
     start_s: f64,
     lane_offset: f64,
     speed: f64,
 ) -> Result<(), ScenarioError> {
+    let controller_fmu = traffic_handler.controller_fmu()?;
+
     // Return once the ego is registered.
     add_car(
         conductor,
         EGO_NAME,
-        CarConfiguration::IdmFollowing,
+        CarConfiguration::IdmFollowing(controller_fmu),
         start_s,
         lane_offset,
         speed,
@@ -401,6 +411,7 @@ fn add_ego<T: Transport>(
 /// traffic.
 fn add_spawner<T: Transport>(
     conductor: &mut Conductor<T>,
+    traffic_handler: &TrafficHandler,
     ego_start_s: f64,
     ego_start_lateral: f64,
 ) -> Result<(), ScenarioError> {
@@ -423,7 +434,7 @@ fn add_spawner<T: Transport>(
 
     let starting_cars = spawner.fill_around_ego(conductor.world_seed());
     for spawn in starting_cars {
-        add_traffic_car(conductor, &spawn)?;
+        add_traffic_car(conductor, traffic_handler.controller_fmu()?, &spawn)?;
     }
     conductor.add_component_at_start(WORLD_LEVEL, Box::new(spawner))?;
 
@@ -440,9 +451,10 @@ fn add_spawner<T: Transport>(
 /// cars played back from a log rather than chosen.
 pub fn setup_live_traffic_scenario<T: Transport>(
     conductor: &mut Conductor<T>,
+    traffic_handler: &TrafficHandler,
 ) -> Result<(), ScenarioError> {
-    add_ego(conductor, EGO_START, EGO_LANE, EGO_SPEED)?;
-    add_spawner(conductor, EGO_START, EGO_LANE)?;
+    add_ego(conductor, traffic_handler, EGO_START, EGO_LANE, EGO_SPEED)?;
+    add_spawner(conductor, traffic_handler, EGO_START, EGO_LANE)?;
 
     // Return success; the starting world is registered.
     Ok(())
@@ -516,10 +528,11 @@ pub fn setup_scale_scenario<T: Transport>(
 /// and the log is the only place that now knows.
 pub fn setup_playback_traffic_scenario<T: Transport>(
     conductor: &mut Conductor<T>,
+    traffic_handler: &TrafficHandler,
     recorded: &EventLog,
     ego_speed: f64,
 ) -> Result<usize, ScenarioError> {
-    add_ego(conductor, EGO_START, EGO_LANE, ego_speed)?;
+    add_ego(conductor, traffic_handler, EGO_START, EGO_LANE, ego_speed)?;
 
     // Each double joins and leaves at the instants its original did, both
     // queued now, so the world's membership matches the recording.
@@ -607,6 +620,8 @@ pub struct TrafficHandler {
     /// What the run prints to the console, queued until the handler prints
     /// it between ticks.
     console_output: Arc<Mutex<ConsoleOutput>>,
+    /// The controller FMU, extracted for the first car and shared by the rest.
+    controller_fmu: Arc<Mutex<Option<FmuExtraction>>>,
 }
 
 impl Default for TrafficHandler {
@@ -616,6 +631,7 @@ impl Default for TrafficHandler {
             unreadable_request: Arc::default(),
             collision_monitor: CollisionMonitor::new(WORLD_NAME, EGO_NAME),
             console_output: Arc::default(),
+            controller_fmu: Arc::default(),
         }
     }
 }
@@ -913,6 +929,24 @@ impl TrafficHandler {
         Ok(())
     }
 
+    /// The controller FMU's shared extraction, made on the first call.
+    fn controller_fmu(&self) -> Result<FmuExtraction, ScenarioError> {
+        let mut controller_fmu = self
+            .controller_fmu
+            .lock()
+            .expect("controller FMU mutex is never poisoned");
+        if let Some(extraction) = controller_fmu.as_ref() {
+            return Ok(extraction.clone());
+        }
+        let fmu_path = continuo_fmu_controller_idm::packaged_fmu_path()?;
+        let extraction =
+            FmuExtraction::extract(fmu_path).map_err(ScenarioError::ControllerFmuExtraction)?;
+        *controller_fmu = Some(extraction.clone());
+
+        // Return the extraction, now kept for later cars.
+        Ok(extraction)
+    }
+
     /// Applies everything the spawner has asked for since the last call,
     /// in the order it asked.
     ///
@@ -944,7 +978,9 @@ impl TrafficHandler {
         );
         for request in collected {
             match request {
-                TrafficRequest::Spawn(spawn) => add_traffic_car(conductor, &spawn)?,
+                TrafficRequest::Spawn(spawn) => {
+                    add_traffic_car(conductor, self.controller_fmu()?, &spawn)?;
+                }
                 // The spawner drops a car from its roll when it asks, so it
                 // never asks twice, but a scenario that also removed cars
                 // by hand could, and a request for someone already gone has
