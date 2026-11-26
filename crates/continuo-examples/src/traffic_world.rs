@@ -1,6 +1,6 @@
 //! The demo world shared by every traffic example: an ego car driving a
-//! straight highway, with traffic spawning ahead of it in the neighboring
-//! lanes and retiring once it has gone past.
+//! straight highway among traffic kept around it, with new cars added
+//! ahead and cars that drift too far away in either direction retired.
 //!
 //! Two scenarios, kept side by side so the difference between them is one
 //! diff rather than two files: [`setup_live_traffic_scenario`], whose cars
@@ -19,13 +19,14 @@
 //! `MonitorTransport` when recording or verifying.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use continuo_actors::control_laws::{FREE_ROAD, IdmParams, PurePursuitParams};
 use continuo_actors::{
     CarState, DespawnTrafficRequest, PathFollowController, PlantLimits, RadarSensor,
-    SpawnTrafficRequest, TrafficSpawner, UnicyclePhysics, Waypoints, accel_cmd_key,
-    actor_of_pose_key, pose_key, radar_key, road_pose, steer_cmd_key, straight_road,
+    SpawnTrafficRequest, TrafficSpawner, TrafficSpawnerConfig, UnicyclePhysics, Waypoints,
+    accel_cmd_key, actor_of_pose_key, pose_key, radar_key, road_pose, steer_cmd_key, straight_road,
     traffic_despawn_key, traffic_spawn_key,
 };
 use continuo_conductor::record::LogEvent;
@@ -37,7 +38,9 @@ use continuo_conductor::{
 use continuo_core::{
     Component, ComponentId, ComponentPath, CoreError, KeyExpr, Message, Pose, SimDuration, SimTime,
 };
-use continuo_fmi::{FmuComponent, FmuConstructionError, FmuMapping, InputBinding, OutputBinding};
+use continuo_fmi::{
+    FmuComponent, FmuConstructionError, FmuExtraction, FmuMapping, InputBinding, OutputBinding,
+};
 use continuo_transport::Transport;
 use serde_json::json;
 
@@ -49,38 +52,37 @@ pub const WORLD_SEED: u64 = 42;
 pub const WORLD_NAME: &str = "demo";
 pub const SIM_SECONDS: i64 = 30;
 
-/// The car the scenario is arranged around. Alone in its lane, and faster
-/// than the traffic, so it spends the run overtaking.
-const EGO_NAME: &str = "ego";
-
-/// Where the ego starts: at the road's origin, in the centre lane. Unlike
-/// [`EGO_SPEED`] these are not tuned against anything. They are what the
-/// rest of the scenario is measured from, which is why traffic spawns
-/// relative to the ego and the road is long enough for where it ends up.
-const EGO_START: f64 = 0.0;
-const EGO_LANE: f64 = 0.0;
-
 /// Enough road for the ego's 30 s at 30 m/s, plus the stretch ahead that
 /// traffic spawns into.
-const ROAD_LENGTH: f64 = 1600.0;
+const ROAD_LENGTH: f64 = 1500.0;
 const LANE_WIDTH: f64 = 3.5;
-/// Lanes traffic may use: either side of the ego, never [`EGO_LANE`]
-/// itself: nothing here models a collision, so traffic goes beside the ego
-/// rather than in front of it, and the overtaking stays clean.
-const TRAFFIC_LANES: [f64; 2] = [LANE_WIDTH, -LANE_WIDTH];
+/// Lanes traffic drives in, as offsets in meters to the left of the road.
+const TRAFFIC_LANES: [f64; 3] = [LANE_WIDTH, 0.0, -LANE_WIDTH];
 
-// Sized so the run actually shows what it is meant to. The ego closes on
-// traffic at 8-14 m/s, and the six cars start between 40 m and roughly
-// 250 m ahead, so the first is overtaken within seconds and the last
-// before the run ends, with replacements spawning ahead as they go. Slow
-// the traffic down or push it further ahead and the demo becomes thirty
-// seconds of nothing being passed.
+/// The car the scenario is arranged around. It drives in a lane with
+/// traffic, following the car ahead of it.
+const EGO_NAME: &str = "ego";
+/// How far along the road the ego starts, in meters, leaving room behind
+/// it for the traffic the run starts with.
+const EGO_START: f64 = 100.0;
+/// The ego starts in the middle lane, with traffic either side of it.
+const EGO_LANE: f64 = TRAFFIC_LANES[TRAFFIC_LANES.len() / 2];
+/// The ego's starting and target speed, in m/s.
 const EGO_SPEED: f64 = 30.0;
-const TRAFFIC_SPEED: (f64, f64) = (16.0, 22.0);
-const TRAFFIC_POPULATION: usize = 6;
+
+// Traffic is slower than the ego, so the ego closes on the car ahead in its
+// lane while cars in the other lanes drift by.
+const TRAFFIC_SPEED: (f64, f64) = (22.0, 28.0);
+const TRAFFIC_POPULATION: usize = 10;
 const SPAWN_AHEAD: f64 = 40.0;
-const RETIRE_BEHIND: f64 = 60.0;
-const SPAWN_GAP: (f64, f64) = (20.0, 50.0);
+const RETIRE_AHEAD: f64 = 90.0;
+const RETIRE_BEHIND: f64 = 70.0;
+/// Wide enough for a car to brake from the largest difference in speed
+/// before reaching the car ahead.
+const SPAWN_GAP: (f64, f64) = (25.0, 40.0);
+/// How many times a `SPAWN_GAP` the run starts with ahead of the ego in its
+/// lane, so it passes a few cars before it settles behind one.
+const EGO_HEADWAY_FACTOR: f64 = 2.0;
 
 /// What a full command is worth on every car in this world.
 const CAR_LIMITS: PlantLimits = PlantLimits::highway_car();
@@ -110,6 +112,72 @@ enum CarConfiguration {
     IdmFollowing,
 }
 
+/// Builds each car's components from its configuration, and holds what the
+/// cars share: one extraction of each FMU, made for the first car using it.
+#[derive(Clone, Default)]
+pub struct CarFactory {
+    fmu_extractions: Arc<Mutex<BTreeMap<PathBuf, FmuExtraction>>>,
+}
+
+impl CarFactory {
+    /// `actor_name`'s components for `car_config`, in the order they run
+    /// within an instant. The car starts `start_s` along the road at `speed`
+    /// in the lane at `lane_offset`.
+    fn components(
+        &self,
+        world_name: &str,
+        actor_name: &str,
+        car_config: CarConfiguration,
+        start_s: f64,
+        lane_offset: f64,
+        speed: f64,
+    ) -> Result<Vec<Box<dyn Component>>, ScenarioError> {
+        let initial_state = CarState::new(road_pose(&shared_road(), start_s, lane_offset), speed);
+        let components = match car_config {
+            CarConfiguration::ConstantSpeed => vec![
+                native_controller_component(actor_name, lane_offset, initial_state),
+                physics_component(actor_name, initial_state),
+            ],
+            CarConfiguration::IdmFollowing => {
+                let controller_fmu_path = continuo_fmu_controller_idm::packaged_fmu_path()?;
+                let controller_fmu_extraction = self
+                    .fmu_extraction(controller_fmu_path)
+                    .map_err(ScenarioError::ControllerFmuExtraction)?;
+                vec![
+                    radar_component(actor_name),
+                    fmu_controller_component(
+                        &controller_fmu_extraction,
+                        world_name,
+                        actor_name,
+                        lane_offset,
+                        initial_state,
+                    )?,
+                    physics_component(actor_name, initial_state),
+                ]
+            }
+        };
+
+        // Return the car's components, ready to join.
+        Ok(components)
+    }
+
+    /// The extraction of the `.fmu` at `fmu_path`, made on its first use.
+    fn fmu_extraction(&self, fmu_path: PathBuf) -> Result<FmuExtraction, FmuConstructionError> {
+        let mut fmu_extractions = self
+            .fmu_extractions
+            .lock()
+            .expect("FMU extraction mutex is never poisoned");
+        if let Some(fmu_extraction) = fmu_extractions.get(&fmu_path) {
+            return Ok(fmu_extraction.clone());
+        }
+        let fmu_extraction = FmuExtraction::extract(&fmu_path)?;
+        fmu_extractions.insert(fmu_path, fmu_extraction.clone());
+
+        // Return the extraction, now kept for later cars.
+        Ok(fmu_extraction)
+    }
+}
+
 /// Why a traffic scenario could not be built or run.
 #[derive(Debug, thiserror::Error)]
 pub enum ScenarioError {
@@ -120,6 +188,9 @@ pub enum ScenarioError {
     /// built. The message names the command that fixes it.
     #[error(transparent)]
     NotPackaged(#[from] continuo_fmu_controller_idm::PackageError),
+
+    #[error("cannot extract the controller FMU: {0}")]
+    ControllerFmuExtraction(#[source] FmuConstructionError),
 
     #[error("cannot build the controller FMU for {actor_name}: {source}")]
     Controller {
@@ -172,8 +243,10 @@ pub fn config_paced(pacing: Pacing) -> ConductorConfig {
 /// The components register in the order they run within an instant:
 /// radar, controller, physics. So the scan reaches the controller and the
 /// command reaches the physics in the instant each was made.
+#[allow(clippy::too_many_arguments)]
 fn add_car<T: Transport>(
     conductor: &mut Conductor<T>,
+    car_factory: &CarFactory,
     actor_name: &str,
     car_config: CarConfiguration,
     start_s: f64,
@@ -181,26 +254,39 @@ fn add_car<T: Transport>(
     speed: f64,
     first_due: SimTime,
 ) -> Result<(), ScenarioError> {
-    let initial_state = CarState::new(road_pose(&shared_road(), start_s, lane_offset), speed);
-    let world_name = conductor.world_name();
-
-    let components = match car_config {
-        CarConfiguration::ConstantSpeed => vec![
-            native_controller_component(actor_name, lane_offset, initial_state),
-            physics_component(actor_name, initial_state),
-        ],
-        CarConfiguration::IdmFollowing => vec![
-            radar_component(actor_name),
-            fmu_controller_component(world_name, actor_name, lane_offset, initial_state)?,
-            physics_component(actor_name, initial_state),
-        ],
-    };
+    let components = car_factory.components(
+        conductor.world_name(),
+        actor_name,
+        car_config,
+        start_s,
+        lane_offset,
+        speed,
+    )?;
     for component in components {
         conductor.add_component(JoinMetadata::at(actor_name, first_due), component)?;
     }
 
     // Return success; the car is registered.
     Ok(())
+}
+
+/// Registers a traffic car where `spawn` places it, following the car
+/// ahead on IDM.
+fn add_traffic_car<T: Transport>(
+    conductor: &mut Conductor<T>,
+    car_factory: &CarFactory,
+    spawn: &SpawnTrafficRequest,
+) -> Result<(), ScenarioError> {
+    add_car(
+        conductor,
+        car_factory,
+        &spawn.actor_name,
+        CarConfiguration::IdmFollowing,
+        spawn.start_s,
+        spawn.lane_offset,
+        spawn.speed,
+        spawn.first_due,
+    )
 }
 
 /// A car's radar, scanning its own lane ahead.
@@ -234,26 +320,22 @@ fn native_controller_component(
     ))
 }
 
-/// A car's controller FMU, run from the `.fmu` that
-/// `cargo xtask package-fmus` builds and
-/// [`continuo_fmu_controller_idm::packaged_fmu_path`] finds.
+/// A car's controller FMU, instantiated from `fmu_extraction`.
 fn fmu_controller_component(
+    fmu_extraction: &FmuExtraction,
     world_name: &str,
     actor_name: &str,
     lane_offset: f64,
     initial_state: CarState,
 ) -> Result<Box<dyn Component>, ScenarioError> {
     let mapping = controller_fmu_mapping(world_name, actor_name, lane_offset, initial_state);
-    let controller = FmuComponent::new(
-        "controller",
-        actor_name,
-        continuo_fmu_controller_idm::packaged_fmu_path()?,
-        mapping,
-    )
-    .map_err(|source| ScenarioError::Controller {
-        actor_name: actor_name.to_string(),
-        source,
-    })?;
+    let controller =
+        FmuComponent::from_extraction("controller", actor_name, fmu_extraction, mapping).map_err(
+            |source| ScenarioError::Controller {
+                actor_name: actor_name.to_string(),
+                source,
+            },
+        )?;
 
     // Return the controller, ready to join.
     Ok(Box::new(controller))
@@ -357,20 +439,12 @@ fn controller_fmu_mapping(
     }
 }
 
-/// Registers the ego with the initial conditions given: starting `start_s`
-/// along the road, in the lane at `lane_offset`, holding `speed`.
-///
-/// All three are parameters because they are the knobs a what-if run
-/// turns, and the ego is the component under study. Both setups pass
-/// [`EGO_START`] and [`EGO_LANE`]; where they differ is the speed.
-/// [`setup_live_traffic_scenario`] passes [`EGO_SPEED`] and
-/// [`setup_playback_traffic_scenario`] takes whatever the experiment wants,
-/// which is what keeps the two runs comparable to each other.
-///
-/// It always joins at sim time zero, which is not a parameter: an ego that
-/// turned up partway through would not be the run's subject.
+/// Registers the ego at sim time zero, `start_s` along the road in the lane
+/// at `lane_offset`, driving at `speed`, which is also its target speed.
+/// The three are parameters because a what-if run changes them.
 fn add_ego<T: Transport>(
     conductor: &mut Conductor<T>,
+    car_factory: &CarFactory,
     start_s: f64,
     lane_offset: f64,
     speed: f64,
@@ -378,8 +452,9 @@ fn add_ego<T: Transport>(
     // Return once the ego is registered.
     add_car(
         conductor,
+        car_factory,
         EGO_NAME,
-        CarConfiguration::ConstantSpeed,
+        CarConfiguration::IdmFollowing,
         start_s,
         lane_offset,
         speed,
@@ -387,48 +462,59 @@ fn add_ego<T: Transport>(
     )
 }
 
-/// Registers the traffic spawner, the component that decides which cars
-/// exist while the run is under way.
-///
-/// Not needed by a run that plays traffic back from a log: there the
-/// recording is the traffic, and a live spawner would be deciding on top of
-/// it. See `traffic_resim`.
-fn add_spawner<T: Transport>(conductor: &mut Conductor<T>) -> Result<(), ConductorError> {
-    conductor.add_component_at_start(
-        WORLD_LEVEL,
-        Box::new(TrafficSpawner::new(
-            SimDuration::from_millis(500),
-            shared_road(),
-            EGO_NAME,
-            TRAFFIC_LANES.to_vec(),
-            LANE_TOLERANCE,
-            TRAFFIC_POPULATION,
-            SPAWN_AHEAD,
-            RETIRE_BEHIND,
-            SPAWN_GAP,
-            TRAFFIC_SPEED,
-        )),
-    )?;
+/// Registers the cars the run starts with and the spawner that manages
+/// traffic after that, around an ego starting `ego_start_s` along the road
+/// in the lane at `ego_start_lateral`. A run that plays traffic back from a
+/// log, such as `traffic_resim`, leaves it out, since the recording is the
+/// traffic.
+fn add_spawner<T: Transport>(
+    conductor: &mut Conductor<T>,
+    car_factory: &CarFactory,
+    ego_start_s: f64,
+    ego_start_lateral: f64,
+) -> Result<(), ScenarioError> {
+    let config = TrafficSpawnerConfig {
+        period: SimDuration::from_millis(100),
+        ego_name: EGO_NAME.to_string(),
+        ego_start_s,
+        ego_start_lateral,
+        lane_offsets: TRAFFIC_LANES.to_vec(),
+        lane_tolerance: LANE_TOLERANCE,
+        target_population: TRAFFIC_POPULATION,
+        spawn_ahead: SPAWN_AHEAD,
+        retire_behind: RETIRE_BEHIND,
+        retire_ahead: RETIRE_AHEAD,
+        gap_range: SPAWN_GAP,
+        ego_headway_factor: EGO_HEADWAY_FACTOR,
+        speed_range: TRAFFIC_SPEED,
+    };
+    let mut spawner = TrafficSpawner::new(shared_road(), config);
 
-    // Return success; the spawner is registered.
+    let starting_cars = spawner.fill_around_ego(conductor.world_seed());
+    for spawn in starting_cars {
+        add_traffic_car(conductor, car_factory, &spawn)?;
+    }
+    conductor.add_component_at_start(WORLD_LEVEL, Box::new(spawner))?;
+
+    // Return success; the spawner and the cars it starts with are registered.
     Ok(())
 }
 
-/// Registers the live scenario's fixed cast: the ego and the spawner that
-/// manages traffic around it. Every car arrives later, while the run is
-/// under way, so this is the whole world only at sim time zero, and
-/// [`run_live_traffic_scenario`] is what builds the rest of it.
+/// Registers the live scenario's starting world: the ego, the traffic
+/// around it, and the spawner whose later cars [`run_live_traffic_scenario`]
+/// adds while the run is under way.
 ///
 /// *Live* because the traffic is decided as the run happens. `traffic_resim`
 /// assembles the other kind by hand: the same ego, but no spawner, and
 /// cars played back from a log rather than chosen.
 pub fn setup_live_traffic_scenario<T: Transport>(
     conductor: &mut Conductor<T>,
+    car_factory: &CarFactory,
 ) -> Result<(), ScenarioError> {
-    add_ego(conductor, EGO_START, EGO_LANE, EGO_SPEED)?;
-    add_spawner(conductor)?;
+    add_ego(conductor, car_factory, EGO_START, EGO_LANE, EGO_SPEED)?;
+    add_spawner(conductor, car_factory, EGO_START, EGO_LANE)?;
 
-    // Return success; the fixed part of the world is registered.
+    // Return success; the starting world is registered.
     Ok(())
 }
 
@@ -436,16 +522,12 @@ pub fn setup_live_traffic_scenario<T: Transport>(
 /// once [`setup_scale_scenario`] has filled every lane and wrapped.
 const SCALE_ROW_SPACING: f64 = 50.0;
 
-/// The size the live demo holds at once, and the baseline a scaling run
-/// measures against: the ego plus its traffic, across the ego's lane and the
-/// traffic's.
-///
-/// Public so that a scaling run has something to measure against, namely the
-/// size everything else in the project is tuned for. It is the *size* that
-/// carries over and not the scenario: the demo decides its traffic while it
-/// runs, and [`setup_scale_scenario`] holds the cast still.
+/// The size of the live demo: the ego plus its traffic, across the lanes
+/// traffic drives in. A scaling run measures against it, since it is the
+/// size the project is tuned for. [`setup_scale_scenario`] takes the size
+/// but not the scenario, keeping one fixed set of cars.
 pub const BASELINE_DEMO_CARS: usize = TRAFFIC_POPULATION + 1;
-pub const BASELINE_DEMO_LANES: usize = TRAFFIC_LANES.len() + 1;
+pub const BASELINE_DEMO_LANES: usize = TRAFFIC_LANES.len();
 
 /// Registers `cars` cars across `lanes` lanes, for measuring what a world
 /// costs as it grows rather than for watching anything happen in it.
@@ -470,12 +552,14 @@ pub fn setup_scale_scenario<T: Transport>(
 ) -> Result<(), ScenarioError> {
     assert!(lanes > 0, "a world needs at least one lane");
 
+    let car_factory = CarFactory::default();
     for index in 0..cars {
         let lane_offset = ((index % lanes) as f64 - (lanes - 1) as f64 * 0.5) * LANE_WIDTH;
         let start_s = (index / lanes) as f64 * SCALE_ROW_SPACING;
         let speed = TRAFFIC_SPEED.0 + (index % 7) as f64;
         add_car(
             conductor,
+            &car_factory,
             &format!("car{index}"),
             CarConfiguration::ConstantSpeed,
             start_s,
@@ -504,10 +588,11 @@ pub fn setup_scale_scenario<T: Transport>(
 /// and the log is the only place that now knows.
 pub fn setup_playback_traffic_scenario<T: Transport>(
     conductor: &mut Conductor<T>,
+    car_factory: &CarFactory,
     recorded: &EventLog,
     ego_speed: f64,
 ) -> Result<usize, ScenarioError> {
-    add_ego(conductor, EGO_START, EGO_LANE, ego_speed)?;
+    add_ego(conductor, car_factory, EGO_START, EGO_LANE, ego_speed)?;
 
     // Each double joins and leaves at the instants its original did, both
     // queued now, so the world's membership matches the recording.
@@ -595,6 +680,8 @@ pub struct TrafficHandler {
     /// What the run prints to the console, queued until the handler prints
     /// it between ticks.
     console_output: Arc<Mutex<ConsoleOutput>>,
+    /// Builds every car the scenario adds, at setup and as the spawner asks.
+    car_factory: CarFactory,
 }
 
 impl Default for TrafficHandler {
@@ -604,6 +691,7 @@ impl Default for TrafficHandler {
             unreadable_request: Arc::default(),
             collision_monitor: CollisionMonitor::new(WORLD_NAME, EGO_NAME),
             console_output: Arc::default(),
+            car_factory: CarFactory::default(),
         }
     }
 }
@@ -674,6 +762,13 @@ impl TrafficHandler {
             collision_monitor_on_membership(change);
             console_output_on_membership(change);
         }
+    }
+
+    /// The factory building every car the scenario adds. Pass it to the setup
+    /// function, so the starting cars share its extractions with the cars the
+    /// spawner adds later.
+    pub fn car_factory(&self) -> &CarFactory {
+        &self.car_factory
     }
 
     /// The collision monitor.
@@ -932,15 +1027,9 @@ impl TrafficHandler {
         );
         for request in collected {
             match request {
-                TrafficRequest::Spawn(spawn) => add_car(
-                    conductor,
-                    &spawn.actor_name,
-                    CarConfiguration::IdmFollowing,
-                    spawn.start_s,
-                    spawn.lane_offset,
-                    spawn.speed,
-                    spawn.first_due,
-                )?,
+                TrafficRequest::Spawn(spawn) => {
+                    add_traffic_car(conductor, &self.car_factory, &spawn)?;
+                }
                 // The spawner drops a car from its roll when it asks, so it
                 // never asks twice, but a scenario that also removed cars
                 // by hand could, and a request for someone already gone has

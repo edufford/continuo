@@ -17,6 +17,11 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
+# For `WORLD_LEVEL`, the parent path of a world-level component.
+continuo-conductor = { workspace = true }
+# For writing a copy of a fixture with its model description changed.
+tempfile = { workspace = true }
+zip = { workspace = true }
 # Only the tests install a subscriber. `fmi` logs through `log`, and
 # tracing-subscriber's default `tracing-log` feature bridges that into
 # tracing, which is how an FMU's own diagnostics become visible. Installing

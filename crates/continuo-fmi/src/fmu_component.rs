@@ -3,6 +3,7 @@
 
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::sync::Arc;
 
 use continuo_core::{
     Component, ComponentId, ComponentPath, CoreError, KeyExpr, Message, SimDuration, SimTime,
@@ -15,6 +16,7 @@ use fmi::traits::FmiImport;
 use serde_json::Value;
 
 use crate::error::{FmuConstructionError, fmi_call_failure};
+use crate::fmu_extraction::FmuExtraction;
 use crate::fmu_get_set::{get_output_var, set_input_var, set_values};
 use crate::fmu_mapping::{FmuMapping, insert_at_pointer};
 use crate::fmu_variable::{
@@ -36,9 +38,9 @@ pub struct FmuComponent {
     /// Fields drop in declaration order, the instance holds the loaded shared
     /// library, and the import owns the temporary directory that library came
     /// out of. Windows refuses to delete a directory holding a loaded DLL, so
-    /// the other order leaves one behind per instance per run.
+    /// the other order would leave it behind.
     instance: InstanceCS,
-    import: Fmi3Import,
+    import: Arc<Fmi3Import>,
     inputs: Vec<BoundInput>,
     outputs: Vec<BoundOutput>,
     subscriptions: Vec<KeyExpr>,
@@ -77,7 +79,21 @@ enum Phase {
 }
 
 impl FmuComponent {
-    /// Imports a `.fmu` and instantiates it for co-simulation.
+    /// Extracts a `.fmu` and instantiates it for co-simulation.
+    ///
+    /// To build several instances of one `.fmu`, use
+    /// [`Self::from_extraction`] instead with one shared [`FmuExtraction`],
+    /// which loads its library only once.
+    pub fn new(
+        id: &str,
+        parent_path: &str,
+        fmu_path: impl AsRef<Path>,
+        mapping: FmuMapping,
+    ) -> Result<Self, FmuConstructionError> {
+        Self::from_extraction(id, parent_path, &FmuExtraction::extract(fmu_path)?, mapping)
+    }
+
+    /// Instantiates an extracted FMU for co-simulation.
     ///
     /// Everything the mapping asserts about the FMU is checked here rather
     /// than at the first step: that each named variable exists, and that the
@@ -92,23 +108,18 @@ impl FmuComponent {
     /// where the component goes.
     // TODO(PLAN "Scenario configuration"): `parent_path` moves into
     // `FmuMapping`, with the rest of what configures an instance.
-    pub fn new(
+    pub fn from_extraction(
         id: &str,
         parent_path: &str,
-        fmu_path: impl AsRef<Path>,
+        extraction: &FmuExtraction,
         mapping: FmuMapping,
     ) -> Result<Self, FmuConstructionError> {
-        let fmu_path = fmu_path.as_ref();
         let id = ComponentId::new(id)?;
         let instance_name = ComponentPath::parse(parent_path)?
             .join(id.clone())
             .to_string();
 
-        let import: Fmi3Import =
-            fmi::import::from_path(fmu_path).map_err(|source| FmuConstructionError::Import {
-                path: fmu_path.to_path_buf(),
-                source,
-            })?;
+        let import = extraction.fmi3_import_for_instance()?;
 
         let description = import.model_description();
         let co_simulation = description.co_simulation.as_ref().ok_or_else(|| {
@@ -181,7 +192,7 @@ impl FmuComponent {
 
         tracing::debug!(
             instance = instance_name.as_str(),
-            source = %fmu_path.display(),
+            source = %extraction.source().display(),
             extracted_to = %import.archive_path().display(),
             "imported FMU"
         );

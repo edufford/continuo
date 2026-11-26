@@ -359,6 +359,7 @@ dependencies = [
  "proptest",
  "serde",
  "serde_json",
+ "tracing",
 ]
 
 [[package]]
@@ -405,12 +406,15 @@ dependencies = [
 name = "continuo-fmi"
 version = "0.1.0"
 dependencies = [
+ "continuo-conductor",
  "continuo-core",
  "fmi",
  "serde_json",
+ "tempfile",
  "thiserror",
  "tracing",
  "tracing-subscriber",
+ "zip",
 ]
 
 [[package]]

@@ -50,8 +50,8 @@ pub use path::Waypoints;
 pub use physics::{CarState, PlantLimits, UnicyclePhysics};
 pub use radar::{RadarScan, RadarSensor};
 pub use traffic_spawner::{
-    DespawnTrafficRequest, SpawnTrafficRequest, TrafficSpawner, road_pose, straight_road,
-    traffic_despawn_key, traffic_spawn_key,
+    DespawnTrafficRequest, SpawnTrafficRequest, TrafficSpawner, TrafficSpawnerConfig, road_pose,
+    straight_road, traffic_despawn_key, traffic_spawn_key,
 };
 
 /// How many detections a scan carries at most.

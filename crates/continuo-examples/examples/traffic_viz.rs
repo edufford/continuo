@@ -5,7 +5,7 @@
 //! well under a second, which is correct and unwatchable.
 //!
 //! Run with (a short duration, since it runs in real time):
-//!   cargo run -p continuo-examples --features viz --example traffic_viz -- 30
+//!   cargo run --release -p continuo-examples --features viz --example traffic_viz -- 30
 //!
 //! Then, in another terminal, anything subscribing to
 //! `continuo_viz/demo/**` will see it. Poses arrive on
@@ -47,7 +47,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut conductor = Conductor::new(config, transport)?;
     conductor.add_membership_callback(viz_bridge.membership_callback());
     conductor.add_membership_callback(traffic_handler.membership_callback());
-    traffic_world::setup_live_traffic_scenario(&mut conductor)?;
+    traffic_world::setup_live_traffic_scenario(&mut conductor, traffic_handler.car_factory())?;
 
     println!(
         "publishing to continuo_viz/{}/** ; start a viewer to watch",

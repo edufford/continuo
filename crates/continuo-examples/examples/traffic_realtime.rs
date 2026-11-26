@@ -5,8 +5,8 @@
 //! free-run demo, because pacing changes timing, never content.
 //!
 //! Run with (a short duration, since it runs in real time):
-//!   cargo run -p continuo-examples --example traffic_realtime -- 3
-//!   cargo run -p continuo-examples --example traffic_realtime -- 3 precise
+//!   cargo run --release -p continuo-examples --example traffic_realtime -- 30
+//!   cargo run --release -p continuo-examples --example traffic_realtime -- 30 precise
 //!
 //! First optional argument is sim-seconds to run (default 5); a second
 //! argument `precise` selects `Pacing::real_time_precise`, sleep-then-spin
@@ -38,7 +38,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     transport.add_message_callback(traffic_handler.message_callback());
     let mut conductor = Conductor::new(traffic_world::config_paced(pacing), transport)?;
     conductor.add_membership_callback(traffic_handler.membership_callback());
-    traffic_world::setup_live_traffic_scenario(&mut conductor)?;
+    traffic_world::setup_live_traffic_scenario(&mut conductor, traffic_handler.car_factory())?;
 
     // Wall time is fine to read here: the example's main is outside the
     // simulation, where wall clocks are forbidden.

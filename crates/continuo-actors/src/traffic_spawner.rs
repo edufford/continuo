@@ -18,7 +18,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use continuo_core::{
-    Component, ComponentId, CoreError, KeyExpr, Pose, SimDuration, SimTime, StepCtx, Subscription,
+    Component, ComponentId, ComponentPath, CoreError, KeyExpr, Pose, RandomSplitMix64, SimDuration,
+    SimTime, StepCtx, Subscription, derive_component_seed,
 };
 use serde::{Deserialize, Serialize};
 
@@ -71,48 +72,58 @@ pub fn traffic_despawn_key(world_name: &str) -> KeyExpr {
     KeyExpr::new_rooted(format!("{world_name}/traffic_spawner/despawn")).expect("valid despawn key")
 }
 
-/// Keeps the road ahead of the ego populated and retires what it has left
-/// behind, watching poses to know where everyone is.
-pub struct TrafficSpawner {
-    /// How often the road is reviewed. This can be far slower than the
-    /// cars it manages: spawns land well ahead of the ego and retirements
-    /// well behind it, so a stale position by one period changes nothing
-    /// anyone sees.
-    period: SimDuration,
-    /// The road everyone is measured along. Poses are projected onto it,
-    /// so every distance here is an arc length on one shared reference
-    /// path rather than a raw coordinate, which is what lets cars in
-    /// different lanes be compared, and what keeps this working if the
-    /// road ever bends.
-    road: Arc<crate::Waypoints>,
+/// How a [`TrafficSpawner`] arranges traffic around the ego.
+pub struct TrafficSpawnerConfig {
+    /// How often the road is reviewed. A new car appears one period after
+    /// the spawner places it, and the car behind it in its lane drives on
+    /// in the meantime, so a longer period eats into the gap between them.
+    pub period: SimDuration,
     /// Actor whose progress the traffic is arranged around.
-    ego_name: String,
-    /// Lateral offsets to spawn into. The ego's own lane is not among them:
-    /// nothing here models a collision, so traffic stays beside the ego
-    /// rather than in front of it.
-    lane_offsets: Vec<f64>,
+    pub ego_name: String,
+    /// Arc length along the road the ego starts at.
+    pub ego_start_s: f64,
+    /// Lateral offset of the lane the ego starts in. The cars a run starts
+    /// with keep their distance from the ego in that lane.
+    pub ego_start_lateral: f64,
+    /// Lateral offsets of the lanes to spawn into, in meters.
+    pub lane_offsets: Vec<f64>,
     /// How near a car's lateral offset must be to a lane's for the car to
     /// count as in that lane, in meters.
-    lane_tolerance: f64,
+    pub lane_tolerance: f64,
     /// How many cars to keep on the road at once.
-    target_population: usize,
+    pub target_population: usize,
     /// Meters ahead of the ego that every new car spawns beyond.
-    spawn_ahead: f64,
+    pub spawn_ahead: f64,
     /// Meters behind the ego at which a car is retired.
-    retire_behind: f64,
+    pub retire_behind: f64,
+    /// Meters ahead of the ego at which a car is retired. No car spawns
+    /// beyond it.
+    pub retire_ahead: f64,
     /// How far beyond the furthest car in its lane a new car spawns, as a
     /// range in meters.
-    gap_range: (f64, f64),
-    /// Speed range for a new car, m/s. Slower than the ego, or it would
-    /// never pass anything.
-    speed_range: (f64, f64),
+    pub gap_range: (f64, f64),
+    /// Stretches the starting gaps ahead of the ego in its own lane, so it
+    /// passes cars beside it before it reaches the car ahead.
+    pub ego_headway_factor: f64,
+    /// Speed range for a new car, in m/s.
+    pub speed_range: (f64, f64),
+}
+
+/// Keeps the road around the ego populated, retiring cars that get too far
+/// behind or ahead of it, and watching poses to know where everyone is.
+pub struct TrafficSpawner {
+    /// The road every pose is projected onto, so cars in any lane, on a
+    /// straight or curved road, are compared by distance along it.
+    road: Arc<crate::Waypoints>,
+    /// What the spawner was built with.
+    config: TrafficSpawnerConfig,
     /// The cars this spawner has spawned and not yet asked to remove, by
     /// actor name, with where each was last seen. A car leaves as soon as
     /// its removal is requested, so the spawner does not ask twice while
     /// the first request is in flight.
     live_traffic: BTreeMap<String, LiveCar>,
-    /// Latest known position of the ego, the reference every decision here
-    /// is measured against.
+    /// The ego's arc length along the road, from its latest pose, or its
+    /// start before the first pose arrives.
     ego_s: f64,
     /// How many cars have been created, ever, which is what makes their
     /// names unique. Never decremented, so a retired `traffic3` never
@@ -122,35 +133,101 @@ pub struct TrafficSpawner {
 }
 
 impl TrafficSpawner {
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        period: SimDuration,
-        road: Arc<crate::Waypoints>,
-        ego_name: impl Into<String>,
-        lane_offsets: Vec<f64>,
-        lane_tolerance: f64,
-        target_population: usize,
-        spawn_ahead: f64,
-        retire_behind: f64,
-        gap_range: (f64, f64),
-        speed_range: (f64, f64),
-    ) -> Self {
-        // Return a spawner with an empty road; the first step fills it.
-        TrafficSpawner {
-            period,
-            road,
-            ego_name: ego_name.into(),
-            lane_offsets,
-            lane_tolerance,
-            target_population,
-            spawn_ahead,
-            retire_behind,
-            gap_range,
-            speed_range,
-            live_traffic: BTreeMap::new(),
-            ego_s: 0.0,
-            cars_spawned: 0,
+    /// Increases `retire_ahead` to `spawn_ahead` plus the largest gap if it is
+    /// less, with a warning, so a new car never spawns where it would
+    /// immediately be retired.
+    pub fn new(road: Arc<crate::Waypoints>, mut config: TrafficSpawnerConfig) -> Self {
+        let furthest_spawn = config.spawn_ahead + config.gap_range.1;
+        if config.retire_ahead < furthest_spawn {
+            tracing::warn!(
+                "retire_ahead {} m is short of the furthest spawn, so it is increased to {furthest_spawn} m",
+                config.retire_ahead,
+            );
+            config.retire_ahead = furthest_spawn;
         }
+
+        // Return a spawner with no cars yet.
+        TrafficSpawner {
+            road,
+            live_traffic: BTreeMap::new(),
+            ego_s: config.ego_start_s,
+            cars_spawned: 0,
+            config,
+        }
+    }
+}
+
+impl TrafficSpawner {
+    /// The cars a run starts with, due at sim time zero. They take the
+    /// lanes in turn, each a gap beyond the last in its lane, from
+    /// `retire_behind` behind the ego to `retire_ahead` ahead of it, and
+    /// keep clear of the ego in its own lane.
+    pub fn fill_around_ego(&mut self, world_seed: u64) -> Vec<SpawnTrafficRequest> {
+        // The seed the conductor gives the spawner, so the starting cars
+        // come from the world seed like everything else in the run.
+        let path = ComponentPath::parse(self.id().as_str()).expect("an id is a valid path");
+        let mut random = RandomSplitMix64::new(derive_component_seed(world_seed, &path));
+        let mut lane_fronts =
+            vec![self.ego_s - self.config.retire_behind; self.config.lane_offsets.len()];
+        let mut spawns = Vec::with_capacity(self.config.target_population);
+        for slot in 0..self.config.target_population {
+            let lane = slot % lane_fronts.len();
+            let in_ego_lane = (self.config.lane_offsets[lane] - self.config.ego_start_lateral)
+                .abs()
+                <= self.config.lane_tolerance;
+            let mut gap = random.range_f64(self.config.gap_range.0, self.config.gap_range.1);
+            if in_ego_lane && lane_fronts[lane] >= self.ego_s {
+                gap *= self.config.ego_headway_factor;
+            }
+            let start_s = lane_fronts[lane] + gap;
+            if in_ego_lane && (start_s - self.ego_s).abs() < self.config.gap_range.0 {
+                lane_fronts[lane] = self.ego_s;
+                continue;
+            }
+            if start_s > self.ego_s + self.config.retire_ahead {
+                continue;
+            }
+            lane_fronts[lane] = start_s;
+            let speed = random.range_f64(self.config.speed_range.0, self.config.speed_range.1);
+            spawns.push(self.track_new_car(
+                self.config.lane_offsets[lane],
+                start_s,
+                speed,
+                SimTime::ZERO,
+            ));
+        }
+
+        // Return the requests for the driver to add before the run starts.
+        spawns
+    }
+
+    /// Names one new car, adds it to the cars tracked, and returns the
+    /// request for it.
+    fn track_new_car(
+        &mut self,
+        lane_offset: f64,
+        start_s: f64,
+        speed: f64,
+        first_due: SimTime,
+    ) -> SpawnTrafficRequest {
+        self.cars_spawned += 1;
+        let spawn = SpawnTrafficRequest {
+            actor_name: format!("traffic{}", self.cars_spawned),
+            lane_offset,
+            speed,
+            start_s,
+            first_due,
+        };
+        self.live_traffic.insert(
+            spawn.actor_name.clone(),
+            LiveCar {
+                s: start_s,
+                lateral: lane_offset,
+            },
+        );
+
+        // Return the request for the caller to publish or apply.
+        spawn
     }
 }
 
@@ -213,7 +290,7 @@ impl Component for TrafficSpawner {
             // for all of them, whatever shape the road is. The lateral
             // offset says which lane a car is in.
             let (actor_s, actor_lateral) = self.road.frenet(pose.position.x, pose.position.y);
-            if actor_name == self.ego_name {
+            if actor_name == self.config.ego_name {
                 self.ego_s = actor_s;
             } else if let Some(car) = self.live_traffic.get_mut(actor_name) {
                 car.s = actor_s;
@@ -221,16 +298,19 @@ impl Component for TrafficSpawner {
             }
         }
 
-        // Retire the cars the ego has gone past. Each leaves `live_traffic`
-        // as soon as its removal is requested, so the spawner does not ask
-        // twice while the request is in flight.
-        let passed: Vec<String> = self
+        // Retire the cars too far behind or ahead of the ego. Each leaves
+        // `live_traffic` as soon as its removal is requested, so the spawner
+        // does not ask twice while the request is in flight.
+        let retiring: Vec<String> = self
             .live_traffic
             .iter()
-            .filter(|&(_, car)| car.s < self.ego_s - self.retire_behind)
+            .filter(|&(_, car)| {
+                car.s < self.ego_s - self.config.retire_behind
+                    || car.s > self.ego_s + self.config.retire_ahead
+            })
             .map(|(actor_name, _)| actor_name.clone())
             .collect();
-        for actor_name in passed {
+        for actor_name in retiring {
             self.live_traffic.remove(&actor_name);
             ctx.publish(
                 traffic_despawn_key(ctx.world_name()),
@@ -242,37 +322,31 @@ impl Component for TrafficSpawner {
         // furthest car in its lane, and always more than `spawn_ahead`
         // ahead of the ego.
         let mut random = ctx.step_random();
-        while self.live_traffic.len() < self.target_population {
-            self.cars_spawned += 1;
-            let gap = random.range_f64(self.gap_range.0, self.gap_range.1);
-            let lane_offset =
-                self.lane_offsets[random.next_u64() as usize % self.lane_offsets.len()];
-            let lane_front = lane_front(
+        while self.live_traffic.len() < self.config.target_population {
+            let gap = random.range_f64(self.config.gap_range.0, self.config.gap_range.1);
+            let lane_offset = self.config.lane_offsets
+                [random.next_u64() as usize % self.config.lane_offsets.len()];
+            let front = lane_front(
                 self.live_traffic.values(),
                 lane_offset,
-                self.lane_tolerance,
+                self.config.lane_tolerance,
                 self.ego_s,
-                self.spawn_ahead,
+                self.config.spawn_ahead,
             );
-            let spawn = SpawnTrafficRequest {
-                actor_name: format!("traffic{}", self.cars_spawned),
-                lane_offset,
-                speed: random.range_f64(self.speed_range.0, self.speed_range.1),
-                start_s: lane_front + gap,
-                first_due: ctx.now() + self.period,
-            };
-            self.live_traffic.insert(
-                spawn.actor_name.clone(),
-                LiveCar {
-                    s: spawn.start_s,
-                    lateral: lane_offset,
-                },
-            );
+            let start_s = front + gap;
+            if start_s > self.ego_s + self.config.retire_ahead {
+                // The lane has no room left this side of `retire_ahead`, so
+                // spawning waits for the next step.
+                break;
+            }
+            let speed = random.range_f64(self.config.speed_range.0, self.config.speed_range.1);
+            let spawn =
+                self.track_new_car(lane_offset, start_s, speed, ctx.now() + self.config.period);
             ctx.publish(traffic_spawn_key(ctx.world_name()), &spawn)?;
         }
 
         // Return the next due time, one period out.
-        Ok(ctx.now() + self.period)
+        Ok(ctx.now() + self.config.period)
     }
 
     fn state_bytes(&self) -> Option<Vec<u8>> {
@@ -325,6 +399,36 @@ mod tests {
     const EGO_S: f64 = 100.0;
     const SPAWN_AHEAD: f64 = 40.0;
     const AHEAD_OF_EGO: f64 = EGO_S + SPAWN_AHEAD;
+    const GAP_RANGE: (f64, f64) = (25.0, 40.0);
+
+    /// An ego at `EGO_S` in `LANE`, with a lane either side of it.
+    fn config() -> TrafficSpawnerConfig {
+        TrafficSpawnerConfig {
+            period: SimDuration::from_millis(100),
+            ego_name: "ego".to_string(),
+            ego_start_s: EGO_S,
+            ego_start_lateral: LANE,
+            lane_offsets: vec![NEXT_LANE, LANE, -NEXT_LANE],
+            lane_tolerance: LANE_TOLERANCE,
+            target_population: 10,
+            spawn_ahead: SPAWN_AHEAD,
+            retire_behind: 70.0,
+            retire_ahead: 90.0,
+            gap_range: GAP_RANGE,
+            ego_headway_factor: 2.0,
+            speed_range: (22.0, 28.0),
+        }
+    }
+
+    #[test]
+    fn a_retire_ahead_short_of_the_furthest_spawn_is_increased_to_it() {
+        let config = TrafficSpawnerConfig {
+            retire_ahead: SPAWN_AHEAD,
+            ..config()
+        };
+        let spawner = TrafficSpawner::new(Arc::new(straight_road(1000.0)), config);
+        assert_eq!(spawner.config.retire_ahead, SPAWN_AHEAD + GAP_RANGE.1);
+    }
 
     #[test]
     fn a_lane_front_is_the_furthest_car_seen_in_the_lane() {

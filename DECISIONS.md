@@ -1660,3 +1660,69 @@ it got there, including the roads not taken.
   could land right behind one that had driven on since. A car's lane comes
   from its latest pose, so a car that changes lanes counts in its new one.
   The world hash moves.
+
+- **2026-11-23**: **The ego drives in a traffic lane and follows the car
+  ahead.** The ego is `[radar, controller, physics]` on the controller FMU,
+  like traffic, in the middle of three traffic lanes. The run starts with
+  the whole population around the ego, since an ego starting on an empty
+  road spent most of the run reaching anyone. The world hash moves.
+  - **What joined the fingerprint**: `dbb6ddcb843791e2` to
+    `acd134a54d7e0963`, for the ego's scans and commands, the starting
+    traffic and the retuned scenario.
+  - **The retune**: one speed range for every lane, 22 to 28 m/s against the
+    ego's 30; gaps of 25 to 40 m, sized for the 2 m/s^2 the controller
+    brakes at; ten cars; spawning and retiring beyond the viewer's 60 m,
+    ahead of the ego as well as behind; twice the gap ahead of the ego in
+    its lane at the start, so it passes cars beside it first; and the
+    spawner stepping every 100 ms rather than 500: a new car appears on the
+    spawner's next step after it is placed, and the car behind it closes in
+    until then.
+  - Tried and dropped: lane-banded speeds, spawning behind the ego, a
+    longer run, other seeds, and varying each car's target speed during
+    the run.
+- **2026-11-24**: **The live viewer draws each pose at its own sim time, 50
+  ms behind the newest pose received.** Each car publishes its own pose, so
+  one instant's poses arrive milliseconds apart, and a frame drawn before
+  all of them arrived showed some cars an instant behind the followed car,
+  twitching against it. The live source now holds each pose in a playout
+  buffer until a display clock reaches its sim time. The clock runs at the
+  wall clock's rate, 50 ms behind the newest pose, so by the time it reaches
+  an instant, every pose from that instant has arrived. A world running
+  slower than real time is drawn steadily slower rather than in bursts. When
+  sim time jumps back by more than a second, as when a second run starts
+  with the viewer open, the buffer starts over and the viewer starts a new
+  scene. Pacing reads `perf_counter`, since `monotonic` ticks only every
+  15.6 ms on Windows before Python 3.13, and each car is drawn from a
+  whole-pixel center so it keeps its size as it moves.
+  - Rejected: holding each pose until every car reached its instant, which
+    lines up only cars publishing at aligned sim time instants; and
+    interpolating every car to one instant, which draws positions nobody
+    published.
+- **2026-11-25**: **Every instance of one FMU is built from a single
+  extraction.** Each car joining the demo stopped the world for 75 to 93 ms
+  on Windows while its controller FMU was extracted and loaded.
+  `FmuExtraction` extracts a `.fmu` once and every instance loads the same
+  library, so only the first pays. Instances share the library's statics,
+  so an FMU declaring `canBeInstantiatedOnlyOncePerProcess` is extracted
+  per instance. `traffic_realtime` now keeps real time, and the world hash
+  is unchanged.
+  - Deferred: loading an FMU first seen mid-run on a worker thread.
+- **2026-11-25**: **The demo is tuned through its scenario constants, for
+  what the scenario should show.** The targets are its characteristics:
+  traffic retiring both ahead of the ego and behind it, the ego passing
+  cars, and the ego slowing behind the car ahead to show following. A seeded
+  run repeats exactly, so each change to a constant is measured on the same
+  world, and `highway.rs` asserts each characteristic once it holds. The IDM
+  parameters could be tuned too, but stay at the literature values for this
+  demo: headway 1.5 s, minimum gap 2 m, acceleration 1.5 m/s^2 and braking
+  2 m/s^2. A retune moves the world hash, and the hash pin's failure prints
+  the new value for `DEMO_WORLD_HASH` and README. M6's retune is the
+  2026-11-23 entry.
+- **2026-11-25**: **M6 closes with three departures from the plan's FMI
+  section.** Import goes through the `fmi` crate rather than fmi-rs, which
+  was unreleased and compiles C on every build anyway (2026-08-11). The
+  demo's FMU is the project's own car controller rather than a Reference
+  FMU, and the Reference FMUs became the importer's test fixtures
+  (2026-08-15). The adapter binds arrays and every FMI 3.0 type but Clock,
+  rather than float64 alone (2026-08-11). `M6-PLAN.md` is deleted: its
+  design is in PLAN.md and its reasons in the entries above.

@@ -24,8 +24,8 @@ use continuo_core::SimTime;
 use continuo_examples::traffic_world::{self, TrafficHandler};
 use continuo_transport::{InProcTransport, MonitorTransport};
 
-/// The what-if: an ego holding 36 m/s against traffic recorded while it held
-/// 30, so it reaches the same cars sooner and overtakes more of them.
+/// The what-if: an ego with a target speed of 36 m/s against traffic
+/// recorded with a target of 30, so it closes on the car ahead faster.
 const WHAT_IF_EGO_SPEED: f64 = 36.0;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -44,8 +44,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The speed is the only thing this run varies; the setup holds the rest
     // at the recorded scenario's values, which is what makes the comparison
     // mean something.
-    let num_cars =
-        traffic_world::setup_playback_traffic_scenario(&mut conductor, &log, WHAT_IF_EGO_SPEED)?;
+    let num_cars = traffic_world::setup_playback_traffic_scenario(
+        &mut conductor,
+        traffic_handler.car_factory(),
+        &log,
+        WHAT_IF_EGO_SPEED,
+    )?;
 
     traffic_world::run_playback_traffic_scenario(
         &mut conductor,

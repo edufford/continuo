@@ -7,7 +7,7 @@ vehicle. It runs entirely in a single process today, and is designed so
 components can later be split into separate processes over
 [Zenoh](https://zenoh.io/) without changing component code.
 
-![The viewer following the ego car as it overtakes traffic](docs/viewer.gif)
+![The viewer following the ego car through traffic](docs/viewer.gif)
 
 See [PLAN.md](PLAN.md) for the full design and milestone roadmap, and
 [DECISIONS.md](DECISIONS.md) for why the design is what it is.
@@ -40,11 +40,13 @@ instant, and repeats.
        ┌─────────────┬───┴──────────┐   e.g. continuo/demo/actor/ego/pose
 ┌──────┴─────┐ ┌─────┴──────┐ ┌─────┴─────────┐
 │    ego     │ │  traffic7  │ │traffic_spawner│ world-level
-│ ┌────────┐ │ │ ┌────────┐ │ │    (2 Hz)     │ actors
-│ │  ctrl  │ │ │ │  ctrl  │ │ └───────┬───────┘
+│ ┌────────┐ │ │ ┌────────┐ │ │    (10 Hz)    │ actors
+│ │ radar  │ │ │ │ radar  │ │ └───────┬───────┘
 │ ├────────┤ │ │ ├────────┤ │         │
-│ │physics │ │ │ │physics │ │         │ watches poses, asks for cars
-│ └────────┘ │ │ └────────┘ │         │ to be added and removed
+│ │  ctrl  │ │ │ │  ctrl  │ │         │ watches poses, asks for cars
+│ ├────────┤ │ │ ├────────┤ │         │ to be added and removed
+│ │physics │ │ │ │physics │ │         │
+│ └────────┘ │ │ └────────┘ │         │
 └────────────┘ └────────────┘         ▼
   composites: ordered children,     traffic joins and leaves while
   intra-step pipeline               the run is under way
@@ -55,20 +57,20 @@ instant, and repeats.
 - **Self-scheduled stepping.** `Component::step` returns its own `next_due`
   time. Fixed periods, aperiodic sensors, and event-driven components all use
   the same mechanism. A component must always schedule strictly into the
-  future (≥ 1 ns); the conductor rejects zero-time livelock.
+  future (>= 1 ns); the conductor rejects zero-time livelock.
 - **Integer-nanosecond time.** `SimTime` is `i64` nanoseconds internally and
   exact decimal seconds on the wire (`1.234567891`), formatted and parsed via
   integer math only. Scheduling comparisons are integer, so there are no
   float-equality hazards.
 - **Hierarchical components.** Actors are composites of ordered
-  sub-components (e.g. `controller → physics`). The visibility rule makes the
-  hierarchy meaningful:
+  sub-components (e.g. `radar -> controller -> physics`). The visibility
+  rule makes the hierarchy meaningful:
   - *Across actors:* a message published at time T is seen at the consumer's
     next step after T. Co-due actors never see each other's same-instant
     outputs, which is the lockstep isolation that makes distribution possible.
   - *Inside a composite:* children step in declared order, and messages from
     an earlier child reach later children in the same step, giving the
-    sensor → controller → physics pipeline.
+    sensor -> controller -> physics pipeline.
 - **Deterministic by construction.** Inboxes are sorted by
   `(publisher, seq)`, never arrival order; execution order within an instant
   is declaration order; no wall clock or OS entropy in sim logic. All
@@ -86,7 +88,8 @@ instant, and repeats.
   changed components (divergence = the experiment's result).
 - **Human-readable messaging.** Every payload is canonical JSON. Time is
   decimal seconds; poses are named-field vectors and quaternions (never
-  arrays); the wire format is directly inspectable and, later, hashable.
+  arrays); the wire format is directly inspectable, and its bytes are what
+  the world hash covers.
 - **Pacing is one setting.** `Pacing::FreeRun` runs as fast as possible;
   `Pacing::RealTime { .. }` waits for 1x wall time and logs overruns (when
   the sim can't keep up the wall anchor slips, with no catch-up and no
@@ -121,7 +124,7 @@ See PLAN.md for what each one covers.
       policy
 - [x] **M5** visualization: a viz bridge on the transport, and a Python
       viewer for live runs and recordings
-- [ ] **M6** FMI 3.0 CS import (FMUs as components)
+- [x] **M6** FMI 3.0 CS import (FMUs as components)
 - [ ] **M7** Zenoh transport and distributed hosts
 
 Everywhere current code is a placeholder for later work, a comment marks the
@@ -131,7 +134,7 @@ lists them all.
 
 ## Usage
 
-Requires a recent stable Rust toolchain (edition 2024, rust ≥ 1.85) and
+Requires a recent stable Rust toolchain (edition 2024, rust >= 1.85) and
 libclang, the workspace's only native-code prerequisite. See
 [Installing libclang](#installing-libclang) below.
 
@@ -152,13 +155,13 @@ cargo test --workspace
 cargo clippy --workspace --all-targets
 cargo fmt --all
 
-# Run the demo: an ego car on a straight highway, traffic spawning ahead of
-# it and retiring once passed; free-run, 30 sim-seconds
+# Run the demo: an ego car following traffic on a straight highway, cars
+# joining and leaving around it; free-run, 30 sim-seconds
 cargo run -p continuo-examples --example traffic
 
 # The same world paced to 1x real time (argument = sim-seconds to run;
 # add `precise` for sleep-then-spin sub-millisecond pacing)
-cargo run -p continuo-examples --example traffic_realtime -- 3
+cargo run --release -p continuo-examples --example traffic_realtime -- 30
 
 # Record the run's event log (messages + tick fingerprints)
 cargo run -p continuo-examples --example traffic_record -- run.jsonl
@@ -203,33 +206,27 @@ cargo xtask verify-fmus
 cargo xtask package-fmus
 ```
 
-The demo prints each car to the console as it joins and leaves, with
-where it was then, and finishes in a few wall-seconds. Traffic appears as
-it is spawned and retires once the ego has gone past it:
+The demo prints where each car is as it joins and leaves, and finishes in
+a few wall-seconds:
 
 ```
-INFO joined: actor="ego" (x=0.00 y=0.00 yaw_deg=0.0 at 0.0 sec)
-INFO joined: actor="traffic1" (x=80.36 y=-3.50 yaw_deg=0.0 at 0.5 sec)
-INFO joined: actor="traffic2" (x=120.83 y=-3.50 yaw_deg=0.0 at 0.5 sec)
+INFO joined: actor="ego" (x=100.00 y=0.00 yaw_deg=0.0 at 0.0 sec)
+INFO joined: actor="traffic1" (x=60.24 y=3.50 yaw_deg=0.0 at 0.0 sec)
+INFO joined: actor="traffic2" (x=68.75 y=0.00 yaw_deg=0.0 at 0.0 sec)
 ...
-INFO left: actor="traffic3" (x=219.87 y=3.50 yaw_deg=0.0 at 9.5 sec)
-INFO joined: actor="traffic7" (x=359.26 y=3.50 yaw_deg=0.0 at 10.0 sec)
+INFO left: actor="traffic1" (x=199.70 y=3.50 yaw_deg=0.0 at 6.5 sec)
+INFO joined: actor="traffic11" (x=358.10 y=0.00 yaw_deg=0.0 at 6.6 sec)
 ...
 done: world 'demo' reached sim time 30.0 in 3001 ticks (free-run)
-actual time: 2.979 s (10x real-time), world hash dbb6ddcb843791e2
+actual time: 4.275 s (7x real-time), world hash acd134a54d7e0963
 ```
 
-The ego holds the centre lane at 30 m/s; traffic spawns at 16-22 m/s in the
-lanes either side, so the ego spends the run overtaking. Each traffic car
-drives on the controller FMU, following the car ahead in its lane with IDM
-and steering with pure pursuit, so a faster car closes on a slower one and
-settles behind it rather than driving through it. A collision monitor
-watches every car's footprint: traffic overlapping is logged, and the ego
-overlapping anything stops the run. The ego still holds its speed whatever
-is ahead, which is why traffic never shares its lane. A car is retired
-once it falls 60 m behind, and a replacement spawns ahead. Over
-30 sim-seconds fourteen different cars pass through a world that holds six
-at a time, eight of them retired along the way.
+Every car drives on the controller FMU, following the car ahead in its lane
+with IDM. The ego has a target speed of 30 m/s (67 mph) in the center lane
+and traffic 22 to 28 m/s (49 to 63 mph) in all three, so the ego passes cars
+beside it and then follows the one ahead. A collision monitor logs traffic
+overlapping and stops the run if the ego overlaps anything. Over 30
+sim-seconds, 21 cars pass through a world that holds ten at a time.
 
 The world hash is the run's determinism fingerprint: identical for every run
 of the same seeded scenario. CI checks it against a written-down value on four
@@ -293,7 +290,7 @@ python -m continuo_viz --log ../run.jsonl --check
 Watching a live run takes two terminals. The world in one:
 
 ```sh
-cargo run -p continuo-examples --example traffic_viz -- 30
+cargo run --release -p continuo-examples --example traffic_viz -- 30
 ```
 
 and the viewer in the other, which watches a live world when given no log:
@@ -306,7 +303,7 @@ To record rather than watch, `--record` writes an animated GIF, which is how
 the picture at the top of this file was made:
 
 ```sh
-python -m continuo_viz --log ../run.jsonl --record ../docs/viewer.gif
+python -m continuo_viz --log ../run.jsonl --record ../docs/viewer.gif --record-seconds 5
 ```
 
 Recording opens no window and does not use the wall clock: it walks the log in
@@ -335,22 +332,22 @@ There are two distinct ways to watch a world, and the demo uses both:
   and record/replay build on this. A monitor is not part of the simulation
   and must never feed data back into components.
 
-Each car is a composite of two components: a `PathFollowController` (100 ms
-period) that reads the car's pose and publishes how hard to steer, and a
-`UnicyclePhysics` (10 ms period) that integrates the commands it is holding
-(sample-and-hold) and publishes where that has put the car. The controller
-is declared first, so when both are due at the same instant its command
-reaches the physics in that same step; everything crossing actor boundaries
-(e.g. poses to the spawner) is seen next step.
+Each car is a composite of three components: a `RadarSensor` reporting the
+cars ahead in its lane, the controller FMU, which reads the car's pose and
+the radar's detections and commands how hard to accelerate and steer, both
+every 100 ms, and a `UnicyclePhysics` every 10 ms that integrates the
+commands it holds (sample-and-hold) and publishes where that has put the
+car. They are declared in that order, so when all are due at one instant
+the detections reach the controller and its commands reach the physics in
+that same step; everything crossing actor boundaries (e.g. poses to the
+spawner and to other cars' radars) is seen next step.
 
-Steering and acceleration arrive as separate messages, each normalized to
+Steering and acceleration travel as separate messages, each normalized to
 [-1, 1] and carrying no unit: the rates behind them belong to the physics, so
 a controller asks for a fraction of a car it need not know anything about.
-The physics holds each command on its own, which is what lets the demo
-command no acceleration at all: every car keeps the speed its physics was
-built with, because a controller saying nothing about acceleration is not
-saying zero. The pose carries a speed because the plant owns it, so nothing
-else can report it.
+The physics holds each command on its own, so a controller that never
+commands acceleration leaves its car at the speed it started with, as
+`traffic_scale`'s native cars do.
 
 ## Writing a component
 
