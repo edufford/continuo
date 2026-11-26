@@ -844,10 +844,12 @@ under "Wire format", rather than churning the fingerprint once apiece.
   car's poses since its last scan to keep the newest per car, so n cars with
   radars decode on the order of n^2 poses per scan. In a debug build of the
   demo that is enough to put the 100 ms control instant behind real time.
-  `traffic_scale` keeps the two-component car without radar or FMU on purpose:
-  it measures what the conductor costs per step, and a radar per car changes
-  how messages grow with the population while an FMU per car adds a step of
-  46 us against a native controller's 1.7 us, each its own experiment.
+  `traffic_scale` keeps the two-component car without radar or FMU, so it
+  measures what the conductor costs per step. A second scaling run with the
+  demo's full car, radar and FMU included, would be the more representative
+  measure of a whole sim, since a radar per car changes how messages grow
+  with the population and an FMU step costs 46 us against a native
+  controller's 1.7 us.
 
   A `Transport` question rather than a component one, and it interacts with
   `drain` taking a per-subscriber release condition. Note it changes what a
