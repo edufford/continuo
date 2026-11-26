@@ -79,9 +79,11 @@ enum Phase {
 }
 
 impl FmuComponent {
-    /// Extracts a `.fmu` and instantiates it for co-simulation. Instances
-    /// built with [`Self::from_extraction`] from one shared [`FmuExtraction`]
-    /// load its library only once.
+    /// Extracts a `.fmu` and instantiates it for co-simulation.
+    ///
+    /// To build several instances of one `.fmu`, use
+    /// [`Self::from_extraction`] instead with one shared [`FmuExtraction`],
+    /// which loads its library only once.
     pub fn new(
         id: &str,
         parent_path: &str,
@@ -117,7 +119,7 @@ impl FmuComponent {
             .join(id.clone())
             .to_string();
 
-        let import = extraction.import_for_instance()?;
+        let import = extraction.fmi3_import_for_instance()?;
 
         let description = import.model_description();
         let co_simulation = description.co_simulation.as_ref().ok_or_else(|| {

@@ -19,14 +19,14 @@ use crate::error::FmuConstructionError;
 #[derive(Clone)]
 pub struct FmuExtraction {
     source: PathBuf,
-    import: Arc<Fmi3Import>,
+    fmi3_import: Arc<Fmi3Import>,
 }
 
 impl FmuExtraction {
-    /// Extracts `fmu_path` and reads its model description.
+    /// Extracts the `.fmu` file at `fmu_path` and returns the extraction.
     pub fn extract(fmu_path: impl AsRef<Path>) -> Result<Self, FmuConstructionError> {
         let source = fmu_path.as_ref().to_path_buf();
-        let import =
+        let fmi3_import =
             fmi::import::from_path(&source).map_err(|error| FmuConstructionError::Import {
                 path: source.clone(),
                 source: error,
@@ -35,20 +35,20 @@ impl FmuExtraction {
         // Return the extraction, ready to build instances from.
         Ok(FmuExtraction {
             source,
-            import: Arc::new(import),
+            fmi3_import: Arc::new(fmi3_import),
         })
     }
 
-    /// The `.fmu` this was extracted from.
+    /// The file path to the `.fmu`.
     pub fn source(&self) -> &Path {
         &self.source
     }
 
     /// The import a new instance loads its library from: this one's, or a
     /// fresh extraction for an FMU allowing one instance per process.
-    pub(crate) fn import_for_instance(&self) -> Result<Arc<Fmi3Import>, FmuConstructionError> {
+    pub(crate) fn fmi3_import_for_instance(&self) -> Result<Arc<Fmi3Import>, FmuConstructionError> {
         let once_per_process = self
-            .import
+            .fmi3_import
             .model_description()
             .co_simulation
             .as_ref()
@@ -57,9 +57,9 @@ impl FmuExtraction {
 
         // Return a separate extraction for an FMU that cannot share one.
         if once_per_process {
-            Ok(FmuExtraction::extract(&self.source)?.import)
+            Ok(FmuExtraction::extract(&self.source)?.fmi3_import)
         } else {
-            Ok(Arc::clone(&self.import))
+            Ok(Arc::clone(&self.fmi3_import))
         }
     }
 }
