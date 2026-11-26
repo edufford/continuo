@@ -412,10 +412,11 @@ component in particular.
   binds except Clock, dispatched on the type the model description declares,
   and an array binds one pointer per element. The mapping is a Rust struct
   until scenario configuration brings files.
-- Every instance of one `.fmu` is built from a shared `FmuExtraction`, so
-  only the first loads its library.
-- An FMU component is hashed by its outputs, since `fmi-export` cannot
-  serialize an FMU's state.
+- Instances of one `.fmu` can be loaded from a shared `FmuExtraction`, to
+  reduce runtime delays from repeated file extraction and library loading.
+- An FMU component is hashed by its outputs. FMI can serialize an FMU's
+  state, but as raw memory for restoring it rather than the logical values a
+  hash could compare.
 - Import goes through the `fmi` crate, whose bindings run bindgen, so
   libclang is a build prerequisite.
 - The demo's FMU is the project's own car controller,
@@ -564,7 +565,7 @@ continuo/
     continuo-core             # ids, SimTime, KeyExpr, messages, Component trait
     continuo-transport        # Transport trait + deterministic InProcTransport
     continuo-conductor        # tick loop, barrier, registry, pacing, event log, hashing
-    continuo-actors           # physics, controllers, radar, spawner, laws
+    continuo-actors           # physics, controllers, radar, spawner, control laws
     continuo-viz-bridge       # relays the sim's messages to a viewer over Zenoh
     continuo-fmi              # FmuComponent adapter (FMI 3.0 CS)
     continuo-fmu-controller-idm # the car controller, packaged as an FMU
@@ -684,9 +685,10 @@ under "Wire format", rather than churning the fingerprint once apiece.
      should declare which outputs are optional, so the decision is static and
      reproducible rather than dependent on who happened to connect.
 
-  FMU Binary variables are the first concrete case: they travel base64 in
-  JSON and would travel as raw bytes under CBOR. That is also what would earn
-  core a `PayloadValue` of its own, since `serde_json::Value` has no bytes.
+  An FMU with Binary variables would be one concrete case, though the demo's
+  controller has none: they travel base64 in JSON and would travel as raw
+  bytes under CBOR. That is also what would earn core a `PayloadValue` of its
+  own, since `serde_json::Value` has no bytes.
 
 - **A compact binary mode alongside JSON, chosen like debug versus release.**
   JSON stays the readable mode for development, inspection, and the event log;
