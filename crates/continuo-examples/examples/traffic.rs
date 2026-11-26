@@ -19,7 +19,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     transport.add_message_callback(traffic_handler.message_callback());
     let mut conductor = Conductor::new(traffic_world::config(), transport)?;
     conductor.add_membership_callback(traffic_handler.membership_callback());
-    traffic_world::setup_live_traffic_scenario(&mut conductor)?;
+    traffic_world::setup_live_traffic_scenario(&mut conductor, traffic_handler.car_factory())?;
 
     // Wall time is fine to read here: the example's main is outside the
     // simulation, where wall clocks are forbidden.

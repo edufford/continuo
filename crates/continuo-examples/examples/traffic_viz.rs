@@ -47,7 +47,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut conductor = Conductor::new(config, transport)?;
     conductor.add_membership_callback(viz_bridge.membership_callback());
     conductor.add_membership_callback(traffic_handler.membership_callback());
-    traffic_world::setup_live_traffic_scenario(&mut conductor)?;
+    traffic_world::setup_live_traffic_scenario(&mut conductor, traffic_handler.car_factory())?;
 
     println!(
         "publishing to continuo_viz/{}/** ; start a viewer to watch",

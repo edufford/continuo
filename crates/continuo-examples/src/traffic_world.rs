@@ -19,6 +19,7 @@
 //! `MonitorTransport` when recording or verifying.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use continuo_actors::control_laws::{FREE_ROAD, IdmParams, PurePursuitParams};
@@ -37,7 +38,9 @@ use continuo_conductor::{
 use continuo_core::{
     Component, ComponentId, ComponentPath, CoreError, KeyExpr, Message, Pose, SimDuration, SimTime,
 };
-use continuo_fmi::{FmuComponent, FmuConstructionError, FmuMapping, InputBinding, OutputBinding};
+use continuo_fmi::{
+    FmuComponent, FmuConstructionError, FmuExtraction, FmuMapping, InputBinding, OutputBinding,
+};
 use continuo_transport::Transport;
 use serde_json::json;
 
@@ -109,6 +112,72 @@ enum CarConfiguration {
     IdmFollowing,
 }
 
+/// Builds each car's components from its configuration, and holds what the
+/// cars share: one extraction of each FMU, made for the first car using it.
+#[derive(Clone, Default)]
+pub struct CarFactory {
+    fmu_extractions: Arc<Mutex<BTreeMap<PathBuf, FmuExtraction>>>,
+}
+
+impl CarFactory {
+    /// `actor_name`'s components for `car_config`, in the order they run
+    /// within an instant. The car starts `start_s` along the road at `speed`
+    /// in the lane at `lane_offset`.
+    fn components(
+        &self,
+        world_name: &str,
+        actor_name: &str,
+        car_config: CarConfiguration,
+        start_s: f64,
+        lane_offset: f64,
+        speed: f64,
+    ) -> Result<Vec<Box<dyn Component>>, ScenarioError> {
+        let initial_state = CarState::new(road_pose(&shared_road(), start_s, lane_offset), speed);
+        let components = match car_config {
+            CarConfiguration::ConstantSpeed => vec![
+                native_controller_component(actor_name, lane_offset, initial_state),
+                physics_component(actor_name, initial_state),
+            ],
+            CarConfiguration::IdmFollowing => {
+                let controller_fmu_path = continuo_fmu_controller_idm::packaged_fmu_path()?;
+                let controller_fmu_extraction = self
+                    .fmu_extraction(controller_fmu_path)
+                    .map_err(ScenarioError::ControllerFmuExtraction)?;
+                vec![
+                    radar_component(actor_name),
+                    fmu_controller_component(
+                        &controller_fmu_extraction,
+                        world_name,
+                        actor_name,
+                        lane_offset,
+                        initial_state,
+                    )?,
+                    physics_component(actor_name, initial_state),
+                ]
+            }
+        };
+
+        // Return the car's components, ready to join.
+        Ok(components)
+    }
+
+    /// The extraction of the `.fmu` at `fmu_path`, made on its first use.
+    fn fmu_extraction(&self, fmu_path: PathBuf) -> Result<FmuExtraction, FmuConstructionError> {
+        let mut fmu_extractions = self
+            .fmu_extractions
+            .lock()
+            .expect("FMU extraction mutex is never poisoned");
+        if let Some(fmu_extraction) = fmu_extractions.get(&fmu_path) {
+            return Ok(fmu_extraction.clone());
+        }
+        let fmu_extraction = FmuExtraction::extract(&fmu_path)?;
+        fmu_extractions.insert(fmu_path, fmu_extraction.clone());
+
+        // Return the extraction, now kept for later cars.
+        Ok(fmu_extraction)
+    }
+}
+
 /// Why a traffic scenario could not be built or run.
 #[derive(Debug, thiserror::Error)]
 pub enum ScenarioError {
@@ -119,6 +188,9 @@ pub enum ScenarioError {
     /// built. The message names the command that fixes it.
     #[error(transparent)]
     NotPackaged(#[from] continuo_fmu_controller_idm::PackageError),
+
+    #[error("cannot extract the controller FMU: {0}")]
+    ControllerFmuExtraction(#[source] FmuConstructionError),
 
     #[error("cannot build the controller FMU for {actor_name}: {source}")]
     Controller {
@@ -171,8 +243,10 @@ pub fn config_paced(pacing: Pacing) -> ConductorConfig {
 /// The components register in the order they run within an instant:
 /// radar, controller, physics. So the scan reaches the controller and the
 /// command reaches the physics in the instant each was made.
+#[allow(clippy::too_many_arguments)]
 fn add_car<T: Transport>(
     conductor: &mut Conductor<T>,
+    car_factory: &CarFactory,
     actor_name: &str,
     car_config: CarConfiguration,
     start_s: f64,
@@ -180,20 +254,14 @@ fn add_car<T: Transport>(
     speed: f64,
     first_due: SimTime,
 ) -> Result<(), ScenarioError> {
-    let initial_state = CarState::new(road_pose(&shared_road(), start_s, lane_offset), speed);
-    let world_name = conductor.world_name();
-
-    let components = match car_config {
-        CarConfiguration::ConstantSpeed => vec![
-            native_controller_component(actor_name, lane_offset, initial_state),
-            physics_component(actor_name, initial_state),
-        ],
-        CarConfiguration::IdmFollowing => vec![
-            radar_component(actor_name),
-            fmu_controller_component(world_name, actor_name, lane_offset, initial_state)?,
-            physics_component(actor_name, initial_state),
-        ],
-    };
+    let components = car_factory.components(
+        conductor.world_name(),
+        actor_name,
+        car_config,
+        start_s,
+        lane_offset,
+        speed,
+    )?;
     for component in components {
         conductor.add_component(JoinMetadata::at(actor_name, first_due), component)?;
     }
@@ -206,10 +274,12 @@ fn add_car<T: Transport>(
 /// ahead on IDM.
 fn add_traffic_car<T: Transport>(
     conductor: &mut Conductor<T>,
+    car_factory: &CarFactory,
     spawn: &SpawnTrafficRequest,
 ) -> Result<(), ScenarioError> {
     add_car(
         conductor,
+        car_factory,
         &spawn.actor_name,
         CarConfiguration::IdmFollowing,
         spawn.start_s,
@@ -250,26 +320,22 @@ fn native_controller_component(
     ))
 }
 
-/// A car's controller FMU, run from the `.fmu` that
-/// `cargo xtask package-fmus` builds and
-/// [`continuo_fmu_controller_idm::packaged_fmu_path`] finds.
+/// A car's controller FMU, instantiated from `fmu_extraction`.
 fn fmu_controller_component(
+    fmu_extraction: &FmuExtraction,
     world_name: &str,
     actor_name: &str,
     lane_offset: f64,
     initial_state: CarState,
 ) -> Result<Box<dyn Component>, ScenarioError> {
     let mapping = controller_fmu_mapping(world_name, actor_name, lane_offset, initial_state);
-    let controller = FmuComponent::new(
-        "controller",
-        actor_name,
-        continuo_fmu_controller_idm::packaged_fmu_path()?,
-        mapping,
-    )
-    .map_err(|source| ScenarioError::Controller {
-        actor_name: actor_name.to_string(),
-        source,
-    })?;
+    let controller =
+        FmuComponent::from_extraction("controller", actor_name, fmu_extraction, mapping).map_err(
+            |source| ScenarioError::Controller {
+                actor_name: actor_name.to_string(),
+                source,
+            },
+        )?;
 
     // Return the controller, ready to join.
     Ok(Box::new(controller))
@@ -378,6 +444,7 @@ fn controller_fmu_mapping(
 /// The three are parameters because a what-if run changes them.
 fn add_ego<T: Transport>(
     conductor: &mut Conductor<T>,
+    car_factory: &CarFactory,
     start_s: f64,
     lane_offset: f64,
     speed: f64,
@@ -385,6 +452,7 @@ fn add_ego<T: Transport>(
     // Return once the ego is registered.
     add_car(
         conductor,
+        car_factory,
         EGO_NAME,
         CarConfiguration::IdmFollowing,
         start_s,
@@ -401,6 +469,7 @@ fn add_ego<T: Transport>(
 /// traffic.
 fn add_spawner<T: Transport>(
     conductor: &mut Conductor<T>,
+    car_factory: &CarFactory,
     ego_start_s: f64,
     ego_start_lateral: f64,
 ) -> Result<(), ScenarioError> {
@@ -423,7 +492,7 @@ fn add_spawner<T: Transport>(
 
     let starting_cars = spawner.fill_around_ego(conductor.world_seed());
     for spawn in starting_cars {
-        add_traffic_car(conductor, &spawn)?;
+        add_traffic_car(conductor, car_factory, &spawn)?;
     }
     conductor.add_component_at_start(WORLD_LEVEL, Box::new(spawner))?;
 
@@ -440,9 +509,10 @@ fn add_spawner<T: Transport>(
 /// cars played back from a log rather than chosen.
 pub fn setup_live_traffic_scenario<T: Transport>(
     conductor: &mut Conductor<T>,
+    car_factory: &CarFactory,
 ) -> Result<(), ScenarioError> {
-    add_ego(conductor, EGO_START, EGO_LANE, EGO_SPEED)?;
-    add_spawner(conductor, EGO_START, EGO_LANE)?;
+    add_ego(conductor, car_factory, EGO_START, EGO_LANE, EGO_SPEED)?;
+    add_spawner(conductor, car_factory, EGO_START, EGO_LANE)?;
 
     // Return success; the starting world is registered.
     Ok(())
@@ -482,12 +552,14 @@ pub fn setup_scale_scenario<T: Transport>(
 ) -> Result<(), ScenarioError> {
     assert!(lanes > 0, "a world needs at least one lane");
 
+    let car_factory = CarFactory::default();
     for index in 0..cars {
         let lane_offset = ((index % lanes) as f64 - (lanes - 1) as f64 * 0.5) * LANE_WIDTH;
         let start_s = (index / lanes) as f64 * SCALE_ROW_SPACING;
         let speed = TRAFFIC_SPEED.0 + (index % 7) as f64;
         add_car(
             conductor,
+            &car_factory,
             &format!("car{index}"),
             CarConfiguration::ConstantSpeed,
             start_s,
@@ -516,10 +588,11 @@ pub fn setup_scale_scenario<T: Transport>(
 /// and the log is the only place that now knows.
 pub fn setup_playback_traffic_scenario<T: Transport>(
     conductor: &mut Conductor<T>,
+    car_factory: &CarFactory,
     recorded: &EventLog,
     ego_speed: f64,
 ) -> Result<usize, ScenarioError> {
-    add_ego(conductor, EGO_START, EGO_LANE, ego_speed)?;
+    add_ego(conductor, car_factory, EGO_START, EGO_LANE, ego_speed)?;
 
     // Each double joins and leaves at the instants its original did, both
     // queued now, so the world's membership matches the recording.
@@ -607,6 +680,8 @@ pub struct TrafficHandler {
     /// What the run prints to the console, queued until the handler prints
     /// it between ticks.
     console_output: Arc<Mutex<ConsoleOutput>>,
+    /// Builds every car the scenario adds, at setup and as the spawner asks.
+    car_factory: CarFactory,
 }
 
 impl Default for TrafficHandler {
@@ -616,6 +691,7 @@ impl Default for TrafficHandler {
             unreadable_request: Arc::default(),
             collision_monitor: CollisionMonitor::new(WORLD_NAME, EGO_NAME),
             console_output: Arc::default(),
+            car_factory: CarFactory::default(),
         }
     }
 }
@@ -686,6 +762,13 @@ impl TrafficHandler {
             collision_monitor_on_membership(change);
             console_output_on_membership(change);
         }
+    }
+
+    /// The factory building every car the scenario adds. Pass it to the setup
+    /// function, so the starting cars share its extractions with the cars the
+    /// spawner adds later.
+    pub fn car_factory(&self) -> &CarFactory {
+        &self.car_factory
     }
 
     /// The collision monitor.
@@ -944,7 +1027,9 @@ impl TrafficHandler {
         );
         for request in collected {
             match request {
-                TrafficRequest::Spawn(spawn) => add_traffic_car(conductor, &spawn)?,
+                TrafficRequest::Spawn(spawn) => {
+                    add_traffic_car(conductor, &self.car_factory, &spawn)?;
+                }
                 // The spawner drops a car from its roll when it asks, so it
                 // never asks twice, but a scenario that also removed cars
                 // by hand could, and a request for someone already gone has

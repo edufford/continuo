@@ -57,7 +57,8 @@ fn run_demo(sabotaged: bool) -> Result<(), traffic_world::ScenarioError> {
     let mut conductor = Conductor::new(traffic_world::config(), transport)
         .expect("free-run config is always accepted");
     conductor.add_membership_callback(traffic_handler.membership_callback());
-    traffic_world::setup_live_traffic_scenario(&mut conductor).expect("the world builds");
+    traffic_world::setup_live_traffic_scenario(&mut conductor, traffic_handler.car_factory())
+        .expect("the world builds");
     if sabotaged {
         conductor
             .add_component_at_start(WORLD_LEVEL, Box::new(Saboteur { fired: false }))

@@ -38,7 +38,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // today. It is wired anyway: a recorder that taps only some of what the
     // conductor reports writes a log that quietly omits the rest.
     conductor.add_observation_callback(recorder.observation_callback());
-    traffic_world::setup_live_traffic_scenario(&mut conductor)?;
+    traffic_world::setup_live_traffic_scenario(&mut conductor, traffic_handler.car_factory())?;
 
     traffic_world::run_live_traffic_scenario(
         &mut conductor,

@@ -10,6 +10,7 @@
 pub mod convert;
 mod error;
 mod fmu_component;
+mod fmu_extraction;
 mod fmu_get_set;
 mod fmu_mapping;
 mod fmu_variable;
@@ -18,6 +19,7 @@ use std::path::PathBuf;
 
 pub use error::FmuConstructionError;
 pub use fmu_component::FmuComponent;
+pub use fmu_extraction::FmuExtraction;
 pub use fmu_mapping::{
     FmuMapping, InputBinding, InputSource, OutputBinding, escape_json_pointer_token,
     json_pointer_from_fmu_var_name, unescape_json_pointer_token,
