@@ -334,21 +334,20 @@ There are two distinct ways to watch a world, and the demo uses both:
 
 Each car is a composite of three components: a `RadarSensor` reporting the
 cars ahead in its lane, the controller FMU, which reads the car's pose and
-that scan and commands how hard to accelerate and steer, both every 100 ms,
-and a `UnicyclePhysics` every 10 ms that integrates the commands it holds
-(sample-and-hold) and publishes where that has put the car. They are
-declared in that order, so when all are due at one instant the scan reaches
-the controller and its commands reach the physics in that same step;
-everything crossing actor boundaries (e.g. poses to the spawner and to other
-cars' radars) is seen next step.
+the radar's detections and commands how hard to accelerate and steer, both
+every 100 ms, and a `UnicyclePhysics` every 10 ms that integrates the
+commands it holds (sample-and-hold) and publishes where that has put the
+car. They are declared in that order, so when all are due at one instant
+the detections reach the controller and its commands reach the physics in
+that same step; everything crossing actor boundaries (e.g. poses to the
+spawner and to other cars' radars) is seen next step.
 
 Steering and acceleration travel as separate messages, each normalized to
 [-1, 1] and carrying no unit: the rates behind them belong to the physics, so
 a controller asks for a fraction of a car it need not know anything about.
 The physics holds each command on its own, so a controller that never
 commands acceleration leaves its car at the speed it started with, as
-`traffic_scale`'s native cars do. The pose carries a speed because the plant
-owns it, so nothing else can report it.
+`traffic_scale`'s native cars do.
 
 ## Writing a component
 
