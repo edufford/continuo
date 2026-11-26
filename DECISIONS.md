@@ -1707,3 +1707,22 @@ it got there, including the roads not taken.
   per instance. `traffic_realtime` now keeps real time, and the world hash
   is unchanged.
   - Deferred: loading an FMU first seen mid-run on a worker thread.
+- **2026-11-25**: **The demo is tuned through its scenario constants, for
+  what the scenario should show.** The targets are its characteristics:
+  traffic retiring both ahead of the ego and behind it, the ego passing
+  cars, and the ego slowing behind the car ahead to show following. A seeded
+  run repeats exactly, so each change to a constant is measured on the same
+  world, and `highway.rs` asserts each characteristic once it holds. The IDM
+  parameters could be tuned too, but stay at the literature values for this
+  demo: headway 1.5 s, minimum gap 2 m, acceleration 1.5 m/s^2 and braking
+  2 m/s^2. A retune moves the world hash, and the hash pin's failure prints
+  the new value for `DEMO_WORLD_HASH` and README. M6's retune is the
+  2026-11-23 entry.
+- **2026-11-25**: **M6 closes with three departures from the plan's FMI
+  section.** Import goes through the `fmi` crate rather than fmi-rs, which
+  was unreleased and compiles C on every build anyway (2026-08-11). The
+  demo's FMU is the project's own car controller rather than a Reference
+  FMU, and the Reference FMUs became the importer's test fixtures
+  (2026-08-15). The adapter binds arrays and every FMI 3.0 type but Clock,
+  rather than float64 alone (2026-08-11). `M6-PLAN.md` is deleted: its
+  design is in PLAN.md and its reasons in the entries above.
