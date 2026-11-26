@@ -121,7 +121,7 @@ See PLAN.md for what each one covers.
       policy
 - [x] **M5** visualization: a viz bridge on the transport, and a Python
       viewer for live runs and recordings
-- [ ] **M6** FMI 3.0 CS import (FMUs as components)
+- [x] **M6** FMI 3.0 CS import (FMUs as components)
 - [ ] **M7** Zenoh transport and distributed hosts
 
 Everywhere current code is a placeholder for later work, a comment marks the

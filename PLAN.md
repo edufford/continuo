@@ -401,21 +401,28 @@ component in particular.
 
 ## FMI 3.0 CS support
 
-- `continuo-fmi` crate providing `FmuComponent`: an adapter that on each step
-  reads its inbox -> sets FMU input variables, calls `fmi3DoStep(t, dt)` with
-  `dt` = elapsed sim time since its last step (FMI 3.0 CS supports variable
-  communication step sizes), gets outputs -> publishes them. The FMU's period
-  comes from its mapping config and is reported as its next-step time.
-- FMI **3.0 Co-Simulation only**, with no 2.0 shims, native arrays, `float64`
-  value references.
-- Per-FMU mapping config binds key expressions to variable names (borrowing
-  ideas from FMI's SSP standard for wiring configuration).
+- `continuo-fmi` provides `FmuComponent`, an adapter that on each step sets
+  the FMU's inputs from the newest message on each bound key, calls
+  `fmi3DoStep` over the sim time since its last step, and publishes the
+  outputs. Its period comes from its mapping and is its next-step time.
+- FMI **3.0 Co-Simulation only**, with no 2.0 shims. Event mode is off, so
+  an FMU handles its own events inside a step.
+- An FMU is data, not a Rust type: a `.fmu` path and an `FmuMapping` binding
+  key expressions and JSON Pointers to variable names. Every FMI 3.0 type
+  binds except Clock, dispatched on the type the model description declares,
+  and an array binds one pointer per element. The mapping is a Rust struct
+  until scenario configuration brings files.
 - Every instance of one `.fmu` is built from a shared `FmuExtraction`, so
   only the first loads its library.
-- Candidate crate: `fmi` (fmi-rs) for 3.0 import. Validate early, because FMU
-  loading is `libloading` + native code, and Windows DLL handling can be finicky.
-- Demo target: an FMI 3.0 reference FMU from the Modelica Association set
-  (BouncingBall, VanDerPol, Feedthrough).
+- An FMU component is hashed by its outputs, since `fmi-export` cannot
+  serialize an FMU's state.
+- Import goes through the `fmi` crate, whose bindings run bindgen, so
+  libclang is a build prerequisite.
+- The demo's FMU is the project's own car controller,
+  `continuo-fmu-controller-idm`, built with `fmi-export` from the control
+  laws in `continuo-actors`. Four Modelica Reference FMUs are the importer's
+  test fixtures, so it is also checked against FMUs this project did not
+  write.
 
 ## World and map
 
@@ -557,12 +564,13 @@ continuo/
     continuo-core             # ids, SimTime, KeyExpr, messages, Component trait
     continuo-transport        # Transport trait + deterministic InProcTransport
     continuo-conductor        # tick loop, barrier, registry, pacing, event log, hashing
-    continuo-actors           # kinematic vehicle, traffic spawner, ego stub
-    continuo-viz-bridge       # poses -> JSON over WebSocket
-    continuo-fmi              # FmuComponent adapter (FMI 3.0 CS)        [milestone 6]
+    continuo-actors           # physics, controllers, radar, spawner, laws
+    continuo-viz-bridge       # relays the sim's messages to a viewer over Zenoh
+    continuo-fmi              # FmuComponent adapter (FMI 3.0 CS)
+    continuo-fmu-controller-idm # the car controller, packaged as an FMU
     continuo-transport-zenoh  # Zenoh Transport impl                     [milestone 7]
     continuo-examples         # runnable example worlds (traffic demo)
-  python/continuo_viz/        # WebSocket client + 2D top-down view
+  python/continuo_viz/        # top-down viewer, live over Zenoh or from a log
 ```
 
 Plain threads and channels (crossbeam), no tokio initially: a deterministic sim
@@ -590,8 +598,8 @@ owning an async runtime later.
    which no transport can carry, so sending one only means something once a
    remote host can run what it admits (milestone 7).
 5. **Visualization**: viz bridge + Python package; watch the traffic move.
-6. **FMI**: `continuo-fmi`, mapping config, FMI 3.0 reference FMU driving an
-   actor.
+6. **FMI**: `continuo-fmi` and its mapping, a car controller FMU driving
+   every car, a radar feeding it, and a collision monitor.
 7. **Distribution**: Zenoh transport, standalone host binary, one component
    out-of-process in lockstep, Python viz on zenoh-python.
 
@@ -676,6 +684,10 @@ under "Wire format", rather than churning the fingerprint once apiece.
      should declare which outputs are optional, so the decision is static and
      reproducible rather than dependent on who happened to connect.
 
+  FMU Binary variables are the first concrete case: they travel base64 in
+  JSON and would travel as raw bytes under CBOR. That is also what would earn
+  core a `PayloadValue` of its own, since `serde_json::Value` has no bytes.
+
 - **A compact binary mode alongside JSON, chosen like debug versus release.**
   JSON stays the readable mode for development, inspection, and the event log;
   binary becomes the mode for throughput. The hash is taken over the wire
@@ -688,7 +700,8 @@ under "Wire format", rather than churning the fingerprint once apiece.
   rather than pre-serialized bytes, so both encodings come from one value with
   no re-parsing and no float round-trip question. `Component::state_bytes` is
   the loose end: it is documented as canonical JSON and would have to become
-  canonical binary in both modes.
+  canonical binary in both modes. `continuo-fmi` needs no change, since a
+  mapping resolves against decoded values rather than bytes.
 
   Format: CBOR, staying self-describing so logs remain inspectable and the
   Python viewer needs no generated schema. Naming CBOR does **not** pin the
@@ -825,6 +838,15 @@ under "Wire format", rather than churning the fingerprint once apiece.
   Sixteen times less work for the same result, since it kept only the latest
   anyway.
 
+  The radar is the case that grows with the world. Each one decodes every
+  car's poses since its last scan to keep the newest per car, so n cars with
+  radars decode on the order of n^2 poses per scan. In a debug build of the
+  demo that is enough to put the 100 ms control instant behind real time.
+  `traffic_scale` keeps the two-component car without radar or FMU on purpose:
+  it measures what the conductor costs per step, and a radar per car changes
+  how messages grow with the population while an FMU per car adds a step of
+  46 us against a native controller's 1.7 us, each its own experiment.
+
   A `Transport` question rather than a component one, and it interacts with
   `drain` taking a per-subscriber release condition. Note it changes what a
   component sees, so in general it changes the world hash: it is hash-neutral
@@ -939,8 +961,49 @@ under "Wire format", rather than churning the fingerprint once apiece.
     longitudinal FMU can run beside native steering, and one component
     publishing both would argue against that. Teaching the existing one to
     follow is less code and gives that back.
+  - Composing the two forces a rename: both controllers answer `controller`
+    from `id()`, so a car with both needs ids such as `steering` and
+    `longitudinal`, which moves the world hash.
   - What it buys beyond symmetry is a native baseline. Today the only thing
     that runs IDM in a world is the FMU, so a scenario cannot be run both
     ways to see what the boundary costs in throughput, and the packaged-FMU
     comparison is the only place the two are checked against each other at
     all.
+
+- **A learned controller behind the same FMU interface.**
+  `continuo-fmu-controller-ai` would declare the IDM controller's inputs and
+  run a model trained to imitate IDM, then by reinforcement learning, through
+  ONNX Runtime, so nothing outside the FMU changes. ONNX Runtime does not
+  promise identical results across platforms the way rustc-compiled math
+  does, so the four-platform world-hash check would force a choice then: a
+  pin per platform, a weaker cross-platform claim for worlds with a learned
+  model, or inference this project owns.
+
+- **The control laws in a crate of their own.** `continuo-actors` holds both
+  sample components and the library the controller FMU compiles in, so the
+  FMU links the spawner and the radar to reach three functions. The trigger
+  is a second FMU crate, such as the learned controller above, and the
+  `control_laws` module makes it a file move. The name turns on whether
+  `Waypoints` goes too: laws alone suit `continuo-control`, with road
+  geometry moving to `continuo-core` beside `Vec3`, while both together want
+  a name covering geometry. A generic name such as `utils` excludes nothing,
+  so it would collect everything.
+
+- **FMI 3.0 Event Mode.** `FmuComponent` switches it off, so initialization
+  ends in Step Mode and an FMU handles its own events inside a step. Turning
+  it on would take:
+  - Reading `hasEventMode` from the model description rather than a config
+    flag. Initialization then ends in Event Mode, so the adapter iterates
+    `fmi3UpdateDiscreteStates` until it settles, then enters Step Mode.
+  - The same loop after a step reporting `eventHandlingNeeded`, capped and
+    failing as `ComponentFailure`, since an unbounded loop inside one step is
+    a hang.
+  - `nextEventTime` feeding the next step time, as
+    `min(now + period, next_event_time)`, so an FMU's own events land on
+    step boundaries. This part fits, since the scheduler is built on
+    self-reported next-step times.
+  - Early return handled inside the adapter, which steps again until it
+    reaches the requested time, so the `Component` contract does not change.
+  - Two fixtures: BouncingBall's bounce is a state event, and Stair, vendored
+    then, raises a time event every second. Clocked FMUs are a larger,
+    separate step, adding the Clock type and its interval APIs.

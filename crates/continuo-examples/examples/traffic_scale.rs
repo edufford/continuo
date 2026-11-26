@@ -30,7 +30,8 @@ use continuo_transport::{InProcTransport, MonitorTransport};
 const SCALED_CARS: usize = 100;
 const SCALED_LANES: usize = 50;
 
-/// Components per car: a controller and a physics body.
+/// Components per car: a controller and a physics body. No radar and no FMU,
+/// so the count measures the conductor rather than a sensor or an FMU.
 const COMPONENTS_PER_CAR: usize = 2;
 
 /// What one run of one size cost.
