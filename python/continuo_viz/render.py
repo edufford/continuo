@@ -68,8 +68,7 @@ LANE_OFFSETS = (-3.5, 0.0, 3.5)
 LANE_WIDTH = 3.5
 
 # The dashes between lanes: 3 m dashes with 9 m gaps, the US highway standard
-# of 10 ft dashes with 30 ft gaps rounded to meters. They are fixed to the
-# road, so they scroll past the followed car and show it moving.
+# of 10 ft dashes with 30 ft gaps rounded to meters.
 LANE_DASH_METERS = 3.0
 LANE_DASH_GAP_METERS = 9.0
 
