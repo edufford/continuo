@@ -193,12 +193,20 @@ def test_a_car_is_drawn_the_same_size_wherever_it_falls_between_pixels():
 
 
 def test_lane_dashes_scroll_with_the_road_and_keep_their_length():
-    still = lane_dash_spans(camera(center_x=100.0))
-    moved = lane_dash_spans(camera(center_x=100.4))
+    # Pixels per meter, set here rather than taken from `camera()`'s default so
+    # the dash length expected below follows from this test alone.
+    scale = 7.0
+    still = lane_dash_spans(camera(center_x=100.0, scale=scale))
+    moved = lane_dash_spans(camera(center_x=100.4, scale=scale))
     one_period_on = lane_dash_spans(
-        camera(center_x=100.0 + LANE_DASH_METERS + LANE_DASH_GAP_METERS)
+        camera(center_x=100.0 + LANE_DASH_METERS + LANE_DASH_GAP_METERS, scale=scale)
     )
 
+    # The dashes shift when the camera moves, and a move of exactly one dash
+    # plus one gap shows the same picture again: they are fixed to the road.
     assert moved != still
     assert one_period_on == still
-    assert len({end - start for start, end in still + moved}) == 1
+    # Every dash keeps the same length in whole pixels as it scrolls.
+    assert {end - start for start, end in still + moved} == {
+        round(LANE_DASH_METERS * scale)
+    }
