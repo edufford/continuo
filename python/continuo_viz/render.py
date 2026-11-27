@@ -67,11 +67,11 @@ _WINDSHIELD_PIXELS = 1
 LANE_OFFSETS = (-3.5, 0.0, 3.5)
 LANE_WIDTH = 3.5
 
-# The dashes between lanes: a 3 m stripe every 12 m, the proportions of a US
-# highway's 10 ft dashes and 30 ft gaps. They are fixed to the road, so they
-# scroll past the followed car and show it moving.
+# The dashes between lanes: 3 m dashes with 9 m gaps, the US highway standard
+# of 10 ft dashes with 30 ft gaps rounded to meters. They are fixed to the
+# road, so they scroll past the followed car and show it moving.
 LANE_DASH_METERS = 3.0
-LANE_DASH_PERIOD_METERS = 12.0
+LANE_DASH_GAP_METERS = 9.0
 
 TARGET_FPS = 60
 
@@ -283,12 +283,11 @@ def lane_dash_spans(camera: Camera) -> list[tuple[int, int]]:
     as it scrolls.
     """
     length = round(LANE_DASH_METERS * camera.scale)
+    period = LANE_DASH_METERS + LANE_DASH_GAP_METERS
     left_edge = camera.center_x - camera.width * 0.5 / camera.scale
-    index = math.floor((left_edge - LANE_DASH_METERS) / LANE_DASH_PERIOD_METERS)
+    index = math.floor((left_edge - LANE_DASH_METERS) / period)
     spans = []
-    while (
-        start := round(camera.to_pixels(index * LANE_DASH_PERIOD_METERS, 0.0)[0])
-    ) < camera.width:
+    while (start := round(camera.to_pixels(index * period, 0.0)[0])) < camera.width:
         spans.append((start, start + length))
         index += 1
 

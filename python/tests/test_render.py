@@ -14,7 +14,8 @@ import pytest
 from continuo_viz.pose import PoseTopDown
 from continuo_viz.render import (
     CAR_LENGTH,
-    LANE_DASH_PERIOD_METERS,
+    LANE_DASH_GAP_METERS,
+    LANE_DASH_METERS,
     Camera,
     Renderer,
     actor_color,
@@ -194,7 +195,9 @@ def test_a_car_is_drawn_the_same_size_wherever_it_falls_between_pixels():
 def test_lane_dashes_scroll_with_the_road_and_keep_their_length():
     still = lane_dash_spans(camera(center_x=100.0))
     moved = lane_dash_spans(camera(center_x=100.4))
-    one_period_on = lane_dash_spans(camera(center_x=100.0 + LANE_DASH_PERIOD_METERS))
+    one_period_on = lane_dash_spans(
+        camera(center_x=100.0 + LANE_DASH_METERS + LANE_DASH_GAP_METERS)
+    )
 
     assert moved != still
     assert one_period_on == still
