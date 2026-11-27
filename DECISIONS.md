@@ -1726,3 +1726,23 @@ it got there, including the roads not taken.
   (2026-08-15). The adapter binds arrays and every FMI 3.0 type but Clock,
   rather than float64 alone (2026-08-11). `M6-PLAN.md` is deleted: its
   design is in PLAN.md and its reasons in the entries above.
+- **2026-11-26**: **A subscription says whether it takes every message or
+  only the newest on each key.** The radar decoded every car's poses since
+  its last scan to keep the newest per car, so its work grew with the square
+  of the population, and in a debug build the demo's 100 ms control instant
+  fell behind real time. `Component::subscriptions` now returns
+  `Subscription`s, each `Delivery::Every` or `Delivery::Latest`, and the
+  in-process transport keeps for a latest subscriber only the messages that
+  could still be the newest it may see: one from an earlier instant, and
+  those from the current one, since the visibility rule may release a
+  same-instant message from an earlier sibling. The radar and the spawner
+  take the latest and everything else takes every message. The world hash
+  is unchanged, since both already kept only the latest.
+  - Measured on Windows: 30 s of the paced demo in debug re-anchored 9
+    times and ended 0.04 s behind real time, against 202 times and 1.8 s.
+    The free-run demo in release takes a median 0.42 s against 0.53 s.
+    `traffic_scale`, where nothing asks for the latest, is unchanged.
+  - Rejected: a separate `subscribe_latest` call beside `subscribe`, which
+    splits one question across two methods; and an inbox holding one
+    message per key, which cannot keep a same-instant message beside the
+    earlier one it may not replace.

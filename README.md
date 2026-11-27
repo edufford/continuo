@@ -353,7 +353,8 @@ commands acceleration leaves its car at the speed it started with, as
 
 ```rust
 use continuo_core::{
-    Component, ComponentId, CoreError, KeyExpr, SimDuration, SimTime, StepCtx,
+    Component, ComponentId, CoreError, SimDuration, SimTime, StepCtx,
+    Subscription,
 };
 
 struct Beacon;
@@ -363,8 +364,10 @@ impl Component for Beacon {
         ComponentId::new("beacon").unwrap()
     }
 
-    fn subscriptions(&self) -> Vec<KeyExpr> {
-        vec![] // or e.g. KeyExpr::new("continuo/*/actor/*/pose").unwrap()
+    fn subscriptions(&self) -> Vec<Subscription> {
+        // Subscription::every(key) for every message on a key, or
+        // Subscription::latest(key) for only the newest on each
+        vec![]
     }
 
     fn step(&mut self, ctx: &mut StepCtx) -> Result<SimTime, CoreError> {

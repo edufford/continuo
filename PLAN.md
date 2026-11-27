@@ -69,7 +69,7 @@ which is the distribution seam.
 ```rust
 trait Component {
     fn id(&self) -> ComponentId;
-    fn subscriptions(&self) -> Vec<KeyExpr>;
+    fn subscriptions(&self) -> Vec<Subscription>;
     // Read inbox, publish via ctx, report the next sim time to step at.
     // `Err` halts the world: it is how a component says it cannot do its job.
     fn step(&mut self, ctx: &mut StepCtx) -> Result<SimTime, CoreError>;
@@ -125,6 +125,15 @@ Zenoh keyexpr syntax from the start. Implementations:
 
 - `InProcTransport`: deterministic, in-process (first).
 - `continuo-transport-zenoh`: Zenoh-backed (later).
+
+Each subscription names its delivery. `Delivery::Every` queues every message
+on the key until the subscriber next steps. `Delivery::Latest` keeps only the
+newest released message per key, for a component that steps less often than
+the key is published and keeps only the latest value anyway, such as a radar
+reading every car's pose. The transport drops the older messages as they are
+published, so such a subscriber neither queues nor decodes what it would
+skip. It changes what a component sees, so it is hash-neutral only for a
+component that already kept just the latest.
 
 Key expression conventions (draft):
 
@@ -821,35 +830,12 @@ under "Wire format", rather than churning the fingerprint once apiece.
   with the consolidated scene view above, the other consumer that wants
   the world rather than every message in it.
 
-- **A subscriber cannot ask for only the latest message per key.** The
-  visibility rule queues every message until the subscriber next runs, so a
-  low-rate observer of a high-rate stream receives the whole interval's
-  accumulation and pays to decode all of it. A 1 Hz view of a 100 Hz signal is
-  an ordinary thing to want, and the work is proportional to the rate it is
-  trying not to watch.
-
-  Measured on a pose logger the demo used to run, which saw a sim-second of
-  poses at once: `drain` cost ~155 us for that batch and the logger's step
-  ~231 us, against ~14 us if it decoded only the last message per key.
-  Sixteen times less work for the same result, since it kept only the latest
-  anyway.
-
-  The radar is the case that grows with the world. Each one decodes every
-  car's poses since its last scan to keep the newest per car, so n cars with
-  radars decode on the order of n^2 poses per scan. In a debug build of the
-  demo that is enough to put the 100 ms control instant behind real time.
-  `traffic_scale` keeps the two-component car without radar or FMU, so it
-  measures what the conductor costs per step. A second scaling run with the
-  demo's full car, radar and FMU included, would be the more representative
-  measure of a whole sim, since a radar per car changes how messages grow
-  with the population and an FMU step costs 46 us against a native
-  controller's 1.7 us.
-
-  A `Transport` question rather than a component one, and it interacts with
-  `drain` taking a per-subscriber release condition. Note it changes what a
-  component sees, so in general it changes the world hash: it is hash-neutral
-  only for a subscriber that already keeps just the latest, which the API
-  cannot check.
+- **A scaling run with the demo's full car.** `traffic_scale` keeps the
+  two-component car without radar or FMU, so it measures what the conductor
+  costs per step. A second scaling run with the demo's full car, radar and FMU
+  included, would be the more representative measure of a whole sim, since a
+  radar per car changes how messages grow with the population and an FMU
+  step costs 46 us against a native controller's 1.7 us.
 
 - **Host-local parallelism, built so components stay on the thread that made
   them.** Stepping components concurrently inside one process is the

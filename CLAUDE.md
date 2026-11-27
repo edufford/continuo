@@ -53,10 +53,9 @@ components end up on separate hosts.
 
 - **Many actors.** Prefer work that grows with what changed over work that
   grows with the population. `traffic_scale` is where that gets measured, and
-  PLAN.md's deferred list already names what it expects to bite first: a
-  subscriber that can ask for only the latest message per key, and a
+  PLAN.md's deferred list already names what it expects to bite next: a
   consolidated scene view for consumers that want the world rather than every
-  message in it.
+  message in it, and a spatial index so a sensor asks what is near it.
 - **Actors come and go.** Joins and leaves happen all through a run, not
   just at its start. The conductor reports each one, after it happens, to
   its membership callbacks. Anything outside the sim that keeps state for
