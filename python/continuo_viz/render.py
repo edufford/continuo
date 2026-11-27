@@ -67,6 +67,11 @@ _WINDSHIELD_PIXELS = 1
 LANE_OFFSETS = (-3.5, 0.0, 3.5)
 LANE_WIDTH = 3.5
 
+# The dashes between lanes: 3 m dashes with 9 m gaps, the US highway standard
+# of 10 ft dashes with 30 ft gaps rounded to meters.
+LANE_DASH_METERS = 3.0
+LANE_DASH_GAP_METERS = 9.0
+
 TARGET_FPS = 60
 
 # How wide a slice of road the camera shows, in meters.
@@ -270,6 +275,25 @@ def snap_to_pixels(
     return [(round(x + shift_x), round(y + shift_y)) for x, y in pixels]
 
 
+def lane_dash_spans(camera: Camera) -> list[tuple[int, int]]:
+    """The pixel columns each lane dash in view covers, as ``(start, end)``.
+
+    Every dash is the same whole number of pixels long, so it keeps its length
+    as it scrolls.
+    """
+    length = round(LANE_DASH_METERS * camera.scale)
+    period = LANE_DASH_METERS + LANE_DASH_GAP_METERS
+    left_edge = camera.center_x - camera.width * 0.5 / camera.scale
+    index = math.floor((left_edge - LANE_DASH_METERS) / period)
+    spans = []
+    while (start := round(camera.to_pixels(index * period, 0.0)[0])) < camera.width:
+        spans.append((start, start + length))
+        index += 1
+
+    # Return every dash that reaches into the window.
+    return spans
+
+
 class Renderer:
     """Draws a scene, into a window or into memory.
 
@@ -393,12 +417,24 @@ class Renderer:
             self.surface, _Color.ROAD, (0, top, self.width, max(1.0, bottom - top))
         )
         # Lane boundaries rather than centers: a car drives *on* a center line,
-        # so drawing those would put a stripe down every roof.
-        for offset in LANE_OFFSETS:
-            for boundary in (offset - LANE_WIDTH * 0.5, offset + LANE_WIDTH * 0.5):
-                y = camera.to_pixels(0.0, boundary)[1]
+        # so drawing those would put a stripe down every roof. The road's two
+        # edges are solid and the lines between lanes dashed.
+        boundaries = sorted(
+            {
+                offset + side * LANE_WIDTH * 0.5
+                for offset in LANE_OFFSETS
+                for side in (-1, 1)
+            }
+        )
+        for boundary in boundaries:
+            y = camera.to_pixels(0.0, boundary)[1]
+            if boundary in (boundaries[0], boundaries[-1]):
+                spans = [(0, self.width)]
+            else:
+                spans = lane_dash_spans(camera)
+            for start, end in spans:
                 self._pygame.draw.line(
-                    self.surface, _Color.LANE_LINE, (0, y), (self.width, y), 1
+                    self.surface, _Color.LANE_LINE, (start, y), (end, y), 1
                 )
 
     def _draw_body(self, camera: Camera, actor, focused: bool) -> None:

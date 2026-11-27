@@ -14,11 +14,14 @@ import pytest
 from continuo_viz.pose import PoseTopDown
 from continuo_viz.render import (
     CAR_LENGTH,
+    LANE_DASH_GAP_METERS,
+    LANE_DASH_METERS,
     Camera,
     Renderer,
     actor_color,
     actors_in_view,
     body_corners,
+    lane_dash_spans,
 )
 from continuo_viz.scene import Actor, Scene
 
@@ -187,3 +190,23 @@ def test_a_car_is_drawn_the_same_size_wherever_it_falls_between_pixels():
     renderer.close()
 
     assert len(areas) == 1, areas
+
+
+def test_lane_dashes_scroll_with_the_road_and_keep_their_length():
+    # Pixels per meter, set here rather than taken from `camera()`'s default so
+    # the dash length expected below follows from this test alone.
+    scale = 7.0
+    still = lane_dash_spans(camera(center_x=100.0, scale=scale))
+    moved = lane_dash_spans(camera(center_x=100.4, scale=scale))
+    one_period_on = lane_dash_spans(
+        camera(center_x=100.0 + LANE_DASH_METERS + LANE_DASH_GAP_METERS, scale=scale)
+    )
+
+    # The dashes shift when the camera moves, and a move of exactly one dash
+    # plus one gap shows the same picture again: they are fixed to the road.
+    assert moved != still
+    assert one_period_on == still
+    # Every dash keeps the same length in whole pixels as it scrolls.
+    assert {end - start for start, end in still + moved} == {
+        round(LANE_DASH_METERS * scale)
+    }
